@@ -1,0 +1,4 @@
+.ui-icon{display:inline-block;flex:none;width:20px;height:20px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;}
+.row-chevron .ui-icon,.record-arrow .ui-icon{width:15px;height:15px;}
+.quiet-button .ui-icon,.back-button .ui-icon,.chart-detail-button .ui-icon{width:15px;height:15px;}
+.back-button,.chart-detail-button,.quiet-button{align-items:center;}

@@ -1,0 +1,22 @@
+name: 使用建议
+description: 描述要解决的具体问题
+title: "[建议] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 场景和困难
+      description: 用虚构示例，不含个人明细或凭据。
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: 希望的行为
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 平台与补充
+      description: 建议不授权改账、安装或云端数据。

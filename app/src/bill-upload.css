@@ -1,0 +1,29 @@
+.bill-upload-page {padding-top:8px}
+.bill-upload-dropzone {width:100%;min-height:208px;padding:28px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;border:1.5px dashed color-mix(in srgb,var(--accent) 46%,var(--line));border-radius:18px;background:var(--surface);color:var(--ink);cursor:pointer;text-align:center;transition:background-color 150ms ease,border-color 150ms ease}
+.bill-upload-symbol {display:grid;place-items:center;width:58px;height:58px;border-radius:18px;background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--accent)}
+.bill-upload-symbol .ui-icon {width:30px;height:30px;stroke-width:1.6}
+.bill-upload-dropzone strong {font-size:17px;font-weight:550;line-height:1.5}
+.bill-upload-dropzone #bill-upload-formats {color:var(--muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.bill-upload-dropzone:not(:disabled):active {background:color-mix(in srgb,var(--accent) 7%,var(--surface));border-color:var(--accent)}
+.bill-upload-dropzone:focus-visible,.bill-upload-refresh:focus-visible,.bill-upload-item button:focus-visible {outline:2px solid var(--accent);outline-offset:4px}
+.bill-upload-note {margin:12px 0 0;text-align:center;font-size:12px;color:var(--muted)}
+.bill-upload-page #bill-upload-feedback {margin:16px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.bill-upload-page #bill-upload-feedback.tone-error {color:var(--error,var(--warn))}
+.bill-upload-heading {display:flex;align-items:center;justify-content:space-between;margin-top:26px}
+#main .bill-upload-heading h2 {margin:0;font-size:14px;font-weight:500}
+.bill-upload-refresh {display:grid;place-items:center;flex-shrink:0;width:44px;height:44px;padding:12px;border:0;border-radius:12px;background:none;color:var(--muted);cursor:pointer}
+.bill-upload-refresh .ui-icon {width:19px;height:19px}
+.bill-upload-refresh:not(:disabled):active {background:var(--ui-hover);color:var(--accent)}
+.bill-upload-list {padding:0;margin:0;list-style:none}
+.bill-upload-item {display:flex;align-items:flex-start;gap:12px;padding:16px 0;border-bottom:1px solid var(--ui-divider,var(--line))}
+.bill-upload-file-icon {display:grid;place-items:center;width:24px;min-height:24px;margin-top:2px;color:var(--muted);flex-shrink:0}
+.bill-upload-file-icon .ui-icon {width:21px;height:21px}
+.bill-upload-item>div {min-width:0;flex:1}
+.bill-upload-item strong {display:block;font-size:14px;line-height:1.6;overflow-wrap:anywhere;font-weight:400}
+.bill-upload-item small {display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.bill-upload-item button {flex-shrink:0;min-width:44px;min-height:44px;padding:8px;border:0;border-radius:10px;background:none;color:var(--accent);font-size:13px}
+.bill-upload-empty {margin:40px 0;text-align:center;font-size:13px;color:var(--muted)}
+.bill-upload-page button:disabled {opacity:.55;cursor:default}
+.bill-upload-dropzone[data-checking=true]:disabled {opacity:1}
+@media(prefers-reduced-motion:reduce){.bill-upload-dropzone {transition:none}}
+html[data-motion-preference=reduce] .bill-upload-dropzone {transition:none}

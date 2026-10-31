@@ -1,0 +1,54 @@
+@import './theme-palette.css';
+/* Phone-only surfaces. Geometry and light styles retain their defaults. */
+html[data-layout=mobile] { background: var(--bg, #f5f4f0); }
+html[data-layout=mobile] .settings .picker-trigger { width: 100%; margin: 5px 0 14px; }
+html[data-layout=mobile][data-theme=dark] :is(.eyebrow,.small-unit,.section-caption,.scope-item>span:first-child,.line-legend,.scatter-legend,.calendar-weekdays,.calendar-key,.category-value small,.record-main small,.row-chevron,.record-arrow,.record-rank,.expand-button,.chart-empty,.mechanism-note) { color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] :is(.record-row,.expand-button,.chart-detail-button,.detail-tags,.mobile-pool.is-overrun) { border-color: var(--line); }
+html[data-layout=mobile][data-theme=dark] :is(.analysis-tabs,.chart-selection-card,.actions button,.detail-tags>span,.sync-symbol,.picker-option[aria-selected=true],.category-row.is-selected,.record-row.is-selected) { background: var(--raised); }
+html[data-layout=mobile][data-theme=dark] :is(.record-row:hover,.category-row:hover,.picker-option:active,.mobile-pool:active,.menu-row:active,.bottom-nav button:active,.chart-detail-button:active,.scatter-legend button[aria-pressed=true]) { background: var(--pressed); border-color: var(--line); }
+html[data-layout=mobile][data-theme=dark] :is(.record-row:hover .record-main strong,.category-row:hover .category-label,.expand-button:hover,.detail-tags>span) { color: var(--ink); }
+html[data-layout=mobile][data-theme=dark] :is(.pool-track,.category-track,.progress-track) { background: var(--track); }
+html[data-layout=mobile][data-theme=dark] .category-track i { background: var(--accent); }
+html[data-layout=mobile][data-theme=dark] :is(.negative-money,.detail-tags .negative-tag) { color: var(--pool-travel); }
+html[data-layout=mobile][data-theme=dark] .detail-tags .negative-tag { background: #27313d; }
+html[data-layout=mobile][data-theme=dark] .pool-track.is-overrun { background: #40322b; }
+html[data-layout=mobile][data-theme=dark] .pool-track.is-overrun i { background: var(--warn); }
+html[data-layout=mobile][data-theme=dark] .category-track i.negative { background: var(--pool-travel); }
+html[data-layout=mobile][data-theme=dark] .line-legend i { background: var(--pool-operation); }
+html[data-layout=mobile][data-theme=dark] .line-legend>span:last-child i { background: none; border-color: #858991; }
+html[data-layout=mobile][data-theme=dark] .bottom-nav { background: #1c1d20; border-color: var(--line); }
+html[data-layout=mobile][data-theme=dark] .bottom-nav button { color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] .bottom-nav button.current { color: var(--accent); }
+html[data-layout=mobile][data-theme=dark] .mobile-picker::backdrop { background: #08090b99; }
+html[data-layout=mobile][data-theme=dark] .picker-option[aria-selected=true] { color: var(--accent); }
+html[data-layout=mobile][data-theme=dark] :is(.sample-note,.sync-symbol.has-warning) { background: #38312b; color: var(--warn); }
+html[data-layout=mobile][data-theme=dark] .sync-summary .actions button { background: var(--accent); color: var(--bg); }
+html[data-layout=mobile][data-theme=dark] input::placeholder { color: var(--muted); opacity: 1; }
+html[data-layout=mobile][data-theme=dark] .calendar-day { background: #282a2e; color: var(--ink); }
+html[data-layout=mobile][data-theme=dark] .calendar-day small { color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] .calendar-day.recorded>small { color: inherit; opacity: 1; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.level-1 { background: #303339; color: #c9cdd4; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.level-2 { background: #3e434c; color: #e0e3e9; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.level-3 { background: #515966; color: #f0f2f6; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.level-4 { background: #626e7f; color: #fff; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.negative { background: #293440; color: #c0d2e5; }
+html[data-layout=mobile][data-theme=dark] .calendar-day.unrecorded>span { color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] .calendar-day.future { background: transparent; border-color: var(--line); color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] .calendar-day.future small { color: var(--muted); }
+html[data-layout=mobile][data-theme=dark] .calendar-day.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+html[data-layout=mobile][data-theme=dark] .key-today { border-color: var(--accent); }
+html[data-layout=mobile][data-theme=dark] .heatmap-key i { background: #303339; }
+html[data-layout=mobile][data-theme=dark] .heatmap-key i:nth-child(2) { background: #3e434c; }
+html[data-layout=mobile][data-theme=dark] .heatmap-key i:nth-child(3) { background: #515966; }
+html[data-layout=mobile][data-theme=dark] .heatmap-key i:nth-child(4) { background: #626e7f; }
+/* Existing shared record HTML carries its pool color inline. Keep that contract. */
+html[data-layout=mobile][data-theme=dark] [style*="--pool-color:#6c8277"] { --pool-color: var(--pool-operation) !important; }
+html[data-layout=mobile][data-theme=dark] [style*="--pool-color:#b88670"] { --pool-color: var(--pool-free) !important; }
+html[data-layout=mobile][data-theme=dark] [style*="--pool-color:#7896ad"] { --pool-color: var(--pool-travel) !important; }
+html[data-layout=mobile][data-theme=dark] [style*="--pool-color:#ad965b"] { --pool-color: var(--pool-growth) !important; }
+html[data-layout=mobile][data-theme=dark] [style*="--pool-color:#9b9891"] { --pool-color: var(--pool-unknown) !important; }
+html[data-layout=mobile][data-theme=dark] [data-highlight-pool=operation] i { background: var(--pool-operation) !important; }
+html[data-layout=mobile][data-theme=dark] [data-highlight-pool=free] i { background: var(--pool-free) !important; }
+html[data-layout=mobile][data-theme=dark] [data-highlight-pool=travel] i { background: var(--pool-travel) !important; }
+html[data-layout=mobile][data-theme=dark] [data-highlight-pool=growth] i { background: var(--pool-growth) !important; }
+html[data-layout=mobile][data-theme=dark] [data-highlight-pool=unknown] i { background: var(--pool-unknown) !important; }

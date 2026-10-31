@@ -1,0 +1,22 @@
+.app-toolbar-header{position:relative;padding:29px 0 25px;gap:24px;border-bottom-color:transparent;}
+.app-toolbar-header .brand{font-size:20px;font-weight:600;letter-spacing:-.025em;gap:12px;line-height:1.5;}
+.app-toolbar-header .header-controls{gap:15px;}
+.app-toolbar-header .month-select{min-height:40px;padding-left:12px;border:1px solid transparent;border-radius:12px;background:var(--surface);color:var(--ink);}
+.app-toolbar-header .month-select>.ui-icon{width:17px;height:17px;color:var(--muted);pointer-events:none;}
+.app-toolbar-header .month-select select{min-height:40px;padding:8px 31px 8px 9px;border:0;border-radius:12px;font-size:12px;font-weight:500;line-height:1.5;}
+.app-toolbar-header .month-select>span:last-child{right:11px;top:50%;transform:translateY(-50%);display:flex;}
+.app-toolbar-header .month-select>span:last-child svg{width:13px;height:13px;}
+.app-toolbar-header .month-select:focus-within{outline:2px solid var(--accent,var(--sage));outline-offset:3px;}
+.app-toolbar-header .month-select select:focus-visible{outline:0;}
+.header-actions{display:flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;}
+.header-actions .header-action{position:relative;display:grid;place-items:center;width:40px;height:40px;padding:10px;border:0;border-radius:12px;background:transparent;color:var(--muted);transition:background-color 130ms ease,color 130ms ease,transform 130ms ease;}
+.header-action svg{width:19px;height:19px;}
+.header-actions .header-action:hover:not(:disabled),.header-actions .header-action:focus-visible{background:var(--raised,#e9ece5);color:var(--ink);}
+.header-actions .header-action:focus-visible{outline:2px solid var(--accent,var(--sage));outline-offset:3px;}
+.header-actions .header-action:active:not(:disabled){transform:translateY(1px);}
+.header-actions .header-action:disabled{cursor:default;opacity:.4;}
+.header-action::after{content:attr(aria-label);pointer-events:none;position:absolute;z-index:50;top:calc(100% + 10px);left:50%;transform:translate(-50%,-3px);padding:7px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);box-shadow:0 4px 16px #0000000b;font-size:12px;font-weight:400;white-space:nowrap;opacity:0;transition:opacity 100ms ease,transform 100ms ease;}
+.header-action:hover:not(:disabled)::after,.header-action:focus-visible::after{opacity:1;transform:translate(-50%,0);}
+@media(max-width:600px){.app-toolbar-header{flex-wrap:wrap;padding:22px 0 19px;gap:17px;}.app-toolbar-header .header-controls{margin-left:auto;gap:8px;}.app-toolbar-header .brand{font-size:18px;}.app-toolbar-header .month-select>.ui-icon{display:none;}.app-toolbar-header .month-select{padding-left:3px;}.app-toolbar-header .month-select select{font-size:12px;}}
+@media(pointer:coarse){.header-actions .header-action,.app-toolbar-header .month-select{min-height:44px;min-width:44px;}}
+@media(prefers-reduced-motion:reduce){.header-actions .header-action,.header-action::after{transition:none;}.header-actions .header-action:active:not(:disabled){transform:none;}}

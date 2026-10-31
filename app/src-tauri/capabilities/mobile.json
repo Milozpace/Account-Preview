@@ -1,0 +1,7 @@
+{
+  "identifier": "mobile-scanner",
+  "description": "QR camera access for the technical probe only",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["barcode-scanner:default"]
+}

@@ -1,0 +1,32 @@
+name: 问题反馈
+description: 用脱敏信息或合成数据描述问题
+title: "[问题] "
+body:
+  - type: markdown
+    attributes:
+      value: "不上传账本、真实账单、凭据、配对二维码、完整订单或 .runtime 整目录。"
+  - type: input
+    id: environment
+    attributes:
+      label: 系统、架构、App 与 Release 版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重现步骤及预期 / 实际结果
+      description: 优先合成数据。
+    validations:
+      required: true
+  - type: textarea
+    id: stage
+    attributes:
+      label: 影响及状态
+      description: 分别说明提交、快照、云端回读、回执、手机；未知填未确认。
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏诊断
+      description: doctor / verify 结论、错误码、时间；检查隐私后提交。

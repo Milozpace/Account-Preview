@@ -1,0 +1,10 @@
+/* Approved graphite palette, shared by the two App layouts. */
+html[data-theme=dark] {
+  color-scheme: dark;
+  --bg: #161719; --surface: #202124; --line: #37393e;
+  --ink: #f0f1f3; --muted: #a6a9b0; --ink-soft: #a6a9b0;
+  --accent: #d7dce3; --sage: #d7dce3; --warn: #d9ab8c; --warning: #d9ab8c; --error: #e4a29b;
+  --raised: #282a2e; --pressed: #303237; --track: #303237;
+  --pool-operation: #9eb8aa; --pool-free: #cfaa98; --pool-travel: #a3b9d1; --pool-growth: #c8bc97; --pool-unknown: #b0b2b8;
+  background: var(--bg); color: var(--ink);
+}

@@ -1,0 +1,769 @@
+{
+  "schemaVersion": 2,
+  "snapshotKind": "account-ledger-view",
+  "sourceHash": "abababababababababababababababababababababababababababababababab",
+  "calendarMonth": "2026-10",
+  "generatedAt": "2026-10-15T08:30:00+08:00",
+  "sourceLastRecordedAt": "2026-10-12T12:00:00+08:00",
+  "ledgerCount": 2681,
+  "coverage": {
+    "kind": "recent-months",
+    "months": [
+      "2026-10",
+      "2026-09"
+    ]
+  },
+  "months": [
+    {
+      "month": "2026-10",
+      "lastRecordedAt": "2026-10-12T12:00:00+08:00",
+      "mechanismActive": true,
+      "summary": {
+        "personalCents": 13000,
+        "structuralCents": -550000,
+        "totalCents": -537000,
+        "unknownCents": 1200,
+        "monthlyBudgetCents": 150000,
+        "openingBudgetCents": 146500,
+        "availableCents": 134700,
+        "overrunCents": 0,
+        "safetyCents": 30000
+      },
+      "pools": [
+        {
+          "id": "operation",
+          "name": "运行账户",
+          "budgetCents": 60000,
+          "carryCents": 0,
+          "openingCents": 60000,
+          "spentCents": 5000,
+          "endingCents": 55000,
+          "availableCents": 55000,
+          "overrunCents": 0,
+          "usageRatio": 0.083333
+        },
+        {
+          "id": "free",
+          "name": "随心消费",
+          "budgetCents": 30000,
+          "carryCents": 500,
+          "openingCents": 30500,
+          "spentCents": 6800,
+          "endingCents": 23700,
+          "availableCents": 23700,
+          "overrunCents": 0,
+          "usageRatio": 0.222951
+        },
+        {
+          "id": "travel",
+          "name": "旅行/体验",
+          "budgetCents": 20000,
+          "carryCents": -4000,
+          "openingCents": 16000,
+          "spentCents": 0,
+          "endingCents": 16000,
+          "availableCents": 16000,
+          "overrunCents": 0,
+          "usageRatio": 0.0
+        },
+        {
+          "id": "growth",
+          "name": "成长/项目/耐用品",
+          "budgetCents": 40000,
+          "carryCents": 0,
+          "openingCents": 40000,
+          "spentCents": 0,
+          "endingCents": 40000,
+          "availableCents": 40000,
+          "overrunCents": 0,
+          "usageRatio": 0.0
+        }
+      ],
+      "daily": [
+        {
+          "date": "2026-10-01",
+          "amountCents": 4500,
+          "operationCumulativeCents": 4500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-10-02",
+          "amountCents": 0,
+          "operationCumulativeCents": 4500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-03",
+          "amountCents": 2000,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-10-04",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-05",
+          "amountCents": 6800,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-10-06",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-07",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-08",
+          "amountCents": 1200,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-10-09",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-10",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-11",
+          "amountCents": 0,
+          "operationCumulativeCents": 6500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-12",
+          "amountCents": -1500,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-10-13",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-14",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-15",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-16",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-17",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-18",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-19",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-20",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-21",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-22",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-23",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-24",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-25",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-26",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-27",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-28",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-29",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-30",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-10-31",
+          "amountCents": 0,
+          "operationCumulativeCents": 5000,
+          "referenceCents": 967,
+          "count": 0
+        }
+      ],
+      "categories": [
+        {
+          "name": "学习提升",
+          "amountCents": 6800,
+          "count": 1
+        },
+        {
+          "name": "餐饮与日常食品",
+          "amountCents": 3000,
+          "count": 2
+        },
+        {
+          "name": "交通出行",
+          "amountCents": 2000,
+          "count": 1
+        },
+        {
+          "name": "其他",
+          "amountCents": 1200,
+          "count": 1
+        }
+      ],
+      "records": [
+        {
+          "id": "tx_oct_lunch",
+          "time": "2026-10-01T12:00:00+08:00",
+          "date": "2026-10-01",
+          "title": "合成商户 · 午餐",
+          "category": "餐饮与日常食品",
+          "pool": "operation",
+          "scope": "PERSONAL",
+          "amountCents": 4500
+        },
+        {
+          "id": "tx_oct_metro",
+          "time": "2026-10-03T12:00:00+08:00",
+          "date": "2026-10-03",
+          "title": "合成地铁充值",
+          "category": "交通出行",
+          "pool": "operation",
+          "scope": "PERSONAL",
+          "amountCents": 2000
+        },
+        {
+          "id": "tx_oct_book",
+          "time": "2026-10-05T12:00:00+08:00",
+          "date": "2026-10-05",
+          "title": "合成教材",
+          "category": "学习提升",
+          "pool": "free",
+          "scope": "PERSONAL",
+          "amountCents": 6800
+        },
+        {
+          "id": "tx_oct_misc",
+          "time": "2026-10-08T12:00:00+08:00",
+          "date": "2026-10-08",
+          "title": "合成待归类杂项",
+          "category": "其他",
+          "pool": "unknown",
+          "scope": "PERSONAL",
+          "amountCents": 1200
+        },
+        {
+          "id": "tx_oct_refund",
+          "time": "2026-10-12T12:00:00+08:00",
+          "date": "2026-10-12",
+          "title": "合成负调整退款",
+          "category": "餐饮与日常食品",
+          "pool": "operation",
+          "scope": "PERSONAL",
+          "amountCents": -1500
+        }
+      ],
+      "structuralRecords": [
+        {
+          "id": "tx_oct_rent",
+          "time": "2026-10-01T12:00:00+08:00",
+          "date": "2026-10-01",
+          "title": "合成房租",
+          "category": "住房与水电",
+          "pool": "unknown",
+          "scope": "STRUCTURAL",
+          "amountCents": 250000
+        },
+        {
+          "id": "tx_oct_salary",
+          "time": "2026-10-10T12:00:00+08:00",
+          "date": "2026-10-10",
+          "title": "合成工资入账",
+          "category": "收入结转",
+          "pool": "unknown",
+          "scope": "STRUCTURAL",
+          "amountCents": -800000
+        }
+      ],
+      "topIds": [
+        "tx_oct_book",
+        "tx_oct_lunch",
+        "tx_oct_metro",
+        "tx_oct_misc"
+      ]
+    },
+    {
+      "month": "2026-09",
+      "lastRecordedAt": "2026-09-20T12:00:00+08:00",
+      "mechanismActive": true,
+      "summary": {
+        "personalCents": 24900,
+        "structuralCents": -550000,
+        "totalCents": -525100,
+        "unknownCents": 0,
+        "monthlyBudgetCents": 150000,
+        "openingBudgetCents": 146500,
+        "availableCents": 121600,
+        "overrunCents": 0,
+        "safetyCents": 30000
+      },
+      "pools": [
+        {
+          "id": "operation",
+          "name": "运行账户",
+          "budgetCents": 60000,
+          "carryCents": 0,
+          "openingCents": 60000,
+          "spentCents": -500,
+          "endingCents": 60500,
+          "availableCents": 60500,
+          "overrunCents": 0,
+          "usageRatio": -0.008333
+        },
+        {
+          "id": "free",
+          "name": "随心消费",
+          "budgetCents": 30000,
+          "carryCents": 500,
+          "openingCents": 30500,
+          "spentCents": 3500,
+          "endingCents": 27000,
+          "availableCents": 27000,
+          "overrunCents": 0,
+          "usageRatio": 0.114754
+        },
+        {
+          "id": "travel",
+          "name": "旅行/体验",
+          "budgetCents": 20000,
+          "carryCents": -4000,
+          "openingCents": 16000,
+          "spentCents": 12000,
+          "endingCents": 4000,
+          "availableCents": 4000,
+          "overrunCents": 0,
+          "usageRatio": 0.75
+        },
+        {
+          "id": "growth",
+          "name": "成长/项目/耐用品",
+          "budgetCents": 40000,
+          "carryCents": 0,
+          "openingCents": 40000,
+          "spentCents": 9900,
+          "endingCents": 30100,
+          "availableCents": 30100,
+          "overrunCents": 0,
+          "usageRatio": 0.2475
+        }
+      ],
+      "daily": [
+        {
+          "date": "2026-09-01",
+          "amountCents": 0,
+          "operationCumulativeCents": 0,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-02",
+          "amountCents": -500,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-09-03",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-04",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-05",
+          "amountCents": 3500,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-09-06",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-07",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-08",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-09",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-10",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-11",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-12",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-13",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-14",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-15",
+          "amountCents": 12000,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-09-16",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-17",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-18",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-19",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-20",
+          "amountCents": 9900,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 1
+        },
+        {
+          "date": "2026-09-21",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-22",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-23",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-24",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-25",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-26",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-27",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-28",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-29",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        },
+        {
+          "date": "2026-09-30",
+          "amountCents": 0,
+          "operationCumulativeCents": -500,
+          "referenceCents": 967,
+          "count": 0
+        }
+      ],
+      "categories": [
+        {
+          "name": "交通出行",
+          "amountCents": 12000,
+          "count": 1
+        },
+        {
+          "name": "学习提升",
+          "amountCents": 9900,
+          "count": 1
+        },
+        {
+          "name": "餐饮与日常食品",
+          "amountCents": 3000,
+          "count": 2
+        }
+      ],
+      "records": [
+        {
+          "id": "tx_sep_refund",
+          "time": "2026-09-02T12:00:00+08:00",
+          "date": "2026-09-02",
+          "title": "退款调整",
+          "category": "餐饮与日常食品",
+          "pool": "operation",
+          "scope": "PERSONAL",
+          "amountCents": -500
+        },
+        {
+          "id": "tx_sep_coffee",
+          "time": "2026-09-05T12:00:00+08:00",
+          "date": "2026-09-05",
+          "title": "合成咖啡",
+          "category": "餐饮与日常食品",
+          "pool": "free",
+          "scope": "PERSONAL",
+          "amountCents": 3500
+        },
+        {
+          "id": "tx_sep_train",
+          "time": "2026-09-15T12:00:00+08:00",
+          "date": "2026-09-15",
+          "title": "合成火车票",
+          "category": "交通出行",
+          "pool": "travel",
+          "scope": "PERSONAL",
+          "amountCents": 12000
+        },
+        {
+          "id": "tx_sep_course",
+          "time": "2026-09-20T12:00:00+08:00",
+          "date": "2026-09-20",
+          "title": "合成在线课程",
+          "category": "学习提升",
+          "pool": "growth",
+          "scope": "PERSONAL",
+          "amountCents": 9900
+        }
+      ],
+      "structuralRecords": [
+        {
+          "id": "tx_sep_rent",
+          "time": "2026-09-01T12:00:00+08:00",
+          "date": "2026-09-01",
+          "title": "合成房租",
+          "category": "住房与水电",
+          "pool": "unknown",
+          "scope": "STRUCTURAL",
+          "amountCents": 250000
+        },
+        {
+          "id": "tx_sep_salary",
+          "time": "2026-09-10T12:00:00+08:00",
+          "date": "2026-09-10",
+          "title": "合成工资入账",
+          "category": "收入结转",
+          "pool": "unknown",
+          "scope": "STRUCTURAL",
+          "amountCents": -800000
+        }
+      ],
+      "topIds": [
+        "tx_sep_train",
+        "tx_sep_course",
+        "tx_sep_coffee"
+      ]
+    }
+  ]
+}

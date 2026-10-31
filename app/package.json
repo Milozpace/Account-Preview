@@ -1,0 +1,23 @@
+{
+  "name": "account-app",
+  "version": "0.4.0-preview.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "echarts": "6.1.0",
+    "@tauri-apps/api": "2.12.1",
+    "@tauri-apps/plugin-barcode-scanner": "^2.5.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "vitest": "^4.1.11"
+  }
+}
