@@ -252,6 +252,9 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    # JSON is consumed by agents and redirected terminals on either desktop OS.
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     try: raise SystemExit(main())
     except (OSError, ValueError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         print(json.dumps({'ok': False, 'error': str(error), 'next': '已完成的本地步骤保留；处理错误后重试，不重新初始化账本。'}, ensure_ascii=False), file=sys.stderr)

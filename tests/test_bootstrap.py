@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -40,6 +41,14 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(bootstrap.platform_key('Darwin', 'x86_64'), 'macos-x64')
         self.assertEqual(bootstrap.platform_key('Windows', 'AMD64'), 'windows-x64')
         with self.assertRaises(ValueError): bootstrap.platform_key('Linux', 'x86_64')
+
+    def test_cli_json_is_utf8_even_with_legacy_console_encoding(self):
+        if sys.platform not in ('win32', 'darwin'):
+            self.skipTest('desktop bootstrap')
+        result = subprocess.run([sys.executable, str(ROOT/'bootstrap.py')],
+                                env={**os.environ, 'PYTHONIOENCODING': 'cp1252'}, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertTrue(json.loads(result.stdout.decode('utf-8'))['dryRun'])
 
     @unittest.skipUnless(sys.platform == 'win32' and shutil.which('powershell'), 'Windows PowerShell compatibility')
     def test_stock_windows_powershell_can_parse_launcher(self):

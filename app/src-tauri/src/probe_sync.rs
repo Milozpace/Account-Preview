@@ -1361,7 +1361,7 @@ pub fn run_cli_diagnostic() -> i32 {
     0
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn check_existing_pending<V: SecretVault>(
     vault: &V,
     dir: &Path,
