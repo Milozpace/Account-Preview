@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,4 +116,7 @@ def main():
     return 0 if result['ok'] else 1
 
 
-if __name__ == '__main__': raise SystemExit(main())
+if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+    raise SystemExit(main())

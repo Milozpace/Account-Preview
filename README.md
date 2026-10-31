@@ -6,6 +6,8 @@
 
 **第一次使用只有一个入口：[开始使用](docs/开始使用.md)。**
 
+[下载 0.4.0-preview.1 私有试用包](https://github.com/Milozpace/Account-Preview/releases/tag/v0.4.0-preview.1)：电脑按 Windows x64、Mac Apple Silicon 或 Mac Intel 选择 ZIP，手机使用 Android arm64 APK。Agent 会校验并配置电脑包；手机安装见开始使用的第 4 步。访问下载页同样需要私有仓库权限。
+
 准备私有仓库访问权限后，将下文和仓库地址交给本地 Agent：
 
 ```text

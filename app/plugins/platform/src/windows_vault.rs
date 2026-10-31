@@ -29,7 +29,19 @@ impl WindowsVault {
     }
     fn path(&self, slot: &str) -> Result<PathBuf> {
         validate_slot(slot)?;
-        Ok(self.root.join(format!("{slot}.bin")))
+        // Win32 treats these basenames as devices even with a .bin extension.
+        // '_' cannot occur in a valid slot, so this mapping cannot alias another
+        // slot. All existing ordinary slot filenames and DPAPI entropy stay intact.
+        let reserved = matches!(slot, "con" | "nul" | "aux" | "prn")
+            || ((slot.starts_with("com") || slot.starts_with("lpt"))
+                && slot.len() == 4
+                && matches!(slot.as_bytes()[3], b'1'..=b'9'));
+        let filename = if reserved {
+            format!("_{slot}.bin")
+        } else {
+            format!("{slot}.bin")
+        };
+        Ok(self.root.join(filename))
     }
 
     pub(crate) fn store_secret(&self, slot: &str, secret: &[u8]) -> Result<()> {
@@ -253,7 +265,10 @@ mod tests {
             "aux",
             "prn",
             "com1",
+            "com9",
             "lpt1",
+            "lpt9",
+            "slot-con",
             "-",
             &"a".repeat(64),
         ] {
@@ -263,6 +278,11 @@ mod tests {
                 Some(b"native test".as_slice())
             );
         }
+        assert_eq!(vault.path("con").unwrap().file_name().unwrap(), "_con.bin");
+        assert_eq!(
+            vault.path("slot-con").unwrap().file_name().unwrap(),
+            "slot-con.bin"
+        );
     }
 
     #[test]

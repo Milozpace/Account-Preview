@@ -1,4 +1,8 @@
 import importlib.util
+import os
+import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +15,12 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_cli_audit_json_is_utf8_with_legacy_console_encoding(self):
+        result = subprocess.run([sys.executable, str(ROOT/'scripts/release.py'), 'audit'],
+                                env={**os.environ, 'PYTHONIOENCODING':'cp1252'}, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertTrue(json.loads(result.stdout.decode('utf-8'))['ok'])
+
     def test_source_allowlist_excludes_private_and_generated_files(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
