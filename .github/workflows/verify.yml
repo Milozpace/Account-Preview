@@ -1,6 +1,12 @@
 name: Verify private preview
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to verify (all runs the complete matrix)
+        type: choice
+        default: all
+        options: [all, windows-x64, macos-arm64, macos-x64, android-arm64]
   push:
     branches: [main, 'codex/**']
     paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
@@ -12,7 +18,29 @@ concurrency:
   group: preview-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  select-platforms:
+    runs-on: ubuntu-24.04
+    outputs:
+      desktop: ${{ steps.matrix.outputs.desktop }}
+    steps:
+      - id: matrix
+        shell: python
+        env:
+          REQUESTED: ${{ inputs.platform || 'all' }}
+        run: |
+          import json, os
+          targets = [
+              dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis'),
+              dict(os='macos-15', platform='macos-arm64', target='aarch64-apple-darwin', bundles='dmg'),
+              dict(os='macos-15-intel', platform='macos-x64', target='x86_64-apple-darwin', bundles='dmg'),
+          ]
+          requested = os.environ['REQUESTED']
+          selected = [t for t in targets if requested == 'all' or t['platform'] == requested]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('desktop=' + json.dumps(selected) + '\n')
   desktop:
+    needs: select-platforms
+    if: needs.select-platforms.outputs.desktop != '[]'
     # bash -e stops immediately on every failing native command on all runners.
     defaults:
       run:
@@ -20,19 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-2022
-            platform: windows-x64
-            target: x86_64-pc-windows-msvc
-            bundles: nsis
-          - os: macos-15
-            platform: macos-arm64
-            target: aarch64-apple-darwin
-            bundles: dmg
-          - os: macos-15-intel
-            platform: macos-x64
-            target: x86_64-apple-darwin
-            bundles: dmg
+        include: ${{ fromJSON(needs.select-platforms.outputs.desktop) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     env:
@@ -60,6 +76,7 @@ jobs:
         run: |
           mkdir -p .runtime
           security create-keychain -p preview-ci "$PWD/.runtime/preview-ci.keychain-db"
+          security set-keychain-settings -lut 3600 "$PWD/.runtime/preview-ci.keychain-db"
           security unlock-keychain -p preview-ci "$PWD/.runtime/preview-ci.keychain-db"
           security default-keychain -s "$PWD/.runtime/preview-ci.keychain-db"
           security list-keychains -d user -s "$PWD/.runtime/preview-ci.keychain-db"
@@ -69,9 +86,20 @@ jobs:
           npm --prefix dashboard test
           npm --prefix app test
           npm --prefix dashboard run build
-          cargo test --manifest-path app/core/Cargo.toml --locked
-          cargo test --manifest-path app/plugins/platform/Cargo.toml --locked -- --test-threads=1
-          cargo test --manifest-path app/src-tauri/Cargo.toml --locked -- --test-threads=1
+      - name: Test encryption core
+        run: cargo test --manifest-path app/core/Cargo.toml --locked
+      - name: Compile native storage tests
+        run: cargo test --manifest-path app/plugins/platform/Cargo.toml --locked --no-run
+      - name: Unlock isolated macOS test Keychain before native storage
+        if: runner.os == 'macOS'
+        run: |
+          security show-keychain-info "$PWD/.runtime/preview-ci.keychain-db"
+          security unlock-keychain -p preview-ci "$PWD/.runtime/preview-ci.keychain-db"
+      - name: Test native storage without unattended prompts
+        timeout-minutes: 3
+        run: cargo test --manifest-path app/plugins/platform/Cargo.toml --locked -- --test-threads=1
+      - name: Test native application
+        run: cargo test --manifest-path app/src-tauri/Cargo.toml --locked -- --test-threads=1
       - name: Test managed first-run environment on Mac
         if: runner.os == 'macOS'
         run: sh ./bootstrap.sh --apply
@@ -108,6 +136,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   android:
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android-arm64'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:

@@ -72,6 +72,11 @@ mod tests {
     use super::*;
     #[test]
     fn native_keychain_roundtrip_is_scoped_and_delete_is_idempotent() {
+        // An ephemeral, unlocked CI Keychain must work without GUI approval.
+        // A locked/interactive test fixture should fail, never wait for a dialog.
+        let _interaction =
+            security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
+                .expect("disable interaction for the synthetic Keychain test");
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("identity-a/vault");
         let gui = MacosVault::new(root.clone()).unwrap();
