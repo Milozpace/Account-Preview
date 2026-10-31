@@ -6,7 +6,7 @@ async function start(){
   const native=isTauri();
   let context={platform:/Android/i.test(navigator.userAgent)?'Android':'Windows',preview:false};
   if(native)context=await invoke<typeof context>('app_context').catch(()=>context);
-  const desktop=context.platform==='Windows'&&(native||innerWidth>700);
+  const desktop=['Windows','macOS'].includes(context.platform)&&(native||innerWidth>700);
   let nativeTheme: Awaited<ReturnType<typeof mountDesktopWindowTheme>> | undefined;
   if(native&&desktop){
     try { const {getCurrentWindow}=await import('@tauri-apps/api/window');nativeTheme=await mountDesktopWindowTheme(getCurrentWindow()); }

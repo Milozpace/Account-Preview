@@ -14,6 +14,18 @@ beforeEach(()=>{
  vi.stubGlobal('window',{addEventListener:vi.fn()});vi.stubGlobal('document',{querySelector:()=>mocks.app});
 });
 describe('platform entry isolation',()=>{
+ it('macOS opens the desktop dashboard and desktop theme',async()=>{
+  mocks.context={platform:'macOS',preview:false};
+  await(await import('./entry')).entryReady;
+  expect(mocks.desktop).toHaveBeenCalledWith(false);
+  expect(theme.desktop).toHaveBeenCalledOnce();expect(theme.mount).not.toHaveBeenCalled();
+ });
+ it('macOS settings window enters desktop settings',async()=>{
+  mocks.context={platform:'macOS',preview:false};mocks.search='?panel=settings';
+  await(await import('./entry')).entryReady;
+  expect(mocks.settings).toHaveBeenCalledOnce();expect(mocks.desktop).not.toHaveBeenCalled();
+  expect(theme.desktop).toHaveBeenCalledOnce();
+ });
  it('Windows loads the desktop without an extra native menu and keeps both shortcuts',async()=>{
   await(await import('./entry')).entryReady;
   expect(mocks.desktop).toHaveBeenCalledWith(false);expect(mocks.settings).not.toHaveBeenCalled();expect(mocks.menu).not.toHaveBeenCalled();
