@@ -51,7 +51,7 @@ class LedgerSourceTests(unittest.TestCase):
     def test_explicit_database_and_runtime_paths(self):
         import ledger_source
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             database = root / 'data' / 'account.sqlite3'
             self.assertEqual(ledger_source.resolve(root, database=database), database)
             self.assertEqual(ledger_source.runtime(database), root / '.runtime')

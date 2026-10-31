@@ -3,7 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, 'codex/**']
+    paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
   pull_request:
+    paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
 permissions:
   contents: read
 concurrency:
@@ -119,6 +121,8 @@ jobs:
         with:
           targets: aarch64-linux-android
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install build dependencies
         run: |
           sdkmanager 'platforms;android-36' 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865'

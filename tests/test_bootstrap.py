@@ -20,7 +20,7 @@ class BootstrapTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
 
     def bundle(self, extra=None, wrong_hash=False):
         files = {'bin/ledger_cli.exe': b'publisher', 'bin/bill_inbox_cli.exe': b'inbox',

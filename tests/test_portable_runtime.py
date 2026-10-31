@@ -17,7 +17,7 @@ import runtime_tools
 class PortableRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.root=Path(self.tmp.name)
+        self.root=Path(self.tmp.name).resolve()
 
     def test_inbox_uses_current_platform_helper_under_runtime_bin(self):
         path=runtime_tools.helper_path(self.root,'bill_inbox_cli')

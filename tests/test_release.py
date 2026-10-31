@@ -13,7 +13,7 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 class ReleaseTests(unittest.TestCase):
     def test_source_allowlist_excludes_private_and_generated_files(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             for name in ('README.md', 'scripts/account.py', 'local/个人规则.md', 'data/account.sqlite3',
                          'sra/bill.csv', '.runtime/key.json', 'PROJECT_MEMORY.md', 'app/src/main.ts',
                          'app/src-tauri/target/a.rs', 'app/plugins/platform/android/build/test.xml',
@@ -24,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_audit_rejects_developer_path_and_private_key(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             path = root / 'README.md'
             path.write_text('C:\\Users\\' + str(26000 + 400) + '\\private')
             self.assertFalse(release.audit_sources(root)['ok'])
@@ -35,7 +35,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_source_zip_shell_is_executable_and_data_is_absent(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()
             (root/'bootstrap.sh').write_text('#!/bin/sh\nexit 0\n')
             (root/'local').mkdir(); (root/'local/private.md').write_text('private')
             output = root/'source.zip'

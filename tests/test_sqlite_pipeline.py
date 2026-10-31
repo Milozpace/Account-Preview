@@ -19,7 +19,7 @@ class SQLitePipelineTests(unittest.TestCase):
         import ledger_store
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
-        self.root = Path(self.folder.name)
+        self.root = Path(self.folder.name).resolve()
         self.database = self.root / 'data' / 'account.sqlite3'
         from test_ledger_store import excel_fixture
         fixture = self.root / 'synthetic.xlsx'
