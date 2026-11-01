@@ -70,6 +70,22 @@ class StoreTests(unittest.TestCase):
                 'reviewed_at': '2026-10-18T10:00:00+08:00', 'reason': '合成验证',
                 'confirmation_source': '测试指令'}
 
+    def test_import_preflight_exposes_classification_coverage_without_forcing_a_pool(self):
+        pending=row('pool-pending',**{'资金池':'待归类','主分类':'餐饮'})
+        known=row('pool-known',**{'资金池':'运行账户','主分类':'餐饮'})
+        before=self.db.read_bytes()
+        result=store.import_reviewed(self.db,self.approved([pending,known]))
+        coverage=result['classificationReview']
+        self.assertEqual(coverage['consumptionRecords'],2)
+        self.assertEqual(coverage['assignedPoolRecords'],1)
+        self.assertEqual(coverage['unassignedPoolRecords'],1)
+        self.assertEqual(coverage['unassignedPoolCents'],1000)
+        self.assertEqual(self.db.read_bytes(),before)
+        all_pending=store.import_reviewed(self.db,self.approved([pending]))
+        self.assertIn('全部',' '.join(all_pending['classificationReview']['warnings']))
+        # Genuine unresolved evidence remains allowed; a warning is not a guess.
+        self.assertTrue(all_pending['ok'])
+
     @unittest.skipUnless(os.name == 'nt', 'Windows native host canonical paths')
     def test_native_extended_drive_path_reads_and_writes_same_ledger(self):
         extended = Path('\\\\?\\' + str(self.db.resolve()))

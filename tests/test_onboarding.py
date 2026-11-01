@@ -53,6 +53,20 @@ class OnboardingTests(unittest.TestCase):
         self.assertNotIn('运行init',' '.join(status['nextSteps']))
         self.assertIn('next',status['desktop'])
 
+    def test_init_without_amounts_defaults_to_observation_and_hashes_the_mode(self):
+        _, dry=self.cli('--root',str(self.root),'init','--effective','2026-10')
+        self.assertTrue(dry['dry_run']);self.assertFalse((self.root/'data').exists())
+        self.cli('--root',str(self.root),'init','--effective','2026-10','--apply')
+        db=ledger_source.resolve(self.root);state=ledger_store.read_state(db)
+        self.assertEqual(state['budgetMode'],'zero-observation-v1')
+        self.assertEqual(ledger_store.verify(db)['calculationVersion'],'sqlite-ledger-calculation-v1-zero-observation-v1')
+        self.assertTrue(all(state['rates'][0][p]=='0.00' for p in account.POOLS))
+        legacy={k:v for k,v in state.items() if k!='budgetMode'}
+        self.assertNotEqual(state['sourceHash'],ledger_store._hash(legacy))
+        before=db.read_bytes()
+        self.cli('--root',str(self.root),'init','--effective','2026-10','--apply')
+        self.assertEqual(db.read_bytes(),before)
+
     def test_init_dry_run_then_revision_zero_empty_ledger_and_idempotency(self):
         _, dry = self.init()
         self.assertTrue(dry['dry_run'])

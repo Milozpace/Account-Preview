@@ -55,7 +55,7 @@ describe('mobile presentation', () => {
   it('never treats inactive budget as zero or masks overrun and negative adjustment', () => {
     const inactive = structuredClone(month);
     inactive.mechanismActive = false;
-    expect(homeHtml(inactive)).toContain('该月资金池未启用');
+    expect(homeHtml(inactive)).toContain('该月未设预算，仍按用途统计消费');
     const pool = structuredClone(month.pools[0]);
     pool.availableCents = -1234; pool.overrunCents = 1234;
     pool.spentCents = -100; pool.usageRatio = -0.01;

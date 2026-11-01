@@ -397,6 +397,17 @@ describe('Windows local presentation and isolated preview',()=>{
     expect(loads).toBe(2);expect(mainHtml()).toContain('额度已保存');
     for(const command of ['desktop_refresh_snapshot','ledger_fetch','sync_configure','ledger_publish'])expect(invokeState.seen).not.toContain(command);
   });
+  it('opens optional budget settings from the observation overview without writing or publishing',async()=>{
+    const observation=structuredClone(CACHED_SNAPSHOT);observation.months[0].mechanismActive=false;
+    const zero={'运行账户':'0.00','随心消费':'0.00','旅行/体验':'0.00','成长/项目/耐用品':'0.00'};
+    invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:observation,sourceChanged:false,monthChanged:false})
+      :command==='desktop_budget_status'?Promise.resolve({sourceHash:'a'.repeat(64),revision:0,suggestedMonth:'2026-10',rates:[{effective:'2026-10',amounts:zero}]}):common(command);
+    await import('./main');await flush(30);
+    expect(mainHtml()).toContain('未设预算，默认额度为0');
+    activateRenderedButton('data-action','edit-budget');await flush(20);
+    expect(mainHtml()).toContain('id="budget-form"');expect(mainHtml()).toContain('data-settings-panel="budget" aria-labelledby="settings-budget-title"');
+    for(const command of ['desktop_budget_save','desktop_refresh_snapshot','ledger_fetch'])expect(invokeState.seen).not.toContain(command);
+  });
   it.each([{hasSnapshot:false,detail:1},{hasSnapshot:true,detail:0}])('opens sync from settings and returns with hasSnapshot=$hasSnapshot (click detail=$detail)',async({hasSnapshot,detail})=>{
     const initialStatus=hasSnapshot?LEDGER_READY:{initialized:false,publishEnabled:false,cachedRevision:null,pendingRevision:null,lastPublishedRevision:null};
     let currentStatus={...initialStatus,pendingRevision:initialStatus.pendingRevision as number|null};

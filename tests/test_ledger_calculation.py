@@ -23,6 +23,36 @@ def record(day, amount, pool='运行账户', scope='PERSONAL', identity=None):
 
 
 class CalculationTests(unittest.TestCase):
+    def test_new_observation_mode_keeps_classified_spending_without_budget_debt(self):
+        state=fixture([record('2024-01-01','25','旅行/体验'),record('2024-01-02','12','成长/项目/耐用品'),record('2024-01-03','-4')])
+        state['budgetMode']='zero-observation-v1'
+        state['rates']=[{'生效月份':'2024-01-01',**dict.fromkeys(account.POOLS,'0.00')},fixture()['rates'][0]|{'生效月份':'2024-02-01'}]
+        observation=calculation.calculate_month(state,'2024-01','2024-03')
+        self.assertFalse(observation['mechanismActive'])
+        self.assertEqual(observation['summary']['personalCents'],3300)
+        self.assertEqual([p['spentCents'] for p in observation['pools']],[-400,0,2500,1200])
+        self.assertEqual(observation['summary']['overrunCents'],0)
+        self.assertEqual(observation['summary']['safetyCents'],0)
+        active=calculation.calculate_month(state,'2024-02','2024-03')
+        self.assertTrue(active['mechanismActive'])
+        self.assertEqual([p['carryCents'] for p in active['pools']],[0,0,0,0])
+        self.assertEqual(active['summary']['safetyCents'],10000)
+        # Unmarked existing ledgers retain their established computation.
+        del state['budgetMode']
+        legacy=calculation.calculate_month(state,'2024-02','2024-03')
+        self.assertEqual([p['carryCents'] for p in legacy['pools']],[0,0,-2500,-1200])
+        self.assertEqual(legacy['summary']['safetyCents'],10400)
+
+    def test_observation_mode_respects_explicit_initial_carry_and_later_zero_rates(self):
+        state=fixture([record('2024-02-01','3','旅行/体验')]);state['budgetMode']='zero-observation-v1'
+        state['rates'].append({'生效月份':'2024-02-01',**dict.fromkeys(account.POOLS,'0.00')})
+        result=calculation.calculate_month(state,'2024-02','2024-03')
+        self.assertTrue(result['mechanismActive'])
+        self.assertEqual(result['pools'][2]['endingCents'],1700)
+        state['rates']=[{'生效月份':'2024-01-01',**dict.fromkeys(account.POOLS,'0.00')}]
+        state['initial']['旅行/体验']='10.00'
+        self.assertTrue(calculation.calculate_month(state,'2024-01','2024-01')['mechanismActive'])
+
     def setUp(self):
         self.assertIsNotNone(calculation, 'SQLite ledger calculation module is required')
 

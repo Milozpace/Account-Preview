@@ -171,7 +171,7 @@ function viewHtml():string {
   if(state.view==='pool')return poolHtml(month,nav.current.poolId??'');
   if(state.view==='detail')return detailHtml();
   if(state.view==='analysis')return analysisHtml(month,state.analysisTab,state.analysisDate,shanghaiToday(),state.expanded);
-  return mobile()?mobileHome(month):dashboardHtml(month,shanghaiToday(),state.expanded);
+  return mobile()?mobileHome(month):dashboardHtml(month,shanghaiToday(),state.expanded,isTauri()&&!state.preview);
 }
 let charts:typeof import('../../dashboard/src/charts')|undefined;
 let renderRevision=0;
@@ -386,7 +386,7 @@ main.addEventListener('click',event=>{
   if(data.open){open(data.open==='bills'?{view:'bills',query:emptyQuery()}:{view:data.open as Screen['view']});if(data.open==='sync')void refreshLedgerStatus().then(()=>{if(state.view==='sync')render();});return;}
   if(data.analysis){state.analysisTab=data.analysis as AnalysisTab;state.expanded=false;render('tab');return;}
   if(data.highlightPool){const pinned=button.getAttribute('aria-pressed')==='true';document.querySelectorAll<HTMLElement>('[data-highlight-pool]').forEach(el=>el.setAttribute('aria-pressed','false'));button.setAttribute('aria-pressed',String(!pinned));charts?.highlightPool(pinned?null:data.highlightPool);return;}
-  switch(data.action){case 'manage-connection':state.editingConnection=!state.editingConnection;render();break;case 'manage-pairing':state.editingPairing=!state.editingPairing;render();break;case 'chart-date-bills':if(data.inspectDate)openBills({date:data.inspectDate});break;case 'chart-record-detail':if(data.inspectRecord)open({view:'detail',recordId:data.inspectRecord});break;case 'fetch-empty':refreshController.requestManual();break;case 'back':case 'back-to-bills':back();break;case 'all-bills':openBills();break;case 'clear-filters':updateQuery(emptyQuery());break;case 'clear-search':updateQuery({query:''});break;case 'clear-date':updateQuery({date:''});break;}
+  switch(data.action){case 'edit-budget':if(!mobile()){state.settingsSection='budget';if(state.view==='settings')render();else open({view:'settings'});if(!budgetSession.status)void loadBudget();}break;case 'manage-connection':state.editingConnection=!state.editingConnection;render();break;case 'manage-pairing':state.editingPairing=!state.editingPairing;render();break;case 'chart-date-bills':if(data.inspectDate)openBills({date:data.inspectDate});break;case 'chart-record-detail':if(data.inspectRecord)open({view:'detail',recordId:data.inspectRecord});break;case 'fetch-empty':refreshController.requestManual();break;case 'back':case 'back-to-bills':back();break;case 'all-bills':openBills();break;case 'clear-filters':updateQuery(emptyQuery());break;case 'clear-search':updateQuery({query:''});break;case 'clear-date':updateQuery({date:''});break;}
 });
 function updateBusy():void {
   for(const button of document.querySelectorAll<HTMLButtonElement>('.actions button, .settings-save'))button.disabled=state.busy||!isTauri()||state.preview;

@@ -8,7 +8,7 @@ describe('shared dashboard presentation without HTTP or native dependencies', ()
   it('renders the existing desktop dashboard sections and exact cents without changing data', () => {
     const before = JSON.stringify(month);
     const html = dashboardHtml(month, '2026-10-16');
-    for (const label of ['个人净消费','本月新增额度','各池可用合计','安全积累','累计净消费','消费日历','类别分布','Top 10']) expect(html).toContain(label);
+    for (const label of ['个人净消费','本月新增额度','各池可用','安全积累','累计净消费','消费日历','类别分布','Top 10']) expect(html).toContain(label);
     expect(html).toContain((month.summary.personalCents / 100).toFixed(2));
     expect(JSON.stringify(month)).toBe(before);
   });
@@ -39,14 +39,24 @@ describe('shared dashboard presentation without HTTP or native dependencies', ()
     const before = JSON.stringify(first);
     const html = dashboardHtml(first, '2026-11-01');
     expect(html).toContain('123.45');
-    expect(html).toContain('当前没有可比较额度');
-    expect(html).toContain('消费尚未分配到资金池');
+    expect(html).toContain(mechanismActive?'当前没有可比较额度':'未设预算');
+    expect(html).toContain('剩余额度尚未完整');
     expect(html).toContain('data-scope="unknown"');
     expect(html).toContain('暂无额度');
     expect(html).not.toContain('超支 ¥');
     expect(html).not.toContain('overrun-text');
     expect(html).not.toMatch(/本月新增额度<\/span><strong[^>]*><small>¥<\/small> 0\.00/);
     expect(JSON.stringify(first)).toBe(before);
+  });
+  it('offers optional desktop budget settings and warns about pending pools even when they net to zero',()=>{
+    const first=structuredClone(month);first.mechanismActive=false;
+    first.records=[{...first.records[0],pool:'unknown',amountCents:100},{...first.records[0],id:'refund',pool:'unknown',amountCents:-100}];
+    first.summary.unknownCents=0;
+    const html=dashboardHtml(first,'2026-11-01',false,true);
+    expect(html).toContain('data-action="edit-budget"');expect(html).toContain('默认额度为0');
+    expect(html).toContain('2 笔消费待分池');expect(html).toContain('剩余额度尚未完整');
+    expect(html).toContain('各池可用（未含待分池）');
+    expect(dashboardHtml(first,'2026-11-01')).not.toContain('data-action="edit-budget"');
   });
   it('retains legitimate zero monthly additions and balances when an opening allowance exists', () => {
     const funded = structuredClone(month);

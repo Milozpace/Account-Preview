@@ -482,7 +482,7 @@ def main(argv=None):
     init_cmd = commands.add_parser('init', help='初始化空SQLite账本；默认只检查')
     init_cmd.add_argument('--root', type=Path, default=argparse.SUPPRESS)
     init_cmd.add_argument('--effective', required=True)
-    init_cmd.add_argument('--amounts', type=Path, required=True)
+    init_cmd.add_argument('--amounts', type=Path, help='可选四池额度JSON；省略时四池默认零，先记账观察')
     init_cmd.add_argument('--initial', type=Path)
     init_cmd.add_argument('--apply', action='store_true')
     commands.add_parser('inspect'); commands.add_parser('verify')
@@ -541,7 +541,7 @@ def main(argv=None):
     if args.command in {'doctor','init'}:
         if args.command == 'doctor': result = onboarding.doctor(root)
         else:
-            amounts = json.loads(args.amounts.read_text(encoding='utf-8-sig'))
+            amounts = json.loads(args.amounts.read_text(encoding='utf-8-sig')) if args.amounts else dict.fromkeys(POOLS, '0.00')
             initial = json.loads(args.initial.read_text(encoding='utf-8-sig')) if args.initial else None
             result = onboarding.initialize(root, args.effective, amounts, initial, apply=args.apply)
         print(json.dumps(result, ensure_ascii=False, indent=2))

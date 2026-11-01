@@ -22,7 +22,7 @@ export function budgetSettingsHtml(state:BudgetSettingsState):string {
  const reload=`<button type="button" id="budget-reload" class="settings-save"${disabled}>重新读取</button>`;
  if(!status)return `${notice}${reload}`;
  const preview=state.preview?.sourceHash===status.sourceHash&&state.preview.revision===status.revision&&state.preview.effective===draft.effective?state.preview:null;
- return `<div class="desktop-budget-settings">
+ return `<div class="desktop-budget-settings"><p class="settings-inline-status">新账本预算默认0，不影响分类和分池；需要额度管理时，在这里设置生效月份和每月额度。</p>
   <form id="budget-form"><fieldset${disabled}>
    <div class="desktop-setting-row"><label for="budget-existing-rate">已有生效月</label><select id="budget-existing-rate"><option value=""${status.rates.some(rate=>rate.effective===draft.effective)?'':' selected'}>新增生效月</option>${status.rates.map(rate=>`<option value="${escapeHtml(rate.effective)}"${rate.effective===draft.effective?' selected':''}>${escapeHtml(rate.effective)}</option>`).join('')}</select></div>
    <div class="desktop-setting-row"><label for="budget-month">生效月份</label><input id="budget-month" type="month" value="${escapeHtml(draft.effective)}" required></div>

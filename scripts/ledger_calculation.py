@@ -13,6 +13,12 @@ from decimal import Decimal
 import account
 
 CALCULATION_VERSION = 'sqlite-ledger-calculation-v1'
+OBSERVATION_MODE = 'zero-observation-v1'
+OBSERVATION_CALCULATION_VERSION = CALCULATION_VERSION + '-zero-observation-v1'
+
+
+def calculation_version(state):
+    return OBSERVATION_CALCULATION_VERSION if state.get('budgetMode') == OBSERVATION_MODE else CALCULATION_VERSION
 POOL_IDS = dict(zip(account.POOLS, ['operation', 'free', 'travel', 'growth']))
 
 
@@ -70,14 +76,21 @@ def calculate_month(state, month, calendar_month):
     amounts = aggregate(state['rows'])
     selected = amounts.get(month, {'personal': 0, 'structural': 0, 'total': 0,
                                   'unknown': 0, 'pools': dict.fromkeys(account.POOLS, 0)})
-    active = month >= rates[0][0]
+    start = rates[0][0]
+    if state.get('budgetMode') == OBSERVATION_MODE and not any(cents(v) for v in state['initial'].values()):
+        # New owners may classify expenses before setting any allowance. Only
+        # the first positive rate starts budget accounting; earlier spending
+        # must not manufacture debt or savings. Existing unmarked ledgers keep
+        # the legacy calculation, including deliberately zero rates.
+        start = next((effective for effective, values in rates if any(values.values())), None)
+    active = start is not None and month >= start
     carry = {p: cents(state['initial'].get(p)) if p in account.POOLS[2:] else 0 for p in account.POOLS}
     safety = 0
     budget = dict.fromkeys(account.POOLS, 0)
     opening = dict.fromkeys(account.POOLS, 0)
     ending = dict.fromkeys(account.POOLS, 0)
-    cursor = rates[0][0]
-    while cursor <= month:
+    cursor = start
+    while cursor is not None and cursor <= month:
         budget = next(values for effective, values in reversed(rates) if effective <= cursor)
         used = amounts.get(cursor, {}).get('pools', {})
         opening = {p: carry[p] + budget[p] for p in account.POOLS}

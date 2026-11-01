@@ -85,9 +85,12 @@ def _canonical_row(row):
 def _logical_payload(state):
     # A batch is provenance, not a business-value change; audit has its own trail.
     rows = [{k: r.get(k) for k in FIELDS if k != '导入批次'} for r in state['rows']]
-    return dict(calculationVersion=calculation.CALCULATION_VERSION,
+    payload = dict(calculationVersion=calculation.calculation_version(state),
                 rows=sorted(rows, key=lambda r: r['记录ID']),
                 rates=sorted(state['rates'], key=lambda r: r['生效月份']), initial=state['initial'])
+    if state.get('budgetMode') is not None:
+        payload['budgetMode'] = state['budgetMode']
+    return payload
 
 
 def _hash(state):
@@ -246,13 +249,19 @@ def _read(conn):
     metadata = dict(conn.execute('SELECT key,value FROM metadata'))
     if metadata.get('schema_version') != str(SCHEMA_VERSION):
         raise ValueError('不支持的SQLite账本版本')
-    if metadata.get('calculation_version') != calculation.CALCULATION_VERSION:
+    expected_version = (calculation.OBSERVATION_CALCULATION_VERSION
+                        if metadata.get('budget_mode') == calculation.OBSERVATION_MODE else calculation.CALCULATION_VERSION)
+    if metadata.get('calculation_version') != expected_version:
         raise ValueError('账本计算规则版本不匹配')
     rows = [json.loads(value) for (value,) in conn.execute('SELECT row_json FROM ledger ORDER BY sequence')]
     rates = [{'生效月份': month + '-01', **{pool: str(account.money(Decimal(value) / 100)) for pool, value in zip(account.POOLS, values)}}
              for month, *values in conn.execute('SELECT * FROM budget_rates ORDER BY effective_month')]
     initial = {pool: str(account.money(Decimal(value) / 100)) for pool, value in conn.execute('SELECT pool,amount_cents FROM initial_carry')}
     state = dict(rows=rows, rates=rates, initial=initial, revision=int(metadata['revision']))
+    if 'budget_mode' in metadata:
+        if metadata['budget_mode'] != calculation.OBSERVATION_MODE:
+            raise ValueError('不支持的预算计算模式')
+        state['budgetMode'] = metadata['budget_mode']
     state['sourceHash'] = _hash(state)
     return state
 
@@ -267,6 +276,8 @@ def source_hash(path):
 
 
 def _validate_state(state):
+    if state.get('budgetMode') not in (None, calculation.OBSERVATION_MODE):
+        raise ValueError('不支持的预算计算模式')
     rows = state['rows']
     ids, originals = {}, set()
     children = {}
@@ -471,7 +482,7 @@ def _describe(path, state):
     return dict(database=str(Path(path).resolve()), sourceHash=state['sourceHash'], sha256=state['sourceHash'],
                 revision=state['revision'], rows=len(state['rows']), date_min=min(dates, default=None),
                 date_max=max(dates, default=None), duplicate_original_keys=0, aggregates=aggregates,
-                calculationVersion=calculation.CALCULATION_VERSION)
+                calculationVersion=calculation.calculation_version(state))
 
 
 def inspect(path):
@@ -539,6 +550,24 @@ def _prewrite_backup(path):
     return _copy_backup(path, path.with_name(path.stem + '.previous.sqlite3'), replace=True)
 
 
+def classification_review(rows):
+    consumption = [r for r in rows if account.text(r.get('统计口径')).upper() in ('PERSONAL', 'PROJECT')
+                   and calculation.cents(r.get('计入消费金额')) != 0]
+    pending = [r for r in consumption if account.text(r.get('资金池')) not in account.POOLS]
+    unclassified = [r for r in consumption if account.text(r.get('主分类')).casefold()
+                    in ('', 'unknown', '待归类', '未填写分类')]
+    warnings = []
+    if pending:
+        warnings.append('本批消费全部待分池；请按用途审核，真实不确定的说明依据后留待确认。' if len(pending) == len(consumption)
+                        else '本批仍有消费未分池；需说明待确认范围，不将剩余额度称为完整结果。')
+    if unclassified:
+        warnings.append('本批仍有消费缺少明确主分类；不能把未审核称为分类完成。')
+    return dict(scope='changed-records', consumptionRecords=len(consumption),
+                assignedPoolRecords=len(consumption)-len(pending), unassignedPoolRecords=len(pending),
+                unassignedPoolCents=sum(calculation.cents(r['计入消费金额']) for r in pending),
+                unclassifiedRecords=len(unclassified), warnings=warnings)
+
+
 def import_reviewed(path, approved, apply=False):
     """Plan with the legacy reviewed JSON contract, then validate before commit."""
     if not isinstance(approved, dict):
@@ -598,6 +627,8 @@ def import_reviewed(path, approved, apply=False):
         _validate_state(candidate)
         result = {'duplicates': plan['duplicates'], 'ok': True, 'applied': False, 'added': len(records), 'updated': len(updates),
                   'sourceHash': before['sourceHash'], 'revision': before['revision']}
+        affected_ids = {r['记录ID'] for r in records} | {u['记录ID'] for u in updates}
+        result['classificationReview'] = classification_review([r for r in next_rows if r['记录ID'] in affected_ids])
         if not apply or not changed:
             return result
         _prewrite_backup(path)

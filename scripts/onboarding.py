@@ -86,6 +86,8 @@ def _new_ledger(database, plan):
             conn.executemany('INSERT INTO initial_carry VALUES(?,?)',
                              [(p, calculation.cents(plan['initial'][p])) for p in account.POOLS])
             conn.execute('INSERT INTO metadata VALUES(?,?)', ('setup_fingerprint', _fingerprint(plan)))
+            conn.execute('INSERT INTO metadata VALUES(?,?)', ('budget_mode', calculation.OBSERVATION_MODE))
+            conn.execute("UPDATE metadata SET value=? WHERE key='calculation_version'", (calculation.OBSERVATION_CALCULATION_VERSION,))
             store._check_sql(conn)
             store._validate_state(store._read(conn))
             conn.commit()
@@ -199,7 +201,7 @@ def doctor(root):
         setup['state'] = 'incomplete'
         next_steps.append('发现未激活账本；保留数据，使用原初始化参数重试或联系自己的Agent核对')
     else:
-        next_steps.append('首次 mini 按docs/开始使用.md复制templates/预算额度.json为local/预算占位.json，采用全零技术占位、零滚存并记录预算未制定；运行init --effective YYYY-MM --amounts local/预算占位.json，核对后添加--apply')
+        next_steps.append('首次 mini 使用全零技术占位作为默认观察预算、零滚存并记录预算未制定；运行init --effective YYYY-MM（可省略amounts），核对后添加--apply。首次导入按用途完成主分类和分池，不以预算是否制定为前提。')
     from runtime_tools import helper_status
     helpers = helper_status(root)
     if any(not item['present'] for item in helpers.values()):

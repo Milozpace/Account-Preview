@@ -47,6 +47,28 @@ class BudgetSettingsTests(unittest.TestCase):
         value.update(changes)
         return value
 
+    def test_classified_observation_exports_then_budget_starts_without_prior_debt(self):
+        purchase=row('observation-growth','12.00',**{'资金池':'成长/项目/耐用品','主分类':'学习教育'})
+        store.import_reviewed(self.db,{'records':[purchase],'updates':[],
+            'reviewed_by':'synthetic-agent','reviewed_at':'2026-09-03T10:00:00+08:00',
+            'reason':'虚构的明确学习用途','confirmation_source':'合成测试授权'},apply=True)
+        app_export.export_snapshot(self.db)
+        snapshot=json.loads((self.root/'.runtime/ledger/snapshot-v2.json').read_text(encoding='utf-8'))
+        month=next(m for m in snapshot['months'] if m['month']=='2026-09')
+        self.assertFalse(month['mechanismActive'])
+        self.assertEqual(month['summary']['personalCents'],1200)
+        self.assertEqual(month['summary']['unknownCents'],0)
+        self.assertEqual(month['pools'][3]['spentCents'],1200)
+        self.assertEqual(month['summary']['overrunCents'],0)
+        self.assertEqual(month['summary']['safetyCents'],0)
+        saved=budget_settings.save(self.root,self.payload(effective='2026-10'))
+        self.assertTrue(saved['snapshotUpdated'])
+        snapshot=json.loads((self.root/'.runtime/ledger/snapshot-v2.json').read_text(encoding='utf-8'))
+        october=next(m for m in snapshot['months'] if m['month']=='2026-10')
+        self.assertTrue(october['mechanismActive'])
+        self.assertEqual(october['pools'][3]['carryCents'],0)
+        self.assertEqual(october['pools'][3]['openingCents'],3000)
+
     def set_budget(self, **changes):
         payload = self.payload(**changes)
         return store.set_budget(self.db, payload['effective'], payload['amounts'], payload['reason'],
