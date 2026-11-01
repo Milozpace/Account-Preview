@@ -19,6 +19,7 @@ FIXTURE = Path(__file__).parent / 'fixtures/app-v2-history-snapshot.json'
 
 class MonthHistoryTests(unittest.TestCase):
     def make_database(self, root, start):
+        root = root.resolve()
         root.mkdir()
         onboarding.initialize(root, start, dict.fromkeys(account.POOLS, 0), apply=True)
         return root / 'data/account.sqlite3'
@@ -31,6 +32,7 @@ class MonthHistoryTests(unittest.TestCase):
 
     def make_migrated_database(self, root):
         from test_ledger_store import excel_fixture, row
+        root = root.resolve()
         root.mkdir()
         workbook = root/'synthetic-migration.xlsx'
         excel_fixture(workbook, rows=[row(**{'交易时间':'2025-09-02 12:00:00'})])
