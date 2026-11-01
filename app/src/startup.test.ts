@@ -163,6 +163,19 @@ function click(id: string): void {
   for (const handler of elements.get(id)!.handlers.click ?? []) handler();
 }
 
+/** Use only an actual rendered native button, then bubble its click to the real router. */
+function activateRenderedButton(attribute:string,value:string,detail=1):void {
+  const button=[...mainHtml().matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
+    .find(match=>match[1].includes(`${attribute}="${value}"`));
+  expect(button,`rendered button ${attribute}=${value}`).toBeDefined();
+  expect(button![1]).toContain('type="button"');
+  expect(button![1]).not.toMatch(/\b(?:disabled|hidden)\b|tabindex="-1"/);
+  const dataset=Object.fromEntries([...button![1].matchAll(/data-([\w-]+)="([^"]*)"/g)]
+    .map(([,key,item])=>[key.replace(/-([a-z])/g,(_,letter:string)=>letter.toUpperCase()),item]));
+  const target={closest:()=>({dataset})};
+  for(const handler of elements.get('#main')!.handlers.click??[])handler({target,detail});
+}
+
 /** Navigate through the bottom nav (same handlers main.ts bound at import). */
 function goto(view: 'home' | 'bills' | 'sync'): void {
   if(view !== 'home') {
@@ -357,6 +370,32 @@ describe('Windows local presentation and isolated preview',()=>{
     if(command==='app_version')return Promise.resolve('0.3.0-test');
     return Promise.reject(new Error(`unexpected command ${command}`));
   };
+  it.each([{hasSnapshot:false,detail:1},{hasSnapshot:true,detail:0}])('opens sync from settings and returns with hasSnapshot=$hasSnapshot (click detail=$detail)',async({hasSnapshot,detail})=>{
+    const initialStatus=hasSnapshot?LEDGER_READY:{initialized:false,publishEnabled:false,cachedRevision:null,pendingRevision:null,lastPublishedRevision:null};
+    let currentStatus={...initialStatus,pendingRevision:initialStatus.pendingRevision as number|null};
+    invokeState.impl=command=>command==='desktop_load_snapshot'
+      ?Promise.resolve({snapshot:hasSnapshot?CACHED_SNAPSHOT:null,sourceChanged:false,monthChanged:false})
+      :command==='ledger_cache'?Promise.resolve(hasSnapshot?{revision:2,snapshot:CACHED_SNAPSHOT}:null)
+      :command==='ledger_status_command'?Promise.resolve(currentStatus):common(command);
+    const assign=vi.fn();vi.stubGlobal('location',{pathname:'/',assign});
+    await import('./main');await flush(30);click('#settings-button');
+    expect(mainHtml()).toContain('data-settings-panel="general"');
+    const readsBefore=invokeState.seen.filter(command=>command==='ledger_status_command').length;
+    if(hasSnapshot)currentStatus={...initialStatus,pendingRevision:5};
+    // Native buttons emit the same delegated click for pointer and keyboard activation.
+    activateRenderedButton('data-open','sync',detail);await flush(25);
+    expect(mainHtml()).toContain('class="view sync"');
+    expect(mainHtml()).toContain('id="sync-form"');
+    expect(mainHtml()).toContain('id="show-pairing"');
+    expect(mainHtml()).not.toContain('id="scan-pairing"');
+    expect(mainHtml()).toContain(hasSnapshot?'第 5 版（尚未发布成功）':'未初始化（需先在电脑初始化或扫码配对）');
+    expect(invokeState.seen.filter(command=>command==='ledger_status_command')).toHaveLength(readsBefore+1);
+    activateRenderedButton('data-action','back');
+    expect(mainHtml()).toContain('data-settings-panel="general"');
+    expect(mainHtml()).not.toContain('class="view sync"');
+    expect(assign).not.toHaveBeenCalled();
+    for(const command of ['ledger_fetch','sync_configure','ledger_create_pairing','ledger_import_pairing','desktop_refresh_snapshot'])expect(invokeState.seen).not.toContain(command);
+  });
   it('opens the application settings directly and returns to the shared desktop overview',async()=>{
     invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):common(command);
     const assign=vi.fn();vi.stubGlobal('location',{pathname:'/',assign});

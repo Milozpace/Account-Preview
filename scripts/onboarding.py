@@ -150,7 +150,7 @@ def initialize(root, effective, amounts, initial=None, apply=False):
         raise ValueError('存在未激活账本，拒绝覆盖；请检查doctor并保留原数据')
     if not apply:
         return dict(ok=True, applied=False, dry_run=True, state='ready', rows=0, revision=0,
-                    database=str(database), parameters=plan, nextSteps=['核对预算与初始滚存后使用init --apply'])
+                    database=str(database), parameters=plan, nextSteps=['首次 mini 使用全零技术占位、零滚存并记录预算未制定；已有确认额度保留。核对后使用init --apply'])
     for name in ('data', 'local', 'sra', '.runtime'):
         path = root / name
         if path.is_symlink() or path.resolve() != path:
@@ -199,11 +199,11 @@ def doctor(root):
         setup['state'] = 'incomplete'
         next_steps.append('发现未激活账本；保留数据，使用原初始化参数重试或联系自己的Agent核对')
     else:
-        next_steps.append('准备四池预算JSON，运行init --effective YYYY-MM --amounts JSON_FILE；核对后添加--apply')
+        next_steps.append('首次 mini 按docs/开始使用.md复制templates/预算额度.json为local/预算占位.json，采用全零技术占位、零滚存并记录预算未制定；运行init --effective YYYY-MM --amounts local/预算占位.json，核对后添加--apply')
     from runtime_tools import helper_status
     helpers = helper_status(root)
     if any(not item['present'] for item in helpers.values()):
-        next_steps.append('运行bootstrap.py --bundle 本平台发布包.zip --apply准备原生组件，或按发行说明构建')
+        next_steps.append(f'运行bootstrap.py --bundle 本平台发布包.zip --apply --expected-root "{root}" 准备原生组件，或按发行说明构建；已有账本不重新初始化')
     owner = {name:(root/name).is_file() for name in ['local/档案.md','local/个人规则.md','PROJECT_MEMORY.md']}
     if not all(owner.values()): next_steps.append('初始化后补全本机档案、个人规则与工作记忆')
     dependencies = dict(pythonSupported=sys.version_info[:2] == (3,12), openpyxlAvailable=account.openpyxl is not None,
@@ -219,7 +219,8 @@ def doctor(root):
     selected_profile = owner_profile(root)
     desktop = dict(profile=selected_profile['name'],
                    profilePresent=(base/selected_profile['desktopConfig']/'project.json').is_file(),
-                   installation='unverified', reason='仅检查对应身份配置文件是否存在，不读取凭据或宣称已安装')
+                   installation='unverified', reason='仅检查对应身份配置文件是否存在，尚未验证App是否安装；unverified不表示未安装',
+                   next='打开对应身份的电脑App核对；只有明确选择--install-app时启动器才执行安装，不读取凭据或重置身份')
     # Config presence is a filesystem fact, never a credential or connection test.
     return dict(ok=True, root=str(root), platform=platform.system(), python=platform.python_version(),
                 dependencies=dependencies, setup=setup, ledger=ledger, helpers=helpers, ownerFiles=owner, desktop=desktop,

@@ -1,4 +1,5 @@
 import {escapeHtml} from '../../dashboard/src/helpers';
+import {uiIcon} from '../../dashboard/src/ui-icons';
 export type SettingsSection='general'|'advanced'|'diagnostics';
 interface SettingsOptions {
  section:SettingsSection;theme:'system'|'light'|'dark';motion:'system'|'reduce';
@@ -13,6 +14,7 @@ export function desktopSettingsHtml(options:SettingsOptions):string {
    <section data-settings-panel="general"${hidden('general')} aria-labelledby="settings-general-title"><h2 id="settings-general-title">一般</h2>
     <div class="desktop-setting-row"><label id="appearance-label">外观</label><div id="theme-preference" class="settings-segments" role="group" aria-labelledby="appearance-label">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<button type="button" data-theme-choice="${value}" aria-pressed="${theme===value}">${label}</button>`).join('')}</div></div>
     <div class="desktop-setting-row"><label for="motion-preference">动态效果</label><select id="motion-preference"><option value="system"${motion==='system'?' selected':''}>跟随系统</option><option value="reduce"${motion==='reduce'?' selected':''}>减少动态效果</option></select></div>
+    <div class="desktop-setting-row"><button type="button" class="menu-row" data-open="sync"><span>手机与同步</span><span class="row-chevron" aria-hidden="true">${uiIcon('right')}</span></button></div>
    </section>
    <section data-settings-panel="advanced"${hidden('advanced')} aria-labelledby="settings-advanced-title"><h2 id="settings-advanced-title">高级</h2><form id="desktop-config-form">
     <div class="desktop-path-row"><label for="project-root">账本项目目录</label><input id="project-root" value="${escapeHtml(config?.projectRoot??'')}" autocomplete="off" spellcheck="false"></div>

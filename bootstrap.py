@@ -1,4 +1,4 @@
-"""Prepare this checkout's private runtime; default is a read-only plan."""
+"""Prepare this checkout's local runtime; default is a read-only plan."""
 from __future__ import annotations
 
 import argparse
@@ -15,9 +15,45 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import urllib.request
+import urllib.error
+from urllib.parse import urlsplit
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parent
 PYTHON_VERSION = '3.12.12'
+
+
+def source_context(root, expected_root=None, *, apply=False):
+    root = Path(root).resolve(strict=True)
+    if apply and expected_root is None:
+        raise ValueError('--apply 必须提供 --expected-root 本项目绝对路径；先核对 dry-run 的 root。')
+    if expected_root is not None:
+        expected = Path(expected_root)
+        if not expected.is_absolute() or expected.resolve() != root:
+            raise ValueError('--expected-root 必须是本份启动器所在项目的绝对路径；未执行任何配置。')
+    release = json.loads((root/'release.json').read_text(encoding='utf-8'))
+    if not isinstance(release,dict) or not all(isinstance(release.get(key),str) for key in ('repository','version','tag')):
+        raise ValueError('release.json 源码身份或版本无效。')
+    repo = release.get('repository', '')
+    if repo != 'Milozpace/Account-Preview' or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?', release.get('version','')) or release.get('tag') != 'v'+release['version']:
+        raise ValueError('release.json 源码身份或版本无效。')
+    provenance = {'kind':'source-archive', 'repository':repo}
+    if (root/'.git').exists():
+        try:
+            remote = subprocess.run(['git','-C',str(root),'config','--get','remote.origin.url'],check=True,capture_output=True,text=True).stdout.strip()
+            if remote.startswith('git@github.com:'):
+                origin_repo = remote[len('git@github.com:'):]
+            else:
+                parsed = urlsplit(remote)
+                if parsed.scheme not in {'https','ssh'} or parsed.hostname != 'github.com': raise ValueError()
+                origin_repo = parsed.path.lstrip('/')
+            if origin_repo.endswith('.git'): origin_repo=origin_repo[:-4]
+            if origin_repo.casefold() != repo.casefold(): raise ValueError()
+        except (ValueError, OSError, subprocess.CalledProcessError):
+            raise ValueError('Git origin 与 release.json 的规范仓库不匹配；保留现场，未执行配置。') from None
+        provenance.update(kind='git', origin='https://github.com/'+repo+'.git')
+    return release, provenance
 
 
 def platform_key(system=None, machine=None):
@@ -56,20 +92,60 @@ def atomic_json(path, value):
         Path(name).unlink(missing_ok=True)
 
 
-def configure_desktop(root, python, *, config=None, apply=False):
+@contextmanager
+def config_lock(config):
+    lock = config.with_name(config.name+'.lock')
+    try:
+        fd=os.open(lock, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise ValueError('桌面配置正在更新或上次更新中断；保留配置和锁文件，核对后重试。') from None
+    try:
+        os.close(fd)
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def configure_desktop(root, python, *, config=None, apply=False, rebind_from=None):
     root, python = Path(root).resolve(), Path(python).absolute()
     config = Path(config) if config is not None else config_location(root)
     value = {'projectRoot': str(root), 'pythonExecutable': str(python)}
-    if config.is_symlink(): raise ValueError('配置路径不能是符号链接。')
-    if config.exists():
-        old = json.loads(config.read_text(encoding='utf-8'))
-        if set(old) != set(value) or Path(old['projectRoot']).resolve() != root:
-            raise ValueError('此预览版已绑定另一账本；请使用独立系统用户，不覆盖原有绑定。')
-        if old == value: return {'changed': False, 'path': str(config)}
-    if apply:
-        if not python.is_file(): raise ValueError('项目 Python 环境尚未准备。')
-        atomic_json(config, value)
-    return {'changed': apply, 'dryRun': not apply, 'path': str(config)}
+    old_root = None
+    if rebind_from is not None:
+        old_root=Path(rebind_from)
+        if not old_root.is_absolute(): raise ValueError('--rebind-from 必须是旧项目绝对路径。')
+        old_root=old_root.resolve()
+    def inspect():
+        if config.is_symlink(): raise ValueError('配置路径不能是符号链接。')
+        raw=config.read_bytes() if config.exists() else None
+        old=json.loads(raw.decode('utf-8')) if raw is not None else None
+        if raw is not None:
+            if not isinstance(old,dict) or set(old)!=set(value) or not isinstance(old.get('projectRoot'),str) or not Path(old['projectRoot']).is_absolute():
+                raise ValueError('已有桌面配置结构无效；保留现场并检查。')
+            if Path(old['projectRoot']).resolve()!=root and (old_root is None or Path(old['projectRoot']).resolve()!=old_root):
+                raise ValueError('此身份已绑定另一项目；关闭App后明确 --rebind-from 当前旧绝对根才能改绑，或使用独立系统用户。')
+        elif old_root is not None:
+            raise ValueError('--rebind-from 无当前旧绑定可匹配；保留现场并检查。')
+        return raw,old
+    raw,old=inspect()
+    if old==value: return {'changed':False,'status':'unchanged','path':str(config)}
+    if not apply: return {'changed':False,'dryRun':True,'status':'planned','path':str(config)}
+    if not python.is_file(): raise ValueError('项目 Python 环境尚未准备。')
+    config.parent.mkdir(parents=True,exist_ok=True)
+    with config_lock(config):
+        current,current_old=inspect()
+        if current!=raw: raise ValueError('桌面配置在检查后已改变；拒绝覆盖，请重新检查。')
+        backup=None
+        if current_old and Path(current_old['projectRoot']).resolve()!=root:
+            fd,name=tempfile.mkstemp(prefix=config.name+'.backup-', dir=config.parent)
+            with os.fdopen(fd,'wb') as stream:
+                stream.write(current); stream.flush(); os.fsync(stream.fileno())
+            backup=name
+        # Cooperating writers hold the lock; detect external edits before replace.
+        if (config.read_bytes() if config.exists() else None)!=raw:
+            raise ValueError('桌面配置刚被其他程序修改；拒绝覆盖，请重新检查。')
+        atomic_json(config,value)
+    return {'changed':True,'dryRun':False,'status':'completed','path':str(config), **({'backup':backup} if backup else {})}
 
 
 def digest(path):
@@ -201,11 +277,26 @@ def prepare_python(root, uv=None):
 def download_release(root, repo, tag, target):
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo): raise ValueError('仓库须为 OWNER/REPO。')
     if not re.fullmatch(r'v[0-9][A-Za-z0-9.-]*', tag): raise ValueError('发布标签无效。')
-    if not shutil.which('gh'): raise ValueError('私有发布下载需要已登录的 GitHub CLI；也可使用 --bundle 本地包。')
     name = f'Account-Preview-{tag[1:]}-{target}.zip'
     with tempfile.TemporaryDirectory(prefix='account-release-') as temp:
-        run(['gh', 'release', 'download', tag, '--repo', repo, '--pattern', name,
-             '--pattern', 'SHA256SUMS', '--dir', temp])
+        downloaded=False
+        if shutil.which('gh'):
+            try:
+                run(['gh', 'release', 'download', tag, '--repo', repo, '--pattern', name,
+                     '--pattern', 'SHA256SUMS', '--dir', temp],capture_output=True)
+                downloaded=True
+            except (OSError,subprocess.CalledProcessError):
+                for file in (name,'SHA256SUMS'): (Path(temp)/file).unlink(missing_ok=True)
+        if not downloaded:
+            for file,limit in (('SHA256SUMS',128*1024),(name,1024*1024*1024)):
+                request=urllib.request.Request(f'https://github.com/{repo}/releases/download/{tag}/{file}',headers={'User-Agent':'Account-Bootstrap'})
+                try:
+                    with urllib.request.urlopen(request,timeout=60) as response:
+                        content=response.read(limit+1)
+                except (urllib.error.URLError,TimeoutError) as error:
+                    raise ValueError('无法下载公开发布包；核对网络、已发布标签和资产。也可从发布页下载同版ZIP与SHA256SUMS后使用 --bundle。若仓库实际受限，再在本机处理访问权限。') from error
+                if len(content)>limit: raise ValueError('发布资产过大。')
+                (Path(temp)/file).write_bytes(content)
         hashes = {}
         for line in (Path(temp) / 'SHA256SUMS').read_text(encoding='utf-8').splitlines():
             sha, file = line.split(maxsplit=1); hashes[file.lstrip('*')] = sha
@@ -236,6 +327,8 @@ def install_app(installer):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--expected-root', type=Path, help='--apply 必填：本份启动器所在项目的绝对路径')
+    parser.add_argument('--rebind-from', type=Path, help='先关闭App再显式改绑；必须匹配当前绑定的旧绝对根，并选择 --configure-desktop --apply')
     parser.add_argument('--uv', type=Path)
     parser.add_argument('--repo')
     parser.add_argument('--tag', help='默认使用本份源码release.json的tag，不跟随开发分支或混装旧包')
@@ -246,26 +339,42 @@ def main(argv=None):
     parser.add_argument('--enable-publish', action='store_true')
     args = parser.parse_args(argv)
     if args.repo and args.bundle: parser.error('--repo 与 --bundle 不能同时使用。')
-    release = json.loads((ROOT/'release.json').read_text(encoding='utf-8'))
+    release, provenance = source_context(ROOT,args.expected_root,apply=args.apply)
+    if args.rebind_from is not None and (not args.apply or not args.configure_desktop or not args.rebind_from.is_absolute()):
+        raise ValueError('--rebind-from 必须提供旧绝对根，并同时选择 --apply --expected-root 和 --configure-desktop。')
+    if args.install_app and not (args.repo or args.bundle): raise ValueError('--install-app 需要 --repo 或 --bundle。')
+    if args.repo and args.repo.casefold()!=release['repository'].casefold(): raise ValueError('--repo 与本份源码仓库不匹配。')
     tag = args.tag or release['tag']
     if args.repo and tag != release['tag']:
         raise ValueError('指定标签与本份源码不匹配；先取得该标签的完整源码。')
     target = platform_key()
-    result = {'ok': True, 'dryRun': not args.apply, 'root': str(ROOT), 'platform': target,
-              'steps': ['准备独立 Python 环境与锁定依赖', '校验并准备匹配的发布工具', '按选项绑定及安装预览 App'],
+    # Reject binding conflicts before environment preparation, downloads or writes.
+    if args.apply and args.configure_desktop:
+        planned_python=ROOT/('.venv/Scripts/python.exe' if os.name=='nt' else '.venv/bin/python')
+        configure_desktop(ROOT,planned_python,rebind_from=args.rebind_from)
+    requested={'python':True,'components':bool(args.repo or args.bundle),'desktop':args.configure_desktop,'app':args.install_app,'native':bool(args.initialize_identity or args.enable_publish)}
+    steps={name:{'requested':selected,'status':'planned' if selected else 'skipped'} for name,selected in requested.items()}
+    result = {'ok': True, 'dryRun': not args.apply, 'root': str(ROOT.resolve()), 'platform': target,
+              'source':provenance, 'steps':steps,
               'sourceVersion': release['version'], 'releaseTag': tag,
-              'next': '运行account.py doctor；首次按入门说明体验本地记账，已有账本不重新初始化。'}
+              'next': '运行account.py doctor；首次 mini 按入门说明用全零技术预算占位、零滚存，记录预算未制定；已有账本不重新初始化或重置参数。'}
     if args.apply:
         python = prepare_python(ROOT, args.uv)
         result['python'] = str(python)
+        steps['python']['status']='completed'
         if args.repo: result['release'] = download_release(ROOT, args.repo, tag, target)
         elif args.bundle: result['release'] = stage_bundle(ROOT, args.bundle, target)
-        if args.configure_desktop: result['desktop'] = configure_desktop(ROOT, python, apply=True)
+        if requested['components']: steps['components']['status']='completed'
+        if args.configure_desktop:
+            result['desktop'] = configure_desktop(ROOT, python, apply=True,rebind_from=args.rebind_from)
+            steps['desktop']['status']=result['desktop']['status']
         if args.install_app:
             if 'release' not in result: raise ValueError('--install-app 需要 --repo 或 --bundle。')
             result['app'] = install_app(result['release']['installer'])
+            steps['app']['status']='completed'
         if args.initialize_identity or args.enable_publish:
             result['native'] = setup_native(ROOT, initialize=args.initialize_identity, enable_publish=args.enable_publish)
+            steps['native']['status']='completed'
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

@@ -388,7 +388,7 @@ def gh_json(endpoint):
     try:
         with urllib.request.urlopen(request,timeout=30) as response: return json.load(response)
     except urllib.error.HTTPError as error:
-        raise ValueError('无法读取发布；私有仓库请先 gh auth login 并确认本人访问权限。') from error
+        raise ValueError('无法读取发布；先核对网络或GitHub请求限额。公开仓库无需登录；若实际受限，再在本机处理权限或用 --release-dir 本地发布目录。') from error
 
 
 @contextmanager

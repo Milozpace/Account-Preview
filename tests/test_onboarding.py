@@ -40,6 +40,19 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn('bootstrap.py --bundle', ' '.join(status['nextSteps']))
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob('*')))
 
+    def test_new_setup_hints_use_mini_zero_placeholder_and_existing_never_reinit(self):
+        _, status=self.cli('doctor','--root',str(self.root))
+        hints=' '.join(status['nextSteps'])
+        self.assertIn('mini',hints)
+        self.assertIn('全零技术占位',hints)
+        self.assertNotIn('准备四池预算JSON',hints)
+        _, dry=self.init()
+        self.assertIn('mini',' '.join(dry['nextSteps']))
+        self.init('--apply')
+        _, status=self.cli('doctor','--root',str(self.root))
+        self.assertNotIn('运行init',' '.join(status['nextSteps']))
+        self.assertIn('next',status['desktop'])
+
     def test_init_dry_run_then_revision_zero_empty_ledger_and_idempotency(self):
         _, dry = self.init()
         self.assertTrue(dry['dry_run'])

@@ -1,4 +1,4 @@
-name: Verify private preview
+name: Verify preview
 on:
   workflow_dispatch:
     inputs:
@@ -146,11 +146,11 @@ jobs:
         run: cargo test --manifest-path app/src-tauri/Cargo.toml --locked -- --test-threads=1
       - name: Test managed first-run environment on Mac
         if: runner.os == 'macOS'
-        run: sh ./bootstrap.sh --apply
+        run: sh ./bootstrap.sh --apply --expected-root "$PWD"
       - name: Test managed first-run environment on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./bootstrap.ps1 --apply
+        run: ./bootstrap.ps1 --apply --expected-root $PWD.Path
       - name: Build native application and companions
         working-directory: app
         run: |
