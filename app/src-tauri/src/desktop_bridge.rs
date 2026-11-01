@@ -12,8 +12,8 @@ use std::{
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectConfig {
-    project_root: String,
-    python_executable: String,
+    pub(super) project_root: String,
+    pub(super) python_executable: String,
 }
 
 fn require_desktop(desktop: bool) -> Result<(), String> {
@@ -43,7 +43,7 @@ fn config_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法定位本机项目配置目录。".into())
 }
 
-fn validate_config(config: ProjectConfig) -> Result<ProjectConfig, String> {
+pub(super) fn validate_config(config: ProjectConfig) -> Result<ProjectConfig, String> {
     let root = PathBuf::from(&config.project_root);
     let python = PathBuf::from(&config.python_executable);
     if !root.is_absolute() || !python.is_absolute() {
@@ -125,7 +125,7 @@ fn read_config_at(path: &Path) -> Result<ProjectConfig, String> {
     }
 }
 
-fn read_configuration() -> Result<ProjectConfig, String> {
+pub(super) fn read_configuration() -> Result<ProjectConfig, String> {
     let path = config_path()?;
     read_config_at(&path)
 }

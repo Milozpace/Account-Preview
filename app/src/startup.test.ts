@@ -26,6 +26,7 @@ interface FakeElement {
   replaceChildren: () => void;
   addEventListener: (type: string, handler: (event?: unknown) => void) => void;
   removeAttribute: (name: string) => void;
+  remove: () => void;
   closest: () => null;
 }
 
@@ -42,6 +43,7 @@ function makeElement(dataset: Record<string, string> = {}): FakeElement {
     classList: { toggle: () => undefined },
     append: () => undefined,
     replaceChildren: () => undefined,
+    remove: () => {element.hidden=true;},
     addEventListener(type, handler) {
       (element.handlers[type] ??= []).push(handler);
     },
@@ -370,6 +372,31 @@ describe('Windows local presentation and isolated preview',()=>{
     if(command==='app_version')return Promise.resolve('0.3.0-test');
     return Promise.reject(new Error(`unexpected command ${command}`));
   };
+  it('keeps budget changes in the local API and rereads after a pre-save load finishes late',async()=>{
+    let releaseOld:((result:unknown)=>void)|undefined;let loads=0;
+    const amounts={'运行账户':'100.00','随心消费':'20.00','旅行/体验':'10.00','成长/项目/耐用品':'0.00'};
+    const fresh=structuredClone(CACHED_SNAPSHOT);fresh.sourceHash='b'.repeat(64);
+    invokeState.impl=(command,args:any)=>{
+      if(command==='desktop_load_snapshot'){
+        loads++;return loads===1?new Promise(resolve=>{releaseOld=resolve;}):Promise.resolve({snapshot:fresh,sourceChanged:false,monthChanged:false});
+      }
+      if(command==='desktop_budget_status')return Promise.resolve({sourceHash:'a'.repeat(64),revision:2,suggestedMonth:'2026-10',rates:[{effective:'2026-10',amounts}]});
+      if(command==='desktop_budget_preview')return Promise.resolve({...args.request,previousAmounts:amounts,affectedThrough:null,changed:true,sourceHash:'a'.repeat(64),revision:2});
+      if(command==='desktop_budget_save')return Promise.resolve({...args.request,previousAmounts:amounts,affectedThrough:null,changed:true,applied:true,sourceHash:'b'.repeat(64),revision:3,snapshotUpdated:true});
+      return common(command);
+    };
+    await import('./main');await flush(20);click('#settings-button');activateRenderedButton('data-settings-tab','budget');await flush(20);
+    expect(mainHtml()).toContain('id="budget-form"');
+    const input=elements.get('#budget-operation')!;input.value='120';
+    input.handlers.input.at(-1)!({target:input});
+    elements.get('#budget-form')!.handlers.submit.at(-1)!({preventDefault(){}});await flush(15);
+    expect(mainHtml()).toContain('id="budget-confirm-save"');
+    expect(invokeState.seen).not.toContain('desktop_budget_save');
+    elements.get('#budget-confirm-save')!.handlers.click.at(-1)!();await flush(10);
+    releaseOld?.({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false});await flush(40);
+    expect(loads).toBe(2);expect(mainHtml()).toContain('额度已保存');
+    for(const command of ['desktop_refresh_snapshot','ledger_fetch','sync_configure','ledger_publish'])expect(invokeState.seen).not.toContain(command);
+  });
   it.each([{hasSnapshot:false,detail:1},{hasSnapshot:true,detail:0}])('opens sync from settings and returns with hasSnapshot=$hasSnapshot (click detail=$detail)',async({hasSnapshot,detail})=>{
     const initialStatus=hasSnapshot?LEDGER_READY:{initialized:false,publishEnabled:false,cachedRevision:null,pendingRevision:null,lastPublishedRevision:null};
     let currentStatus={...initialStatus,pendingRevision:initialStatus.pendingRevision as number|null};
@@ -384,16 +411,17 @@ describe('Windows local presentation and isolated preview',()=>{
     if(hasSnapshot)currentStatus={...initialStatus,pendingRevision:5};
     // Native buttons emit the same delegated click for pointer and keyboard activation.
     activateRenderedButton('data-open','sync',detail);await flush(25);
-    expect(mainHtml()).toContain('class="view sync"');
+    expect(mainHtml()).toContain('data-settings-panel="sync" aria-labelledby="settings-sync-title"');
     expect(mainHtml()).toContain('id="sync-form"');
     expect(mainHtml()).toContain('id="show-pairing"');
     expect(mainHtml()).not.toContain('id="scan-pairing"');
     expect(mainHtml()).toContain(hasSnapshot?'第 5 版（尚未发布成功）':'未初始化（需先在电脑初始化或扫码配对）');
     expect(invokeState.seen.filter(command=>command==='ledger_status_command')).toHaveLength(readsBefore+1);
-    activateRenderedButton('data-action','back');
+    activateRenderedButton('data-settings-tab','general');
     expect(mainHtml()).toContain('data-settings-panel="general"');
     expect(mainHtml()).not.toContain('class="view sync"');
-    expect(assign).not.toHaveBeenCalled();
+    activateRenderedButton('data-action','back');
+    expect(assign).toHaveBeenCalledWith('/');
     for(const command of ['ledger_fetch','sync_configure','ledger_create_pairing','ledger_import_pairing','desktop_refresh_snapshot'])expect(invokeState.seen).not.toContain(command);
   });
   it('opens the application settings directly and returns to the shared desktop overview',async()=>{

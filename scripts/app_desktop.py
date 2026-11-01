@@ -1,8 +1,9 @@
 """Explicit-root local display bridge. No server, bill import or workbook writes.
 
-The native Windows host invokes this script with exact argv. Load is read-only;
-refresh selects the active ledger calculation/export pipeline and the
-established optional publisher gate. Payloads go only to the caller's pipe.
+The native host invokes this script with exact argv. Load and budget preview
+are read-only. Refresh uses the established optional publisher gate; explicit
+reviewed budget save updates SQLite and exports locally without publishing.
+Payloads go only to the caller's pipe.
 """
 import argparse
 import json
@@ -138,19 +139,30 @@ def refresh_snapshot(project_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('load', 'refresh'))
+    parser.add_argument('command', choices=('load', 'refresh', 'budget-status', 'budget-preview', 'budget-save'))
     parser.add_argument('--project-root', type=Path, required=True)
     args = parser.parse_args()
     try:
-        operation = load_snapshot if args.command == 'load' else refresh_snapshot
-        result = operation(args.project_root)
+        if args.command.startswith('budget-'):
+            import budget_settings
+            if args.command == 'budget-status':
+                result = budget_settings.status(args.project_root)
+            else:
+                payload = budget_settings.read_payload(sys.stdin.buffer)
+                operation = budget_settings.preview if args.command == 'budget-preview' else budget_settings.save
+                result = operation(args.project_root, payload)
+        else:
+            operation = load_snapshot if args.command == 'load' else refresh_snapshot
+            result = operation(args.project_root)
         sys.stdout.reconfigure(encoding='utf-8')
         print(json.dumps(result, ensure_ascii=False, separators=(',', ':'), allow_nan=False))
         return 0
     except Exception:
         # Paths, financial contents, native Excel/publisher diagnostics stay out
         # of the UI response and shared logs. Existing snapshots stay intact.
-        sys.stderr.write('本地展示读取或同步失败；请检查主项目配置及账本来源后重试。\n')
+        message = ('预算读取、预检或保存失败；账本可能已变化，请刷新预算并检查输入后重试。\n'
+                   if args.command.startswith('budget-') else '本地展示读取或同步失败；请检查主项目配置及账本来源后重试。\n')
+        sys.stderr.write(message)
         return 1
 
 

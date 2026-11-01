@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {desktopSettingsHtml} from './desktop-settings';
+import {desktopSettingsHtml,desktopSyncHtml} from './desktop-settings';
 describe('desktop settings content',()=>{
  it('offers a native sync navigation button in the visible general panel',()=>{
   const html=desktopSettingsHtml({section:'general',theme:'system',motion:'system',config:null,version:'',diagnostics:''});
@@ -17,5 +17,22 @@ describe('desktop settings content',()=>{
  it('escapes paths and opens the requested category',()=>{
   const html=desktopSettingsHtml({section:'advanced',theme:'dark',motion:'system',config:{projectRoot:'<script>',pythonExecutable:'"abc'},version:'',diagnostics:''});
   expect(html).toMatch(/data-settings-panel="advanced"(?! hidden)/);expect(html).toContain('&lt;script&gt;');expect(html).toContain('&quot;abc');
+ });
+ it('provides separate budget and sync categories while preserving inactive form markup',()=>{
+  const html=desktopSettingsHtml({section:'budget',theme:'system',motion:'system',config:null,version:'',diagnostics:'',budgetContent:'<input id="budget-month">',syncContent:'<form id="sync-form"></form>'});
+  expect(html).toContain('data-settings-tab="budget" aria-current="page">四池预算');
+  expect(html).toContain('data-settings-tab="sync">手机与同步');
+  expect(html).toContain('data-settings-panel="budget" aria-labelledby="settings-budget-title"');
+  expect(html).toContain('data-settings-panel="sync" hidden');
+  expect(html).toContain('<input id="budget-month">');
+  expect(html).toContain('<form id="sync-form"></form>');
+ });
+ it('groups sync status, existing credentials and pairing controls without mobile cards',()=>{
+  const html=desktopSyncHtml('<dl>本机状态</dl>','<div class="card-block"><form id="sync-form"><input id="account"><input id="password"><button id="save-sync">保存</button></form></div>','<button id="show-pairing">显示二维码</button><button id="hide-qr">隐藏</button>',true,true);
+  expect(html).toContain('desktop-sync-settings');
+  expect(html).toContain('id="fetch-button" type="button" disabled');
+  expect(html).toContain('id="sync-form"');expect(html).toContain('id="show-pairing"');expect(html).toContain('id="hide-qr"');
+  expect(html).toContain('id="pair-status"');expect(html).not.toContain('sync-summary');
+  expect(desktopSyncHtml('','','',false,false)).toContain('id="fetch-button" type="button" disabled');
  });
 });

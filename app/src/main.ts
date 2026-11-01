@@ -24,7 +24,10 @@ import './mobile-picker.css';
 import { loadThemePreference, saveThemePreference, type ThemePreference } from './mobile-theme';
 import {buildAnalysisExport} from '../../dashboard/src/analysis-export';
 import {exportFormHtml, ExportSession, updateExportFeedback, downloadExport} from '../../dashboard/src/export-ui';
-import {desktopSettingsHtml,type SettingsSection} from './desktop-settings';
+import {desktopSettingsHtml,desktopSyncHtml,type SettingsSection} from './desktop-settings';
+import {budgetSettingsHtml} from './budget-settings';
+import {BudgetSession} from './budget-session';
+const budgetSession=new BudgetSession(invoke);
 import {BillUploadSession,billUploadHtml,type BillUploadItem} from './bill-upload';
 import './bill-upload.css';
 import {BillUploadRefresh} from './bill-upload-refresh';
@@ -150,7 +153,7 @@ function settingsPageHtml():string {
   const config=state.desktopConfig;
   const preference=loadMotionPreference();
   const themePreference=loadThemePreference();
-  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,motion:preference,config:state.desktopConfig,version:state.version,diagnostics:diagnosticsHtml()});
+  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,motion:preference,config:state.desktopConfig,version:state.version,diagnostics:diagnosticsHtml(),budgetContent:budgetSettingsHtml(budgetSession),syncContent:desktopSyncHtml(ledgerStatusHtml(),credentialsHtml(),pairingHtml(),state.busy,isTauri()&&!state.preview)});
   const appearance=`<label for="theme-preference">外观</label><select id="theme-preference">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<option value="${value}" ${themePreference===value?'selected':''}>${label}</option>`).join('')}</select>`;
   return `<section class="settings"><div class="card-block"><h2>显示与操作</h2>${appearance}<label for="motion-preference">动态效果</label><select id="motion-preference"><option value="system" ${preference==='system'?'selected':''}>跟随系统</option><option value="reduce" ${preference==='reduce'?'selected':''}>减少动态效果</option></select><p class="hint">字体跟随系统设置。系统开启减少动态效果时，应用也会减少动效。</p></div>${!mobile()?`<div class="card-block"><h2>电脑账本位置</h2><form id="desktop-config-form"><label for="project-root">账本项目目录</label><input id="project-root" value="${escapeHtml(config?.projectRoot??'')}" autocomplete="off" spellcheck="false"><label for="python-path">Python 程序</label><input id="python-path" value="${escapeHtml(config?.pythonExecutable??'')}" autocomplete="off" spellcheck="false"><div class="actions"><button type="submit">保存本机配置</button></div><p id="desktop-config-status" role="status"></p></form></div><div class="menu-group"><button type="button" class="menu-row" data-open="diagnostics"><span>开发与诊断</span><span class="row-chevron" aria-hidden="true">${uiIcon('right')}</span></button></div>`:''}</section>`;
 }
@@ -264,15 +267,41 @@ function searchBills(input:HTMLInputElement):void {
   if(caption)caption.textContent=`${records.length} 笔 · ${query.scope==='structural'?'合计':'净消费'} ¥ ${money(records.reduce((sum,record)=>sum+record.amountCents,0))}`;
   const clear=document.querySelector<HTMLButtonElement>('[data-action="clear-search"]');if(clear)clear.hidden=!query.query;
 }
+function selectSettingsSection(section:SettingsSection):void {
+  if(!['general','budget','sync','advanced','diagnostics'].includes(section))return;
+  if(section!=='sync')hideQr();
+  state.settingsSection=section;
+  document.querySelectorAll<HTMLElement>('[data-settings-panel]').forEach(panel=>{panel.hidden=panel.dataset.settingsPanel!==section;});
+  document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach(tab=>{if(tab.dataset.settingsTab===section)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
+  if(section==='budget'&&!budgetSession.status)void loadBudget();
+  if(section==='sync')void refreshLedgerStatus().then(()=>{if(state.view==='settings'&&state.settingsSection==='sync')render();});
+}
+async function loadBudget(preserve=false):Promise<void> {
+  if(!isTauri()||state.preview){budgetSession.message='预算编辑需要配置本地账本后使用。';render();return;}
+  const loading=budgetSession.load(preserve);render();await loading;
+  if(state.view==='settings')render();
+}
+async function previewBudget():Promise<void> {
+  if(!isTauri()||state.preview)return;
+  const pending=budgetSession.preflight();render();await pending;if(state.view==='settings')render();
+}
+async function saveBudget():Promise<void> {
+  if(!isTauri()||state.preview)return;
+  const pending=budgetSession.save();render();const saved=await pending;
+  if(saved)await loadDesktop(true);
+  if(state.view==='settings')render();
+}
 function bindView():void {
   document.querySelector<HTMLButtonElement>('#bill-upload-choose')?.addEventListener('click',()=>void chooseBillUpload());
   document.querySelector<HTMLButtonElement>('#bill-upload-check')?.addEventListener('click',()=>void loadBillUploads(true));
   document.querySelectorAll<HTMLButtonElement>('[data-upload-retry]').forEach(button=>button.addEventListener('click',()=>void retryBillUpload(button.dataset.uploadRetry!)));
-  document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach(button=>button.addEventListener('click',()=>{
-    state.settingsSection=button.dataset.settingsTab as SettingsSection;
-    document.querySelectorAll<HTMLElement>('[data-settings-panel]').forEach(panel=>{panel.hidden=panel.dataset.settingsPanel!==state.settingsSection;});
-    document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach(tab=>{if(tab===button)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
-  }));
+  document.querySelector<HTMLFormElement>('#budget-form')?.addEventListener('submit',event=>{event.preventDefault();void previewBudget();});
+  document.querySelector<HTMLButtonElement>('#budget-confirm-save')?.addEventListener('click',()=>void saveBudget());
+  document.querySelector<HTMLButtonElement>('#budget-reload')?.addEventListener('click',()=>void loadBudget(true));
+  document.querySelector<HTMLSelectElement>('#budget-existing-rate')?.addEventListener('change',event=>{const month=(event.target as HTMLSelectElement).value;if(month){budgetSession.selectMonth(month);render();}});
+  for(const [id,field] of [['budget-month','effective'],['budget-reason','reason'],['budget-operation','运行账户'],['budget-free','随心消费'],['budget-travel','旅行/体验'],['budget-growth','成长/项目/耐用品']]) {
+    document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input',event=>{budgetSession.change(field,(event.target as HTMLInputElement).value);document.querySelector<HTMLElement>('.budget-preview')?.remove();});
+  }
   document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach(button=>button.addEventListener('click',()=>{
     saveThemePreference(button.dataset.themeChoice as ThemePreference);
     document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach(choice=>choice.setAttribute('aria-pressed',String(choice===button)));
@@ -343,15 +372,17 @@ async function saveAnalysisExport():Promise<void>{
 main.addEventListener('click',event=>{
   const target=event.target as HTMLElement|null;
   if(!target?.closest)return;
-  const button=target.closest<HTMLElement>('[data-record],[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-analysis],[data-highlight-pool],#expand-categories');
+  const button=target.closest<HTMLElement>('[data-record],[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-analysis],[data-highlight-pool],[data-settings-tab],#expand-categories');
   if(!button)return;
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
+  if(data.settingsTab){selectSettingsSection(data.settingsTab as SettingsSection);return;}
   if(data.record){open({view:'detail',recordId:data.record});return;}
   if(data.pool){open({view:'pool',poolId:data.pool});return;}
   if(data.category){openBills({category:data.category});return;}
   if(data.date){if(state.view==='analysis'&&state.analysisTab==='calendar'){state.analysisDate=data.date;render();}else openBills({date:data.date});return;}
   if(data.scope){openBills(data.scope==='structural'?{scope:'structural'}:{pool:'unknown'});return;}
+  if(data.open==='sync'&&!mobile()){state.settingsSection='sync';if(state.view==='settings')render();else open({view:'settings'});void refreshLedgerStatus().then(()=>{if(state.view==='settings'&&state.settingsSection==='sync')render();});return;}
   if(data.open){open(data.open==='bills'?{view:'bills',query:emptyQuery()}:{view:data.open as Screen['view']});if(data.open==='sync')void refreshLedgerStatus().then(()=>{if(state.view==='sync')render();});return;}
   if(data.analysis){state.analysisTab=data.analysis as AnalysisTab;state.expanded=false;render('tab');return;}
   if(data.highlightPool){const pinned=button.getAttribute('aria-pressed')==='true';document.querySelectorAll<HTMLElement>('[data-highlight-pool]').forEach(el=>el.setAttribute('aria-pressed','false'));button.setAttribute('aria-pressed',String(!pinned));charts?.highlightPool(pinned?null:data.highlightPool);return;}
@@ -372,7 +403,8 @@ async function onDesktopConfigure(event:Event):Promise<void>{
 }
 let localEpoch=0;
 let localLoad:Promise<void>|null=null;
-async function loadDesktop():Promise<void>{
+async function loadDesktop(force=false):Promise<void>{
+  if(force){localEpoch++;const prior=localLoad;if(prior)await prior;}
   if(state.busy||state.preview)return;
   if(localLoad)return localLoad;
   const epoch=++localEpoch;
@@ -414,20 +446,18 @@ function ledgerStatusHtml(): string {
   return `<dl class="info-list">${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl>`;
 }
 
-function syncHtml(): string {
-  const pairing = state.android
+function pairingHtml(): string {
+  return state.android
     ? `<div class="actions"><button id="scan-pairing" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>扫码配对</button></div>
        <p class="hint">扫描电脑端显示的正式账本配对二维码。重复扫码不会重置已有配对。</p>`
     : `<div class="actions"><button id="show-pairing" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>显示配对二维码</button></div>
        <div id="qr-panel" hidden><img id="pairing-qr" alt="正式账本设备配对二维码"><p class="hint">二维码含账本密钥，只给自己的设备扫描。显示两分钟后自动隐藏。</p><button id="hide-qr" class="back-button" type="button">立即隐藏</button></div>`;
+}
+function syncHtml(): string {
+  const pairing=pairingHtml();
+  if(!mobile()){state.settingsSection='sync';return settingsPageHtml();}
   if(mobile())return mobileSyncHtml({initialized:state.ledger?.initialized??null,configured:state.probeConfigured,connectionKnown:state.probeSummaryLoaded,hasData:Boolean(state.snapshot),source:state.source,revision:state.revision,checking:state.checkingCloud,warning:[state.messageTone?state.message:'',coverageNote(state.snapshot)].filter(Boolean).join(' '),editingConnection:state.editingConnection,editingPairing:state.editingPairing},credentialsHtml(),pairing);
-  return `<section class="view sync"><h2>同步</h2>
-    <div class="card-block"><h3 style="margin:0 0 8px">正式账本状态</h3>${ledgerStatusHtml()}
-      <div class="actions"><button id="fetch-button" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>检查云端更新</button></div>
-      <p class="hint">启动和回到前台时会自动检查更新；网络失败时保留缓存并显示原因。</p>
-    </div>
-    ${credentialsHtml()}<div class="card-block"><h3 style="margin:0 0 8px">设备配对</h3>${pairing}<p id="pair-status" role="status" aria-live="polite"></p></div>
-  </section>`;
+  return '';
 }
 
 function diagnosticsHtml(): string {

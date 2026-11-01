@@ -2,6 +2,7 @@ mod analysis_export;
 pub mod bill_inbox;
 mod bill_upload;
 mod desktop_bridge;
+mod desktop_budget;
 mod ledger;
 mod ledger_sync;
 mod probe;
@@ -112,6 +113,9 @@ pub fn run() {
             desktop_bridge::desktop_configure_project,
             desktop_bridge::desktop_load_snapshot,
             desktop_bridge::desktop_refresh_snapshot,
+            desktop_budget::desktop_budget_status,
+            desktop_budget::desktop_budget_preview,
+            desktop_budget::desktop_budget_save,
             analysis_export::analysis_export_save,
             bill_upload::bill_upload_choose,
             bill_upload::bill_upload_status,

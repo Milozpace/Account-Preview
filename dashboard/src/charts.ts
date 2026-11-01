@@ -3,8 +3,9 @@ import { LineChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { LabelLayout } from 'echarts/features';
-import { escapeHtml, money } from './helpers';
+import { escapeHtml, money, monthProgress } from './helpers';
 import type { DashboardMonth, LedgerRecord } from './types';
+import { hasComparableAllowance } from './budget-display';
 
 use([LineChart, ScatterChart, GridComponent, TooltipComponent, LabelLayout, CanvasRenderer]);
 
@@ -47,6 +48,15 @@ export function renderCharts(month: DashboardMonth, today: string, onDate: (date
   const axisLabel = { color: colors.muted, fontFamily, fontSize: 11 };
   const daily = month.daily;
   const dates = daily.map((day) => day.date);
+  let netCents = 0;
+  const cumulativeCents = daily.map(day => {
+    netCents += day.amountCents;
+    return day.date <= today ? netCents : null;
+  });
+  const totalDays = monthProgress(month.month, today).total;
+  const monthlyBudget = month.summary.monthlyBudgetCents ?? 0;
+  const referenceCents = daily.map(day => hasComparableAllowance(month) && monthlyBudget > 0
+    ? Math.round(monthlyBudget * Number(day.date.slice(8)) / totalDays) : null);
   const formatY = (value: number) => Math.abs(value) >= 1000 ? `${value / 1000}k` : `${value}`;
   const tooltipStyle = {
     backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1,
@@ -64,18 +74,20 @@ export function renderCharts(month: DashboardMonth, today: string, onDate: (date
       ...tooltipStyle, trigger: 'axis', ...(options?.touch?{triggerOn:'click'}:{}),
       formatter: (parameters: unknown) => {
         const params = parameters as { dataIndex: number }[];
-        const day = daily[params[0]?.dataIndex];
+        const index = params[0]?.dataIndex;
+        const day = daily[index];
         if (!day) return '';
         const recorded = day.date > today ? '未来日期' : day.count > 0 ? `${day.count} 笔个人/项目消费` : '未记录消费';
-        const cumulative = day.date > today ? '未来日期' : `运行累计　¥ ${money(day.operationCumulativeCents)}`;
-        return `<strong>${escapeHtml(day.date)}</strong><br>${escapeHtml(cumulative)}<br>预算参考　¥ ${money(month.mechanismActive ? day.referenceCents : null)}<br><span style="color:${colors.muted}">${escapeHtml(recorded)}</span>`;
+        const cumulative = day.date > today ? '未来日期' : `累计净消费　¥ ${money(cumulativeCents[index])}`;
+        const reference = referenceCents[index] == null ? '暂无额度' : `¥ ${money(referenceCents[index])}`;
+        return `<strong>${escapeHtml(day.date)}</strong><br>${escapeHtml(cumulative)}<br>总额度参考　${reference}<br><span style="color:${colors.muted}">${escapeHtml(recorded)}</span>`;
       },
     },
     xAxis: { type: 'category', data: dates, boundaryGap: false, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLabel, formatter: (value: string) => `${Number(value.slice(8))}日`, interval: 5 } },
     yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: { ...axisLabel, formatter: formatY }, splitLine: { lineStyle: { color: colors.grid, type: 'dashed' } } },
     series: [
-      { name: '预算参考', type: 'line', data: daily.map((day) => month.mechanismActive && day.referenceCents != null ? day.referenceCents / 100 : null), symbol: 'none', lineStyle: { color: colors.reference, width: 1.5, type: 'dashed' }, emphasis: { disabled: true } },
-      { name: '运行累计', type: 'line', data: daily.map((day) => day.date <= today && day.operationCumulativeCents != null ? day.operationCumulativeCents / 100 : null), showSymbol: false, symbol: 'circle', symbolSize: 5, lineStyle: { color: colors.pools.operation, width: 2.5 }, itemStyle: { color: colors.pools.operation }, areaStyle: { color: colors.area, opacity: 0.65 }, connectNulls: false },
+      { name: '总额度参考', type: 'line', data: referenceCents.map(cents => cents == null ? null : cents / 100), symbol: 'none', lineStyle: { color: colors.reference, width: 1.5, type: 'dashed' }, emphasis: { disabled: true } },
+      { name: '累计净消费', type: 'line', data: cumulativeCents.map(cents => cents == null ? null : cents / 100), showSymbol: false, symbol: 'circle', symbolSize: 5, lineStyle: { color: colors.pools.operation, width: 2.5 }, itemStyle: { color: colors.pools.operation }, areaStyle: { color: colors.area, opacity: 0.65 }, connectNulls: false },
     ],
   });
   if(options?.touch){

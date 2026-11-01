@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 
@@ -656,6 +657,128 @@ def append_budget(path, effective, amounts, reason, apply=False):
         after = _read(conn)
         _validate_state(after)
         return {**result, 'applied': True, 'revision': revision, 'sourceHash': after['sourceHash']}
+    if apply:
+        with _writer_lock(path):
+            with _connect(path, writable=True) as conn:
+                return operation(conn)
+    with _connect(path) as conn:
+        return operation(conn)
+
+
+def _reviewed_budget_amounts(amounts):
+    """Desktop amounts are exact cents; never silently round user input."""
+    if not isinstance(amounts, dict) or set(amounts) != set(account.POOLS):
+        raise ValueError('预算必须明确给出完整四池金额')
+    limit = 2 ** 53 - 1
+    result = {}
+    for pool in account.POOLS:
+        value = amounts[pool]
+        if not isinstance(value, str) or not re.fullmatch(r'(?:0|[1-9][0-9]*)\.[0-9]{2}', value):
+            raise ValueError('预算必须为非负金额文本，精确到两位小数')
+        # Bound text before Decimal arithmetic or conversion to an integer.
+        if len(value) > 17 or calculation.cents(value) > limit:
+            raise ValueError('预算金额超出安全整数范围')
+        result[pool] = value
+    if sum(calculation.cents(v) for v in result.values()) > limit:
+        raise ValueError('预算合计超出安全整数范围')
+    return result
+
+
+def _validate_budget_display_range(state):
+    """Check current/historical aggregates, including inherited signed carry.
+
+    Extrema occur at transaction months, rate boundaries and the last month;
+    between these points monthly carries and safety only change linearly.
+    This avoids calculating every intervening month repeatedly.
+    """
+    limit = 2 ** 53 - 1
+    calendar_month = datetime.now(account.TZ).strftime('%Y-%m')
+    points = {calendar_month, *(r['生效月份'][:7] for r in state['rates']),
+              *(r['交易时间'][:7] for r in state['rows'])}
+    for month in tuple(points):
+        year, number = map(int, month.split('-'))
+        if month != '0001-01':
+            points.add(f'{year - (number == 1):04d}-{(number - 1) or 12:02d}')
+
+    def check(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                check(item)
+        elif isinstance(value, list):
+            for item in value:
+                check(item)
+        elif isinstance(value, int) and not isinstance(value, bool) and abs(value) > limit:
+            raise ValueError('预算及滚存汇总超出安全整数范围')
+
+    for month in sorted(points):
+        check(calculation.calculate_month(state, month, calendar_month))
+
+
+def set_budget(path, effective, amounts, reason, *, expected_source_hash,
+               reviewer, confirmation_source, apply=False):
+    """Explicitly insert or revise a reviewed effective month, with CAS.
+
+    The legacy append API stays append-only. Revision of this parameter is
+    allowed only inside the writer lock and BEGIN IMMEDIATE transaction; raw
+    ledger fields and the schema/calculation versions are never modified.
+    """
+    if not isinstance(effective, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}', effective):
+        raise ValueError('预算生效月份必须为YYYY-MM')
+    month = calculation.month_key(effective)
+    amounts = _reviewed_budget_amounts(amounts)
+    if not isinstance(expected_source_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_source_hash):
+        raise ValueError('预算变更必须提供当前账本预期哈希，请刷新后重试')
+    for value in (reason, reviewer, confirmation_source):
+        if not isinstance(value, str) or not value.strip() or len(value) > 2000 or '\x00' in value:
+            raise ValueError('预算变更必须记录理由、审定者和明确确认依据')
+    rate = {'生效月份': month + '-01', **amounts}
+
+    def operation(conn):
+        before = _read(conn)
+        if before['sourceHash'] != expected_source_hash:
+            raise ValueError('账本已变化，预算预检已过期；请刷新后重试')
+        current = next((r for r in before['rates'] if r['生效月份'][:7] == month), None)
+        prior = next((r for r in reversed(before['rates']) if r['生效月份'][:7] <= month), None)
+        following = next((r['生效月份'][:7] for r in before['rates'] if r['生效月份'][:7] > month), None)
+        through = None
+        if following:
+            year, number = map(int, following.split('-'))
+            through = f'{year - (number == 1):04d}-{(number - 1) or 12:02d}'
+        changed = current != rate
+        result = dict(ok=True, applied=False, changed=changed, effective=month, amounts=amounts,
+                      previousAmounts={p: prior[p] for p in account.POOLS} if prior else None,
+                      affectedThrough=through, sourceHash=before['sourceHash'], revision=before['revision'])
+        candidate_rates = sorted([r for r in before['rates'] if r != current] + [rate], key=lambda r: r['生效月份'])
+        candidate = {**before, 'rates': candidate_rates}
+        _validate_state(candidate)
+        _validate_budget_display_range(candidate)
+        if not apply or not changed:
+            return result
+        _prewrite_backup(path)
+        revision = before['revision'] + 1
+        values = tuple(calculation.cents(amounts[p]) for p in account.POOLS)
+        if current is None:
+            conn.execute('INSERT INTO budget_rates VALUES(?,?,?,?,?)', (month, *values))
+        else:
+            trigger = conn.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='budget_no_update'").fetchone()
+            if trigger is None:
+                raise ValueError('预算历史保护缺失，拒绝写入')
+            # execute preserves the surrounding transaction; executescript would
+            # implicitly commit and must never be used to suspend this guard.
+            conn.execute('DROP TRIGGER budget_no_update')
+            conn.execute('UPDATE budget_rates SET operation_cents=?,free_cents=?,travel_cents=?,growth_cents=? WHERE effective_month=?',
+                         (*values, month))
+            conn.execute(trigger[0])
+        _audit(conn, revision, 'budget-revise' if current else 'budget-insert', current, rate,
+               reason.strip(), confirmation_source.strip(), reviewer.strip(), datetime.now(account.TZ).isoformat())
+        conn.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
+        _check_sql(conn)
+        after = _read(conn)
+        _validate_state(after)
+        if after['rows'] != before['rows'] or after['initial'] != before['initial'] or after['rates'] != candidate_rates:
+            raise ValueError('预算事务写入后逐字段核对失败')
+        return {**result, 'applied': True, 'sourceHash': after['sourceHash'], 'revision': revision}
+
     if apply:
         with _writer_lock(path):
             with _connect(path, writable=True) as conn:

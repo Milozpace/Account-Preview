@@ -517,6 +517,12 @@ def main(argv=None):
     budget.add_argument('--amounts', type=Path, required=True)
     budget.add_argument('--reason', required=True)
     budget.add_argument('--apply', action='store_true')
+    budget_set = commands.add_parser('budget-set', help='明确新增或修订所选预算生效月；只更新本地展示')
+    budget_set.add_argument('--effective', required=True)
+    budget_set.add_argument('--amounts', type=Path, required=True)
+    budget_set.add_argument('--expected-hash', required=True)
+    budget_set.add_argument('--reason', required=True)
+    budget_set.add_argument('--apply', action='store_true')
     activate = commands.add_parser('activate-sqlite', help='通过独立迁移验收后显式切换主项目来源')
     activate.add_argument('--audit', type=Path, required=True)
     activate.add_argument('--apply', action='store_true')
@@ -545,6 +551,18 @@ def main(argv=None):
         result = ledger_migration.command(args, root)
         print(json.dumps(result,ensure_ascii=False,indent=2))
         return 0 if result.get('ok', True) else 1
+    if args.command == 'budget-set':
+        import budget_settings
+        _, selected, _ = budget_settings._paths(root)
+        requested = ledger_source.resolve(root, workbook=args.workbook, database=args.database)
+        if requested != selected:
+            raise ValueError('预算设置只能使用本项目已启用的SQLite账本')
+        with args.amounts.open('rb') as stream:
+            amounts = budget_settings.read_payload(stream)
+        payload = dict(effective=args.effective, amounts=amounts, expectedSourceHash=args.expected_hash, reason=args.reason)
+        result = budget_settings.save(root, payload, apply=args.apply)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get('ok') else 1
     args.workbook = ledger_source.resolve(root, workbook=args.workbook, database=args.database)
     if 'archive' in [p.lower() for p in args.workbook.resolve().parts]: raise ValueError('拒绝将archive当作当前工作簿')
     if ledger_source.is_database(args.workbook):
