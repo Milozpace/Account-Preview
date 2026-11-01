@@ -9,11 +9,32 @@ except ModuleNotFoundError:
     from scripts import product_version
 
 
-def prepare(root, profile, platform, apply=False):
-    root = Path(root); data = product_version.load(root)
+def inactive_android_build_sources(root, profiles, selected):
+    """Tauri's buildSrc classes are in the default Kotlin package despite their paths."""
+    source = root/'app/src-tauri/gen/android/buildSrc/src/main/java'
+    paths = {}
+    for profile, config in profiles.items():
+        files = [source/Path(*config['identifier'].split('.'))/'kotlin'/name
+                 for name in ['BuildTask.kt', 'RustPlugin.kt']]
+        for path in files:
+            if path.is_symlink() or not path.resolve().is_relative_to(root):
+                raise ValueError('Android 生成源码路径必须留在隔离构建目录内。')
+        paths[profile] = files
+    # The first prepare runs before init. Keep its only usable build plugin until
+    # init has generated the complete active pair; the second prepare removes duplicates.
+    if not all(path.is_file() for path in paths[selected]): return []
+    return [path for profile, files in paths.items() if profile != selected for path in files if path.is_file()]
+
+
+def prepare(root, profile, platform, apply=False, isolated_build=False):
+    root = Path(root).resolve(); data = product_version.load(root)
     if profile not in data['profiles']: raise ValueError('未知构建档案。')
     selected = data['profiles'][profile]
     if platform not in selected['platforms']: raise ValueError('此档案不支持该平台。')
+    remove_generated = inactive_android_build_sources(root, data['profiles'], profile) if platform == 'android-arm64' else []
+    if apply and remove_generated:
+        if not isolated_build: raise ValueError('清理重复 Android 生成源码须显式指定隔离构建 --isolated-build。')
+        if (root/'data/account.sqlite3').exists(): raise ValueError('含账本的项目不得清理生成源码；请使用隔离构建副本。')
     conf_path = root/'app/src-tauri/tauri.conf.json'
     conf = json.loads(conf_path.read_text(encoding='utf-8'))
     conf.update(identifier=selected['identifier'], productName=selected['productName'], version=data['nativeVersion'])
@@ -59,8 +80,10 @@ def prepare(root, profile, platform, apply=False):
             target.write_text(activity, encoding='utf-8', newline='\n')
             for path in activities:
                 if path != target and path.exists(): path.unlink()
+            for path in remove_generated: path.unlink()
     return {'ok': True, 'applied': apply, 'profile': profile, 'platform': platform,
             'identifier': selected['identifier'], 'desktopConfig': selected['desktopConfig'],
+            'removeGenerated': [path.relative_to(root).as_posix() for path in remove_generated],
             'android': '运行 tauri android init 重新生成 Java 包与 Gradle applicationId。' if platform == 'android-arm64' else None}
 
 
@@ -70,8 +93,10 @@ def main():
     parser.add_argument('--profile', choices=['preview', 'personal'], default='preview')
     parser.add_argument('--platform', required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--isolated-build', action='store_true',
+                        help='Confirm this is an isolated source build checkout; permits removing inactive generated buildSrc classes.')
     args = parser.parse_args()
-    print(json.dumps(prepare(args.root, args.profile, args.platform, args.apply), ensure_ascii=False))
+    print(json.dumps(prepare(args.root, args.profile, args.platform, args.apply, args.isolated_build), ensure_ascii=False))
 
 
 if __name__ == '__main__': main()

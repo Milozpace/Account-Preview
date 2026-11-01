@@ -133,5 +133,17 @@ class BootstrapTests(unittest.TestCase):
         self.assertTrue(any(command[0] == str(uv) and command[1:3] == ['pip','sync'] for command in commands))
         self.assertFalse(any(command[1:3] == ['-m','pip'] for command in commands))
 
+    def test_external_tools_uv_creates_owner_managed_runtime(self):
+        tools=self.root/'tools'; owner=self.root/'owner'; owner.mkdir()
+        name='uv.exe' if sys.platform=='win32' else ('uv-aarch64-apple-darwin/uv' if bootstrap.platform.machine()=='arm64' else 'uv-x86_64-apple-darwin/uv')
+        uv=tools/'.runtime/bootstrap'/name
+        uv.parent.mkdir(parents=True); uv.write_bytes(b'isolated tool uv')
+        with patch.object(bootstrap,'ROOT',tools), patch.object(bootstrap,'run') as execute:
+            bootstrap.prepare_python(owner)
+        commands=[[str(a) for a in call.args[0]] for call in execute.call_args_list]
+        self.assertEqual(commands[0][0],str(uv))
+        self.assertIn('--managed-python',commands[0])
+        self.assertEqual(execute.call_args_list[0].kwargs['env']['UV_PYTHON_INSTALL_DIR'],str(owner/'.runtime/python'))
+
 
 if __name__ == '__main__': unittest.main()

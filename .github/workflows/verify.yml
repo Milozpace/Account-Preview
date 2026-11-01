@@ -204,9 +204,9 @@ jobs:
       - name: Build unsigned arm64 APK
         working-directory: app
         run: |
-          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply
+          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply --isolated-build
           npm run tauri -- android init --ci --skip-targets-install
-          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply
+          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply --isolated-build
           npm run tauri -- android build --ci --target aarch64 --apk
           cd src-tauri/gen/android
           sh ./gradlew :tauri-plugin-platform:testDebugUnitTest

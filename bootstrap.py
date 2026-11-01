@@ -180,7 +180,10 @@ def prepare_python(root, uv=None):
     if uv is None:
         names = ['uv.exe'] if os.name == 'nt' else [
             ('uv-aarch64-apple-darwin/uv' if platform.machine() == 'arm64' else 'uv-x86_64-apple-darwin/uv')]
-        uv = next((root/'.runtime/bootstrap'/name for name in names if (root/'.runtime/bootstrap'/name).is_file()), None)
+        # An existing owner may have no runtime yet. Borrow only the trusted
+        # tools' uv executable; managed CPython/cache still live in the owner root.
+        uv = next((base/'.runtime/bootstrap'/name for base in (root, ROOT) for name in names
+                   if (base/'.runtime/bootstrap'/name).is_file()), None)
     if uv:
         uv = Path(uv).resolve(strict=True)
         env = {**os.environ, 'UV_PYTHON_INSTALL_DIR': str(root / '.runtime/python'),
