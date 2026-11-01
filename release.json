@@ -1,7 +1,22 @@
 {
-  "version": "0.4.0-preview.1",
-  "tag": "v0.4.0-preview.1",
+  "version": "0.4.1-preview.1",
+  "tag": "v0.4.1-preview.1",
   "channel": "private-preview",
   "repository": "Milozpace/Account-Preview",
-  "platforms": ["windows-x64", "macos-arm64", "macos-x64", "android-arm64"]
+  "nativeVersion": "0.4.1",
+  "androidVersionCode": 4001,
+  "profiles": {
+    "preview": {
+      "identifier": "com.account.preview",
+      "desktopConfig": "AccountPreview",
+      "productName": "Account Preview",
+      "platforms": ["windows-x64", "macos-arm64", "macos-x64", "android-arm64"]
+    },
+    "personal": {
+      "identifier": "com.account.probe",
+      "desktopConfig": "AccountDesktop",
+      "productName": "Account",
+      "platforms": ["windows-x64", "android-arm64"]
+    }
+  }
 }

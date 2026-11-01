@@ -1,7 +1,7 @@
 """App V2 ledger-view snapshot export.
 
 Reuses the web V1 product of one native Excel recalculation; adds the
-versioned `account-ledger-view` envelope with a recent-months coverage
+versioned `account-ledger-view` envelope with a tracked-months coverage
 declaration. Contract: docs/App真实快照契约V2.md. This module never talks
 to the network; publishing belongs to the native App publisher.
 """
@@ -23,7 +23,8 @@ import ledger_source
 
 SCHEMA_VERSION = 2
 SNAPSHOT_KIND = 'account-ledger-view'
-COVERAGE_KIND = 'recent-months'
+COVERAGE_KIND = 'tracked-months'
+LEGACY_COVERAGE_KIND = 'recent-months'
 POOL_IDS = set(dashboard_data.POOL_IDS.values()) | {'unknown'}
 FIXED_POOL_IDS = set(dashboard_data.POOL_IDS.values())
 MONTH_RE = re.compile(r'^\d{4}-\d{2}$')
@@ -206,7 +207,7 @@ def validate_app_snapshot(snapshot):
     if not isinstance(calendar_month, str) or not MONTH_RE.match(calendar_month):
         raise ValueError('日历月份格式无效')
     year, number = map(int, calendar_month.split('-'))
-    if not 1 <= number <= 12:
+    if not 1 <= year <= 9999 or not 1 <= number <= 12:
         raise ValueError('日历月份格式无效')
     ledger_count = snapshot['ledgerCount']
     if isinstance(ledger_count, bool) or not isinstance(ledger_count, int) \
@@ -216,13 +217,19 @@ def validate_app_snapshot(snapshot):
     if not isinstance(months, list) or not months:
         raise ValueError('快照必须包含至少一个月份')
     coverage = snapshot['coverage']
-    if not isinstance(coverage, dict) or coverage.get('kind') != COVERAGE_KIND:
-        raise ValueError('coverage必须是recent-months范围声明')
+    if not isinstance(coverage, dict) or coverage.get('kind') not in (COVERAGE_KIND, LEGACY_COVERAGE_KIND):
+        raise ValueError('coverage必须是tracked-months或兼容的recent-months范围声明')
     if coverage.get('months') != [item.get('month') for item in months]:
         raise ValueError('coverage月份与实际months不一致')
-    # The frozen recent-months window is exactly [calendar month, previous month].
-    if [view.get('month') for view in months] != [calendar_month, _previous_month(calendar_month)]:
-        raise ValueError('快照必须正好覆盖当月与上月')
+    month_list = [view.get('month') for view in months]
+    if coverage['kind'] == LEGACY_COVERAGE_KIND:
+        # Installed clients may still hold the old authenticated two-month cache.
+        if month_list != [calendar_month, _previous_month(calendar_month)]:
+            raise ValueError('旧版快照必须正好覆盖当月与上月')
+    elif month_list != dashboard_data.display_months(calendar_month, month_list[-1]):
+        # The source exporter determines the owner's oldest month; this envelope
+        # provides no independent start metadata, so only continuity is provable.
+        raise ValueError('快照必须从当月连续覆盖至声明的最早月份')
     seen = set()
     exported = 0
     for view in months:

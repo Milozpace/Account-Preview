@@ -89,6 +89,13 @@ class BootstrapTests(unittest.TestCase):
                 with self.assertRaises(ValueError): bootstrap.stage_bundle(self.root, archive, 'windows-x64')
                 self.assertFalse((self.root / '.runtime').exists())
 
+    def test_source_and_bundle_version_must_match_before_any_runtime_write(self):
+        archive = self.bundle()
+        (self.root/'release.json').write_text(json.dumps({'version':'0.4.1-preview.1','tag':'v0.4.1-preview.1'}))
+        with self.assertRaisesRegex(ValueError, '源码'):
+            bootstrap.stage_bundle(self.root, archive, 'windows-x64')
+        self.assertFalse((self.root/'.runtime').exists())
+
     def test_native_setup_preserves_existing_identity_and_enables_both_gates(self):
         self.bundle()
         bootstrap.stage_bundle(self.root, self.root/'bundle.zip', 'windows-x64')

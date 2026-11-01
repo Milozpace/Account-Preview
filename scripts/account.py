@@ -469,6 +469,14 @@ def main(argv=None):
     source_group.add_argument('--workbook', type=Path, default=None)
     source_group.add_argument('--database', type=Path, default=None)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('update-status', help='只读查看本项目采用的产品身份和版本')
+    product_adopt = commands.add_parser('adopt-product', help='显式登记更新身份和源码基线，不改账/安装')
+    product_adopt.add_argument('--profile', choices=('personal', 'preview'), required=True)
+    product_adopt.add_argument('--apply', action='store_true')
+    product_update = commands.add_parser('update', help='检查最新已发布试用版；--apply才升级')
+    product_update.add_argument('--release-dir', type=Path)
+    product_update.add_argument('--prepare-python', action='store_true')
+    product_update.add_argument('--apply', action='store_true')
     doctor_cmd = commands.add_parser('doctor', help='只读检查本机环境与初始化进度')
     doctor_cmd.add_argument('--root', type=Path, default=argparse.SUPPRESS)
     init_cmd = commands.add_parser('init', help='初始化空SQLite账本；默认只检查')
@@ -515,6 +523,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     import onboarding
     root = onboarding.project_root(args.root)
+    if args.command in {'update-status', 'adopt-product', 'update'}:
+        import product_update
+        if args.command == 'update-status': result = product_update.status(root)
+        elif args.command == 'adopt-product': result = product_update.adopt(root, profile=args.profile, apply=args.apply)
+        else:
+            result = product_update.update(root, release_dir=args.release_dir, apply=args.apply,
+                                           prepare_environment=args.prepare_python)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get('ok') else 1
     if args.command in {'doctor','init'}:
         if args.command == 'doctor': result = onboarding.doctor(root)
         else:

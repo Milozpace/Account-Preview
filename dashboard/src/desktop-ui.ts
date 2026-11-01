@@ -36,7 +36,9 @@ export function mountDesktopMonthPicker(select:HTMLSelectElement){
   else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?options.length-1:(index+(e.key==='ArrowDown'?1:-1)+options.length)%options.length;options[next]?.focus();}
  });
  const outside=(e:PointerEvent)=>{if(!root.contains(e.target as Node))close();};
- const focusout=()=>queueMicrotask(()=>{if(!root.contains(document.activeElement))close();});
+ // activeElement can briefly be body while focus moves to another option.
+ // Keep that option visible through pointerup/click so selection can complete.
+ const focusout=(e:FocusEvent)=>{if(!root.contains(e.relatedTarget as Node|null))close();};
  document.addEventListener('pointerdown',outside);root.addEventListener('focusout',focusout);
  update();return{update,destroy:()=>{document.removeEventListener('pointerdown',outside);root.removeEventListener('focusout',focusout);trigger.remove();list.remove();select.hidden=false;select.removeAttribute('tabindex');}};
 }

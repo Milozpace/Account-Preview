@@ -28,13 +28,19 @@ def platform_key(system=None, machine=None):
     raise ValueError('此试用版支持 Windows x64 和 macOS Apple Silicon/Intel。')
 
 
-def config_location():
+def config_location(root=ROOT):
+    sys.path.insert(0, str(ROOT/'scripts'))
+    try:
+        from runtime_tools import owner_profile
+        folder = owner_profile(root)['desktopConfig']
+    finally:
+        sys.path.pop(0)
     if platform.system() == 'Windows':
         parent = os.environ.get('LOCALAPPDATA')
         if not parent: raise ValueError('无法定位本机配置目录。')
-        return Path(parent) / 'AccountPreview/project.json'
+        return Path(parent) / folder / 'project.json'
     if platform.system() == 'Darwin':
-        return Path.home() / 'Library/Application Support/AccountPreview/project.json'
+        return Path.home() / 'Library/Application Support' / folder / 'project.json'
     raise ValueError('不支持的桌面系统。')
 
 
@@ -52,7 +58,7 @@ def atomic_json(path, value):
 
 def configure_desktop(root, python, *, config=None, apply=False):
     root, python = Path(root).resolve(), Path(python).absolute()
-    config = Path(config) if config is not None else config_location()
+    config = Path(config) if config is not None else config_location(root)
     value = {'projectRoot': str(root), 'pythonExecutable': str(python)}
     if config.is_symlink(): raise ValueError('配置路径不能是符号链接。')
     if config.exists():
@@ -94,6 +100,11 @@ def stage_bundle(root, archive, target):
         version = manifest.get('version', '')
         if manifest.get('format') != 1 or manifest.get('platform') != target or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?', version):
             raise ValueError('发布包版本或平台不匹配。')
+        source_release = root / 'release.json'
+        if source_release.exists():
+            expected = json.loads(source_release.read_text(encoding='utf-8'))
+            if expected.get('version') != version:
+                raise ValueError('源码与安装包版本不匹配；请使用同一已发布标签的源码和组件。')
         files = manifest.get('files')
         if not isinstance(files, dict) or set(names) != {'manifest.json', *files}:
             raise ValueError('发布包文件与清单不一致。')
@@ -224,7 +235,7 @@ def main(argv=None):
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--uv', type=Path)
     parser.add_argument('--repo')
-    parser.add_argument('--tag', default='v0.4.0-preview.1')
+    parser.add_argument('--tag', help='默认使用本份源码release.json的tag，不跟随开发分支或混装旧包')
     parser.add_argument('--bundle', type=Path)
     parser.add_argument('--configure-desktop', action='store_true')
     parser.add_argument('--install-app', action='store_true')
@@ -232,14 +243,19 @@ def main(argv=None):
     parser.add_argument('--enable-publish', action='store_true')
     args = parser.parse_args(argv)
     if args.repo and args.bundle: parser.error('--repo 与 --bundle 不能同时使用。')
+    release = json.loads((ROOT/'release.json').read_text(encoding='utf-8'))
+    tag = args.tag or release['tag']
+    if args.repo and tag != release['tag']:
+        raise ValueError('指定标签与本份源码不匹配；先取得该标签的完整源码。')
     target = platform_key()
     result = {'ok': True, 'dryRun': not args.apply, 'root': str(ROOT), 'platform': target,
               'steps': ['准备独立 Python 环境与锁定依赖', '校验并准备匹配的发布工具', '按选项绑定及安装预览 App'],
-              'next': '运行 account.py doctor，再由 Agent 引导确认四池预算并 init。'}
+              'sourceVersion': release['version'], 'releaseTag': tag,
+              'next': '运行account.py doctor；首次按入门说明体验本地记账，已有账本不重新初始化。'}
     if args.apply:
         python = prepare_python(ROOT, args.uv)
         result['python'] = str(python)
-        if args.repo: result['release'] = download_release(ROOT, args.repo, args.tag, target)
+        if args.repo: result['release'] = download_release(ROOT, args.repo, tag, target)
         elif args.bundle: result['release'] = stage_bundle(ROOT, args.bundle, target)
         if args.configure_desktop: result['desktop'] = configure_desktop(ROOT, python, apply=True)
         if args.install_app:

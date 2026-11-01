@@ -5,6 +5,23 @@ from pathlib import Path
 
 HELPERS = ('ledger_cli', 'bill_inbox_cli', 'sync_diagnose')
 
+def owner_profile(root):
+    root = Path(root).resolve()
+    path = root/'.runtime/product/state.json'
+    if not path.exists():
+        return {'name':'preview', 'identifier':'com.account.preview', 'desktopConfig':'AccountPreview'}
+    if path.resolve() != path: raise ValueError('产品状态不能重定向')
+    try:
+        state = json.loads(path.read_text(encoding='utf-8'))
+        if (state.get('format') != 1 or state.get('root') != str(root)
+                or state.get('repository') != 'Milozpace/Account-Preview'
+                or state.get('profile') not in {'personal','preview'}): raise ValueError()
+    except (OSError, ValueError, AttributeError):
+        raise ValueError('本机产品身份状态无效；不回退或重新配对') from None
+    name = state['profile']
+    return {'name':name, 'identifier':'com.account.probe' if name=='personal' else 'com.account.preview',
+            'desktopConfig':'AccountDesktop' if name=='personal' else 'AccountPreview'}
+
 def helper_path(root, name):
     if name not in HELPERS: raise ValueError('未知原生组件')
     root = Path(root).resolve()

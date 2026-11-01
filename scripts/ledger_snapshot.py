@@ -20,7 +20,7 @@ def sync_database_snapshot(database):
     with dashboard_data.sync_lock(runtime):
         state = ledger_store.read_state(database)
         month = dashboard_data.current_month()
-        months = dashboard_data.display_months(month)
+        months = dashboard_data.tracked_months(state, month)
         views = [dashboard_data.build_month(state['rows'], selected,
                     ledger_calculation.calculate_month(state, selected, month)) for selected in months]
         last = max((account.timestamp(row['交易时间']) for row in state['rows']),default=None)
@@ -30,7 +30,7 @@ def sync_database_snapshot(database):
         # The App validator also audits all V1 month internals before either export.
         import app_export
         app_export.validate_app_snapshot({**snapshot,'schemaVersion':2,
-            'snapshotKind':'account-ledger-view','coverage':{'kind':'recent-months','months':months}})
+            'snapshotKind':'account-ledger-view','coverage':{'kind':app_export.COVERAGE_KIND,'months':months}})
         payload = json.dumps(snapshot,ensure_ascii=False,separators=(',',':'),allow_nan=False)
         with tempfile.TemporaryDirectory(prefix='sqlite-snapshot-',dir=runtime) as folder:
             draft = Path(folder) / 'dashboard.json'

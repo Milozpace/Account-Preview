@@ -22,6 +22,8 @@ else:server=None
 class DashboardServerTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(server,'Local dashboard service must exist')
+        clock=patch.object(data,'current_month',return_value='2026-10')
+        clock.start();self.addCleanup(clock.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.workbook=self.root/'book.xlsx';self.workbook.write_bytes(b'ledger')
         self.dist=self.root/'dist';self.dist.mkdir();(self.dist/'index.html').write_text('<h1>Dashboard</h1>')

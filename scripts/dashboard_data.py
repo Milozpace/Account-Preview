@@ -26,9 +26,30 @@ def current_month():
     return datetime.now(account.TZ).strftime('%Y-%m')
 
 
-def display_months(month):
+def display_months(month, start_month=None):
+    """Descending inclusive range; old Excel callers retain their two-month window."""
     first = date.fromisoformat(month + '-01')
-    return [month, (first-timedelta(days=1)).strftime('%Y-%m')]
+    if start_month is None:
+        start_month = (first-timedelta(days=1)).isoformat()[:7]
+    date.fromisoformat(start_month + '-01')
+    if start_month > month:
+        raise ValueError('展示起始月份不能晚于日历月份')
+    months = []
+    while True:
+        selected = first.isoformat()[:7]
+        months.append(selected)
+        if selected == start_month:
+            return months
+        first = (first-timedelta(days=1)).replace(day=1)
+
+
+def tracked_months(state, month):
+    """Derive this ledger's history start from its own budget and transaction dates."""
+    import ledger_calculation
+    starts = [ledger_calculation.month_key(month)]
+    starts.extend(ledger_calculation.month_key(rate['生效月份']) for rate in state['rates'])
+    starts.extend(ledger_calculation.month_key(account.timestamp(row['交易时间'])) for row in state['rows'])
+    return display_months(month, min(starts))
 
 
 def required_cents(value, label):
@@ -250,10 +271,17 @@ def read_snapshot(workbook):
 def snapshot_current(workbook,snapshot,month=None):
     try:
         ledger_source.assert_active(workbook)
+        calendar_month = month or current_month()
+        if ledger_source.is_database(workbook):
+            import ledger_store
+            months = tracked_months(ledger_store.read_state(workbook), calendar_month)
+        else:
+            months = None  # Preserve the legacy Excel cache contract.
     except ValueError:
         return False
     return bool(snapshot and snapshot.get('schemaVersion')==SCHEMA_VERSION
-                and snapshot.get('calendarMonth')==(month or current_month())
+                and snapshot.get('calendarMonth')==calendar_month
+                and (months is None or [view.get('month') for view in snapshot.get('months', [])] == months)
                 and snapshot.get('sourceHash')==ledger_source.source_hash(workbook))
 
 

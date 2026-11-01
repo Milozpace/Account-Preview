@@ -215,8 +215,11 @@ def doctor(root):
         base = Path.home()/'Library/Application Support'
     else:
         base = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))
-    desktop = dict(profilePresent=(base/'AccountPreview/project.json').is_file(),
-                   installation='unverified', reason='仅检查试用版配置文件是否存在，不读取凭据或宣称已安装')
+    from runtime_tools import owner_profile
+    selected_profile = owner_profile(root)
+    desktop = dict(profile=selected_profile['name'],
+                   profilePresent=(base/selected_profile['desktopConfig']/'project.json').is_file(),
+                   installation='unverified', reason='仅检查对应身份配置文件是否存在，不读取凭据或宣称已安装')
     # Config presence is a filesystem fact, never a credential or connection test.
     return dict(ok=True, root=str(root), platform=platform.system(), python=platform.python_version(),
                 dependencies=dependencies, setup=setup, ledger=ledger, helpers=helpers, ownerFiles=owner, desktop=desktop,

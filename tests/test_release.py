@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('preview_release', ROOT / 'scripts/release.py')
@@ -15,6 +16,114 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 
 
 class ReleaseTests(unittest.TestCase):
+    def repository(self, root):
+        root.mkdir(exist_ok=True)
+        shutil.copyfile(ROOT/'release.json', root/'release.json')
+        (root/'README.md').write_text('Source at fixed commit.\n', encoding='utf-8')
+        (root/'templates').mkdir()
+        (root/'templates/notes.md').write_text('Release heading with empty sections.', encoding='utf-8')
+        for args in [('init',), ('config', 'user.email', 'fixture@example.invalid'),
+                     ('config', 'user.name', 'Fixture'), ('add', '.'), ('commit', '-m', 'fixture')]:
+            subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True)
+        return subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+
+    def assets(self, root, directory, commit):
+        directory.mkdir()
+        manifest = json.loads((root/'release.json').read_text(encoding='utf-8'))
+        for profile, config in manifest['profiles'].items():
+            for platform in config['platforms']:
+                binary = directory/'binaries'; binary.mkdir(exist_ok=True)
+                ext = '.exe' if platform.startswith('windows') else ''
+                for name in ['ledger_cli', 'bill_inbox_cli', 'sync_diagnose']:
+                    (binary/(name+ext)).write_bytes(b'fixture-helper')
+                installer = directory/('fixture.apk' if platform.startswith('android') else 'fixture'+('.exe' if ext else '.dmg'))
+                installer.write_bytes(b'fixture-installer')
+                output = directory/f"Account-{profile.title()}-{manifest['version']}-{platform}.zip"
+                release.bundle(platform, binary, installer, output, profile=profile, root=root, commit=commit)
+        shutil.rmtree(directory/'binaries')
+        for path in directory.glob('fixture*'): path.unlink()
+
+    def test_prepare_requires_notes_clean_commit_and_complete_matching_assets(self):
+        self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            assets = parent/'assets'; self.assets(root, assets, commit)
+            notes = parent/'notes.md'; notes.write_text('User supplied release notes.', encoding='utf-8')
+            result = release.prepare_release(root, assets, commit, notes)
+            manifest = json.loads((assets/'release-manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(manifest['commit'], commit)
+            self.assertEqual(manifest['profiles']['personal']['identifier'], 'com.account.probe')
+            self.assertEqual(manifest['source']['sha256'], release.sha(assets/manifest['source']['asset']))
+            self.assertTrue((assets/'SHA256SUMS').exists())
+            self.assertTrue(result['ok'])
+            (root/'README.md').write_text('dirty')
+            with self.assertRaisesRegex(ValueError, 'clean|干净|改动'):
+                release.prepare_release(root, assets, commit, notes)
+
+    def test_prepare_rejects_missing_notes_platform_or_mismatched_bundle(self):
+        self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            assets = parent/'assets'; self.assets(root, assets, commit)
+            notes = parent/'notes.md'; notes.write_text('  ', encoding='utf-8')
+            with self.assertRaises(ValueError): release.prepare_release(root, assets, commit, notes)
+            notes.write_text('User notes', encoding='utf-8')
+            apk = next(assets.glob('*Personal*android*.zip')); saved = apk.read_bytes(); apk.unlink()
+            with self.assertRaises(ValueError): release.prepare_release(root, assets, commit, notes)
+            apk.write_bytes(saved)
+            with zipfile.ZipFile(apk, 'w') as archive:
+                archive.writestr('manifest.json', json.dumps({'format': 1, 'version': '0.1.0', 'profile': 'preview'}))
+            with self.assertRaises(ValueError): release.prepare_release(root, assets, commit, notes)
+
+    def test_source_archive_uses_clean_fixed_git_commit(self):
+        self.assertIn('commit', __import__('inspect').signature(release.source_archive).parameters,
+                      'source export does not bind a Git commit')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            first = parent/'first.zip'; second = parent/'second.zip'
+            release.source_archive(root, first, commit=commit)
+            release.source_archive(root, second, commit=commit)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            (root/'untracked.py').write_text('dirty')
+            with self.assertRaises(ValueError): release.source_archive(root, parent/'third.zip', commit=commit)
+
+    def test_release_bundle_detects_payload_tampering_and_cross_profile(self):
+        self.assertTrue(hasattr(release, 'verify_bundle'), 'bundle verification missing')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            assets = parent/'assets'; self.assets(root, assets, commit)
+            data = json.loads((root/'release.json').read_text(encoding='utf-8'))
+            path = assets/f"Account-Preview-{data['version']}-windows-x64.zip"
+            with self.assertRaises(ValueError): release.verify_bundle(path, data, 'personal', 'windows-x64', commit)
+            with zipfile.ZipFile(path) as archive: members = {name: archive.read(name) for name in archive.namelist()}
+            members['bin/ledger_cli.exe'] = b'corrupted'
+            with zipfile.ZipFile(path, 'w') as archive:
+                for name, content in members.items(): archive.writestr(name, content)
+            with self.assertRaisesRegex(ValueError, '哈希'): release.verify_bundle(path, data, 'preview', 'windows-x64', commit)
+
+    def test_prepare_rejects_source_archive_from_another_commit(self):
+        self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            assets = parent/'assets'; self.assets(root, assets, commit)
+            notes = parent/'notes.md'; notes.write_text('User notes', encoding='utf-8')
+            data = json.loads((root/'release.json').read_text(encoding='utf-8'))
+            (assets/f"Account-Preview-{data['version']}-source.zip").write_bytes(b'stale tree')
+            with self.assertRaisesRegex(ValueError, '源码包'): release.prepare_release(root, assets, commit, notes)
+
+    def test_prepare_requires_authored_notes_instead_of_template_or_placeholders(self):
+        self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
+            assets = parent/'assets'; self.assets(root, assets, commit)
+            with self.assertRaisesRegex(ValueError, '模板'):
+                release.prepare_release(root, assets, commit, root/'templates/notes.md')
+            notes = parent/'notes.md'
+            for placeholder in ['请本人填写', '待填写', 'TBD', 'TODO']:
+                notes.write_text('Release notes\n'+placeholder, encoding='utf-8')
+                with self.subTest(placeholder=placeholder), self.assertRaisesRegex(ValueError, '占位'):
+                    release.prepare_release(root, assets, commit, notes)
+
     def test_cli_audit_json_is_utf8_with_legacy_console_encoding(self):
         result = subprocess.run([sys.executable, str(ROOT/'scripts/release.py'), 'audit'],
                                 env={**os.environ, 'PYTHONIOENCODING':'cp1252'}, capture_output=True)

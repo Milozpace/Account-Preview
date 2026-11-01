@@ -65,4 +65,21 @@ class PortableRuntimeTests(unittest.TestCase):
         self.assertEqual(result['snapshot']['ledgerCount'],0)
         self.assertTrue(result['appPublish']['skipped'])
 
+    def test_doctor_uses_adopted_personal_binding_not_preview_binding(self):
+        state=self.root/'.runtime/product/state.json'
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({'format':1,'root':str(self.root),'repository':'Milozpace/Account-Preview','profile':'personal'}))
+        config=self.root/'system/AccountDesktop/project.json'
+        config.parent.mkdir(parents=True); config.write_text('{}')
+        with patch('onboarding.platform.system',return_value='Windows'), patch.dict(os.environ,{'LOCALAPPDATA':str(self.root/'system')}):
+            result=onboarding.doctor(self.root)
+        self.assertEqual(result['desktop']['profile'],'personal')
+        self.assertTrue(result['desktop']['profilePresent'])
+
+    def test_invalid_adopted_profile_never_falls_back_to_preview(self):
+        state=self.root/'.runtime/product/state.json'
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({'format':1,'root':str(self.root),'repository':'Milozpace/Account-Preview','profile':'someone-else'}))
+        with self.assertRaises(ValueError): runtime_tools.owner_profile(self.root)
+
 if __name__=='__main__':unittest.main()

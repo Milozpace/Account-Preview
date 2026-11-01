@@ -264,6 +264,10 @@ class AppExportBuildTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.workbook = Path(self.directory.name) / '个人财物工作簿.xlsx'
         self.workbook.write_bytes(b'synthetic-workbook')
+        # These export fixtures model October; rollover tests override this clock.
+        clock = patch.object(data, 'current_month', return_value=load_fixture()['calendarMonth'])
+        clock.start()
+        self.addCleanup(clock.stop)
 
     def tearDown(self):
         self.directory.cleanup()

@@ -34,7 +34,8 @@ pub const PAIRING_KIND: &str = "account-ledger-pairing-v1";
 pub const MAX_PAIRING_BYTES: usize = 4096;
 
 const SNAPSHOT_KIND: &str = "account-ledger-view";
-const COVERAGE_KIND: &str = "recent-months";
+const COVERAGE_KIND: &str = "tracked-months";
+const LEGACY_COVERAGE_KIND: &str = "recent-months";
 const MAX_TITLE_BYTES: usize = 72 * 4;
 
 /// Locally trusted business identity. Never derived from cloud content.
@@ -513,7 +514,7 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
     if snapshot.schema_version != 2 || snapshot.snapshot_kind != SNAPSHOT_KIND {
         return Err("账单快照不是受支持的 App V2 契约，已拒绝。".into());
     }
-    if snapshot.coverage.kind != COVERAGE_KIND {
+    if snapshot.coverage.kind != COVERAGE_KIND && snapshot.coverage.kind != LEGACY_COVERAGE_KIND {
         return Err("账单快照范围声明无效，已拒绝。".into());
     }
     if snapshot.months.is_empty() {
@@ -533,13 +534,21 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
     if snapshot.coverage.months != month_list {
         return Err("coverage 月份与实际 months 不一致，已拒绝。".into());
     }
-    // The frozen recent-months window is exactly [calendar month, previous month].
-    let expected_window = [
-        snapshot.calendar_month.clone(),
-        previous_month(&snapshot.calendar_month).ok_or("日历月份无效，已拒绝。")?,
-    ];
-    if month_list != expected_window {
-        return Err("快照必须正好覆盖当月与上月，已拒绝。".into());
+    if snapshot.coverage.kind == LEGACY_COVERAGE_KIND {
+        // Installed clients can retain an authenticated legacy two-month cache.
+        let expected_window = [
+            snapshot.calendar_month.clone(),
+            previous_month(&snapshot.calendar_month).ok_or("日历月份无效，已拒绝。")?,
+        ];
+        if month_list != expected_window {
+            return Err("旧版快照必须正好覆盖当月与上月，已拒绝。".into());
+        }
+    } else if month_list.first() != Some(&snapshot.calendar_month)
+        || month_list.iter().any(|month| !valid_month(month))
+        || month_list.windows(2).any(|pair| previous_month(&pair[0]).as_ref() != Some(&pair[1]))
+    {
+        // The exporter owns the start date; this envelope proves continuity only.
+        return Err("快照必须从当月连续覆盖至声明的最早月份，已拒绝。".into());
     }
     let mut seen = std::collections::HashSet::new();
     let mut exported = 0usize;
@@ -791,6 +800,33 @@ pub mod tests {
         let snapshot = parse_payload(&valid_payload()).unwrap();
         assert_eq!(snapshot.months.len(), 2);
         assert_eq!(snapshot.months[1].records[0].amount_cents, -500);
+    }
+
+    #[test]
+    fn tracked_months_accept_owner_range_and_reject_noncontinuous_coverage() {
+        let payload = include_str!("../../../tests/fixtures/app-v2-history-snapshot.json");
+        let snapshot = parse_payload(payload.as_bytes()).unwrap();
+        assert_eq!(snapshot.coverage.months, ["2026-11", "2026-10", "2026-09"]);
+        // No owner start metadata exists here: a shorter contiguous range is valid.
+        let mut short: serde_json::Value = serde_json::from_str(payload).unwrap();
+        short["months"].as_array_mut().unwrap().pop();
+        short["coverage"]["months"].as_array_mut().unwrap().pop();
+        parse_payload(short.to_string().as_bytes()).unwrap();
+        short["months"].as_array_mut().unwrap().pop();
+        short["coverage"]["months"].as_array_mut().unwrap().pop();
+        parse_payload(short.to_string().as_bytes()).unwrap();
+        for index in 0..2 {
+            let mut value: serde_json::Value = serde_json::from_str(payload).unwrap();
+            value["months"].as_array_mut().unwrap().remove(index);
+            value["coverage"]["months"].as_array_mut().unwrap().remove(index);
+            assert!(parse_payload(value.to_string().as_bytes()).is_err());
+        }
+        for invalid in ["2026-12", "2026-13", "0000-11"] {
+            let mut value: serde_json::Value = serde_json::from_str(payload).unwrap();
+            value["months"][0]["month"] = invalid.into();
+            value["coverage"]["months"][0] = invalid.into();
+            assert!(parse_payload(value.to_string().as_bytes()).is_err());
+        }
     }
 
     #[test]

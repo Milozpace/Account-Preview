@@ -18,6 +18,31 @@ concurrency:
   group: preview-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  version-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check canonical version and source privacy
+        run: |
+          python scripts/product_version.py check
+          python scripts/release.py audit
+      - name: Prepare fixed-commit source candidate
+        shell: python
+        run: |
+          import json, subprocess
+          version = json.load(open('release.json'))['version']
+          commit = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          subprocess.run(['python','scripts/release.py','source','--commit',commit,
+                          '--output',f'dist/Account-Preview-{version}-source.zip'], check=True)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-candidate
+          path: dist/*-source.zip
+          if-no-files-found: error
+          retention-days: 14
   select-platforms:
     runs-on: ubuntu-24.04
     outputs:
@@ -30,16 +55,17 @@ jobs:
         run: |
           import json, os
           targets = [
-              dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis'),
-              dict(os='macos-15', platform='macos-arm64', target='aarch64-apple-darwin', bundles='dmg'),
-              dict(os='macos-15-intel', platform='macos-x64', target='x86_64-apple-darwin', bundles='dmg'),
+              dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis', profile='preview'),
+              dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis', profile='personal'),
+              dict(os='macos-15', platform='macos-arm64', target='aarch64-apple-darwin', bundles='dmg', profile='preview'),
+              dict(os='macos-15-intel', platform='macos-x64', target='x86_64-apple-darwin', bundles='dmg', profile='preview'),
           ]
           requested = os.environ['REQUESTED']
           selected = [t for t in targets if requested == 'all' or t['platform'] == requested]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('desktop=' + json.dumps(selected) + '\n')
   desktop:
-    needs: select-platforms
+    needs: [select-platforms, version-audit]
     if: needs.select-platforms.outputs.desktop != '[]'
     # bash -e stops immediately on every failing native command on all runners.
     defaults:
@@ -110,6 +136,7 @@ jobs:
       - name: Build native application and companions
         working-directory: app
         run: |
+          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform ${{ matrix.platform }} --apply
           npm run tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           cargo build --manifest-path src-tauri/Cargo.toml --locked --release --target ${{ matrix.target }} --bins
       - name: Assemble platform bundle
@@ -118,26 +145,34 @@ jobs:
           TARGET: ${{ matrix.target }}
           PLATFORM: ${{ matrix.platform }}
           BUNDLES: ${{ matrix.bundles }}
+          PROFILE: ${{ matrix.profile }}
         run: |
           from pathlib import Path
-          import os, subprocess
+          import json, os, subprocess
           target = Path(os.environ['CARGO_TARGET_DIR']) / os.environ['TARGET'] / 'release'
           ext = '*.exe' if os.environ['BUNDLES'] == 'nsis' else '*.dmg'
           installers = list((target / 'bundle' / os.environ['BUNDLES']).glob(ext))
           assert len(installers) == 1, installers
-          output = 'dist/Account-Preview-0.4.0-preview.1-' + os.environ['PLATFORM'] + '.zip'
+          version = json.load(open('release.json'))['version']
+          profile = os.environ['PROFILE']
+          output = f'dist/Account-{profile.title()}-{version}-' + os.environ['PLATFORM'] + '.zip'
           subprocess.run(['python','scripts/release.py','bundle','--platform',os.environ['PLATFORM'],
-                          '--binaries',str(target),'--installer',str(installers[0]),'--output',output],check=True)
+                          '--profile',profile,'--binaries',str(target),'--installer',str(installers[0]),'--output',output],check=True)
           subprocess.run(['python','scripts/release.py','audit'],check=True)
       - uses: actions/upload-artifact@v4
         with:
-          name: preview-${{ matrix.platform }}
+          name: ${{ matrix.profile }}-${{ matrix.platform }}
           path: dist/*.zip
           if-no-files-found: error
           retention-days: 14
   android:
+    needs: version-audit
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android-arm64'
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [preview, personal]
     timeout-minutes: 50
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.runtime/android-target
@@ -146,6 +181,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -166,13 +204,29 @@ jobs:
       - name: Build unsigned arm64 APK
         working-directory: app
         run: |
+          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply
           npm run tauri -- android init --ci --skip-targets-install
+          python ../scripts/build_profile.py --profile ${{ matrix.profile }} --platform android-arm64 --apply
           npm run tauri -- android build --ci --target aarch64 --apk
           cd src-tauri/gen/android
           sh ./gradlew :tauri-plugin-platform:testDebugUnitTest
+      - name: Assemble Android candidate bundle
+        shell: python
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          from pathlib import Path
+          import json, os, subprocess
+          apks = list(Path('app/src-tauri/gen/android/app/build/outputs/apk').glob('**/*-release-unsigned.apk'))
+          assert len(apks) == 1, apks
+          version = json.load(open('release.json'))['version']
+          profile = os.environ['PROFILE']
+          output = f'dist/Account-{profile.title()}-{version}-android-arm64.zip'
+          subprocess.run(['python','scripts/release.py','bundle','--profile',profile,'--platform','android-arm64',
+                          '--binaries','.', '--installer',str(apks[0]),'--output',output],check=True)
       - uses: actions/upload-artifact@v4
         with:
-          name: preview-android-arm64-unsigned
-          path: app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: ${{ matrix.profile }}-android-arm64-unsigned
+          path: dist/*.zip
           if-no-files-found: error
           retention-days: 14

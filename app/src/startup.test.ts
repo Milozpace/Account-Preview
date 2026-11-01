@@ -6,7 +6,11 @@
  * presented as a cloud-confirmed version, pending is never published), and
  * that the synthetic preview only appears when nothing real exists.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+
+// These synthetic scenarios describe an October cache, independent of run date.
+beforeAll(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-16T12:00:00+08:00'));});
+afterAll(()=>vi.useRealTimers());
 
 interface FakeElement {
   textContent: string;
