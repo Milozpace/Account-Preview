@@ -350,10 +350,21 @@ def _reject_output_overwriting_source(workbook, output):
 
 def _verify_current_source(workbook, snapshot):
     ledger_source.assert_active(workbook)
-    if ledger_source.source_hash(workbook) != snapshot['sourceHash']:
+    state = None
+    if ledger_source.is_database(workbook):
+        import ledger_store
+        state = ledger_store.read_state(workbook)
+        source_hash = state['sourceHash']
+    else:
+        source_hash = ledger_source.source_hash(workbook)
+    if source_hash != snapshot['sourceHash']:
         raise RuntimeError('导出期间工作簿已变化，已拒绝写入并保留旧App快照。')
     if dashboard_data.current_month() != snapshot['calendarMonth']:
         raise RuntimeError('导出期间已跨月，已拒绝写入并保留旧App快照。')
+    if state is not None:
+        months = dashboard_data.source_tracking_months(workbook, state, snapshot['calendarMonth'])
+        if [view['month'] for view in snapshot['months']] != months:
+            raise RuntimeError('导出期间展示配置已变化，已拒绝写入并保留旧App快照。')
 
 
 def export_snapshot(workbook, output=None, write=True):

@@ -7,7 +7,9 @@ ledger migration, refresh, initialization, pairing or cloud publication is perfo
 from __future__ import annotations
 
 import argparse
+import ast
 from contextlib import closing, contextmanager
+from datetime import date
 import hashlib
 import importlib.util
 import json
@@ -59,6 +61,21 @@ def atomic_bytes(path, data):
 
 def atomic_json(path, value):
     atomic_bytes(path,(json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)+'\n').encode('utf-8'))
+
+
+def create_json_if_missing(path, value):
+    """Publish a complete configuration atomically without replacing another choice."""
+    path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
+    fd,temporary=tempfile.mkstemp(prefix='.owner-setting-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as stream:
+            stream.write((json.dumps(value,ensure_ascii=False,indent=2)+'\n').encode('utf-8'))
+            stream.flush(); os.fsync(stream.fileno())
+        try: os.link(temporary,path)
+        except FileExistsError: return False
+        return True
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def redirected(path):
@@ -224,18 +241,48 @@ def status(root):
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
 
 
+def preserve_legacy_display(root, profile, *, apply=False, initialized=None):
+    """Capture the old owner's explicit source constant without importing their code."""
+    if profile != 'personal': return {'changed':False}
+    config=checked_path(root,'local/display.json')
+    if config.exists(): return {'changed':False,'source':'existing-local-config'}
+    legacy=checked_path(root,'scripts/dashboard_data.py')
+    if not legacy.is_file(): return {'changed':False}
+    if legacy.stat().st_size>2*1024*1024: raise ValueError('旧展示工具过大；请人工核对展示起点，不执行旧代码。')
+    try: syntax=ast.parse(legacy.read_text(encoding='utf-8-sig'))
+    except (SyntaxError,UnicodeError): raise ValueError('无法只读核对旧展示设置；请先检查旧源码。') from None
+    values=[]
+    for node in syntax.body:
+        targets=node.targets if isinstance(node,ast.Assign) else [node.target] if isinstance(node,ast.AnnAssign) else []
+        if any(isinstance(target,ast.Name) and target.id=='TRACKING_START_MONTH' for target in targets):
+            if not isinstance(node.value,ast.Constant) or not isinstance(node.value.value,str):
+                raise ValueError('旧展示起点不是明确月份常量；请确认，不猜测或执行旧代码。')
+            values.append(node.value.value)
+    if not values: return {'changed':False}
+    if len(values)!=1 or not re.fullmatch(r'\d{4}-\d{2}',values[0]): raise ValueError('旧展示起点配置不明确。')
+    try: date.fromisoformat(values[0]+'-01')
+    except ValueError: raise ValueError('旧展示起点月份无效。') from None
+    if initialized is None: initialized=ledger_report(root)['initialized']
+    if not initialized: return {'changed':False}
+    if apply and not create_json_if_missing(config,{'trackingStartMonth':values[0]}):
+        return {'changed':False,'source':'concurrent-local-config'}
+    return {'changed':apply,'planned':True,'trackingStartMonth':values[0],'source':'legacy-owner-config'}
+
+
 def adopt(root, *, profile=None, apply=False):
     root=checked_root(root)
     if checked_path(root,STATE).exists():
         state=load_state(root)
         if profile is not None and profile!=state['profile']: raise ValueError('既有 profile 不能更换；身份保持独立。')
-        return {**status(root),'unchanged':True,'dryRun':not apply}
+        display=preserve_legacy_display(root,state['profile'],apply=apply)
+        return {**status(root),'unchanged':not display['changed'],'dryRun':not apply,'display':display}
     if profile not in PROFILES: raise ValueError('未知既有项目须显式 --profile personal 或 preview。')
     ledger=ledger_report(root)
     value={'format':1,'root':str(root),'repository':REPOSITORY,'profile':profile,'version':None,'managed':baseline(root)}
     if not value['managed']: raise ValueError('没有可采用的共享程序；请先取得产品源码。')
+    display=preserve_legacy_display(root,profile,apply=apply,initialized=ledger['initialized'])
     if apply: atomic_json(checked_path(root,STATE),value)
-    return {'ok':True,'root':str(root),'profile':profile,'managedFiles':len(value['managed']),'dryRun':not apply,'ledger':ledger}
+    return {'ok':True,'root':str(root),'profile':profile,'managedFiles':len(value['managed']),'dryRun':not apply,'ledger':ledger,'display':display}
 
 
 def version_tuple(version):

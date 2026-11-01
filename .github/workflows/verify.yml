@@ -6,7 +6,7 @@ on:
         description: Platform to verify (all runs the complete matrix)
         type: choice
         default: all
-        options: [all, windows-x64, macos-arm64, macos-x64, android-arm64]
+        options: [all, windows-x64, macos-arm64, macos-x64, android-arm64, python-only]
   push:
     branches: [main, 'codex/**']
     paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
@@ -64,6 +64,24 @@ jobs:
           selected = [t for t in targets if requested == 'all' or t['platform'] == requested]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('desktop=' + json.dumps(selected) + '\n')
+  python-compatibility:
+    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'python-only'
+    needs: version-audit
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked Python dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify owner settings and update compatibility
+        run: python -X utf8 -m unittest discover -s tests -p "test_*.py"
   desktop:
     needs: [select-platforms, version-audit]
     if: needs.select-platforms.outputs.desktop != '[]'

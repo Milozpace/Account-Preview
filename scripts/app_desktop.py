@@ -15,6 +15,7 @@ import account
 import app_export
 import dashboard_data
 import ledger_source
+import ledger_store
 
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 
@@ -54,6 +55,8 @@ def load_snapshot(project_root):
         return result
     before_hash = ledger_source.source_hash(workbook)
     before_month = dashboard_data.current_month()
+    before_months = (dashboard_data.source_tracking_months(workbook, ledger_store.read_state(workbook), before_month)
+                     if ledger_source.is_database(workbook) else None)
     if path.stat().st_size > MAX_SNAPSHOT_BYTES:
         raise ValueError('App快照超过大小上限。')
     with path.open('rb') as stream:
@@ -66,6 +69,9 @@ def load_snapshot(project_root):
     after_month = dashboard_data.current_month()
     result['sourceChanged'] = not (before_hash == after_hash == snapshot['sourceHash'])
     result['monthChanged'] = not (before_month == after_month == snapshot['calendarMonth'])
+    if before_months is not None:
+        after_months = dashboard_data.source_tracking_months(workbook, ledger_store.read_state(workbook), after_month)
+        result['sourceChanged'] |= not (before_months == after_months == [view['month'] for view in snapshot['months']])
     if not result['sourceChanged'] and not result['monthChanged']:
         result['snapshot'] = snapshot
     return result
@@ -118,6 +124,8 @@ def refresh_snapshot(project_root):
                 # during publication. Our returned snapshot is still the one
                 # independently validated before the publisher ran.
                 result['sourceChanged'] |= final['snapshot']['sourceHash'] != snapshot['sourceHash']
+                result['sourceChanged'] |= ([view['month'] for view in final['snapshot']['months']]
+                                            != [view['month'] for view in snapshot['months']])
                 result['monthChanged'] |= final['snapshot']['calendarMonth'] != snapshot['calendarMonth']
             elif not result['sourceChanged'] and not result['monthChanged']:
                 result['warning'] = '未能再次核验展示是否最新；保留已验证快照，请重新同步展示。'

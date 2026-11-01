@@ -223,6 +223,33 @@ class ValidatorEdgeTests(unittest.TestCase):
                             app_export.content_signature(second))
 
 
+class SQLiteDisplayExportTests(unittest.TestCase):
+    def test_display_change_during_app_draft_preserves_previous_snapshot(self):
+        import onboarding
+        import ledger_store
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            root = Path(temp)
+            onboarding.initialize(root,'2026-09',dict.fromkeys(account.POOLS,0),apply=True)
+            database = root/'data/account.sqlite3'
+            config = root/'local/display.json'
+            config.write_text('{"trackingStartMonth":"2026-09"}',encoding='utf-8')
+            output = Path(app_export.export_snapshot(database)['output'])
+            baseline = output.read_bytes()
+            before_hash = ledger_store.source_hash(database)
+            write = Path.write_text
+            def write_then_change(path, text, *args, **kwargs):
+                result = write(path,text,*args,**kwargs)
+                if path.suffix == '.draft':
+                    write(config,'{"trackingStartMonth":"2026-10"}',encoding='utf-8')
+                return result
+            with patch.object(Path,'write_text',new=write_then_change):
+                with self.assertRaisesRegex(RuntimeError,'展示|配置'):
+                    app_export.export_snapshot(database)
+            self.assertEqual(output.read_bytes(),baseline)
+            self.assertEqual(ledger_store.source_hash(database),before_hash)
+            self.assertFalse(list(output.parent.glob('*.draft')))
+
+
 class AppExportBuildTests(unittest.TestCase):
     def test_invalid_last_day_cannot_replace_a_real_calendar_day(self):
         value = load_fixture()

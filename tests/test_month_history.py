@@ -23,6 +23,135 @@ class MonthHistoryTests(unittest.TestCase):
         onboarding.initialize(root, start, dict.fromkeys(account.POOLS, 0), apply=True)
         return root / 'data/account.sqlite3'
 
+    def display_start(self, database, value):
+        path = database.parent.parent/'local/display.json'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({'trackingStartMonth':value}), encoding='utf-8')
+        return path
+
+    def make_migrated_database(self, root):
+        from test_ledger_store import excel_fixture, row
+        root.mkdir()
+        workbook = root/'synthetic-migration.xlsx'
+        excel_fixture(workbook, rows=[row(**{'交易时间':'2025-09-02 12:00:00'})])
+        database = root/'data/account.sqlite3'
+        ledger_store.migrate_excel(workbook, database)
+        return database
+
+    def test_confirmed_display_start_overrides_older_migrated_transactions(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            database = self.make_migrated_database(Path(temp)/'owner')
+            self.display_start(database, '2026-09')
+            before = ledger_store.source_hash(database)
+            data.sync_snapshot(database)
+            exported = app_export.export_snapshot(database)
+            snapshot = json.loads(Path(exported['output']).read_text(encoding='utf-8'))
+            self.assertEqual(snapshot['coverage']['months'], ['2026-11','2026-10','2026-09'])
+            self.assertEqual(snapshot['ledgerCount'], 1)
+            self.assertEqual(ledger_store.source_hash(database), before)
+
+    def test_config_change_invalidates_cache_without_business_hash_change(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            database = self.make_migrated_database(Path(temp)/'owner')
+            self.display_start(database, '2026-09')
+            data.sync_snapshot(database)
+            cached = data.read_snapshot(database)
+            self.assertTrue(data.snapshot_current(database,cached))
+            self.display_start(database, '2026-10')
+            self.assertFalse(data.snapshot_current(database,cached))
+            exported = app_export.export_snapshot(database)
+            snapshot = json.loads(Path(exported['output']).read_text(encoding='utf-8'))
+            self.assertEqual(snapshot['sourceHash'], cached['sourceHash'])
+            self.assertEqual(snapshot['coverage']['months'], ['2026-11','2026-10'])
+
+    def test_display_preferences_do_not_leak_between_owners_or_become_defaults(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            first = self.make_migrated_database(Path(temp)/'first')
+            second = self.make_migrated_database(Path(temp)/'second')
+            self.display_start(first, '2026-10')
+            self.assertEqual(data.sync_snapshot(first)['months'], ['2026-11','2026-10'])
+            second_months = data.sync_snapshot(second)['months']
+            self.assertEqual(second_months[-1], '2025-09')
+            self.assertEqual(len(second_months), 15)
+            self.display_start(second, '2026-11')
+            self.assertEqual(data.sync_snapshot(second)['months'], ['2026-11'])
+            self.assertEqual(data.sync_snapshot(first)['months'], ['2026-11','2026-10'])
+
+    def test_future_confirmed_display_start_keeps_current_month(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            database = self.make_database(Path(temp)/'new', '2026-12')
+            self.display_start(database, '2027-01')
+            self.assertEqual(data.sync_snapshot(database)['months'], ['2026-11'])
+
+    def test_invalid_local_display_config_fails_closed_and_preserves_cache(self):
+        invalid = ['{', '{}', '[]', 'null', '{"trackingStartMonth":"2026-09","extra":true}',
+                   '{"trackingStartMonth":null}', '{"trackingStartMonth":202609}',
+                   '{"trackingStartMonth":"2026-13"}', '{"trackingStartMonth":"2026-9"}',
+                   '{"trackingStartMonth":"0000-09"}', '{"trackingStartMonth":"2026-09-01"}',
+                   '{"trackingStartMonth":"2026-09","trackingStartMonth":"2026-10"}']
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            database = self.make_database(Path(temp)/'owner', '2026-09')
+            data.sync_snapshot(database)
+            cached = data.read_snapshot(database)
+            path = self.display_start(database, '2026-09')
+            cache_path = database.parent.parent/'.runtime/dashboard.json'
+            baseline = cache_path.read_bytes()
+            for value in invalid:
+                with self.subTest(value=value):
+                    path.write_text(value,encoding='utf-8')
+                    self.assertFalse(data.snapshot_current(database,cached))
+                    with self.assertRaisesRegex(ValueError,'display|展示'):
+                        data.sync_snapshot(database)
+                    self.assertEqual(cache_path.read_bytes(),baseline)
+
+    def test_redirected_local_config_fails_before_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = self.make_database(Path(temp)/'owner', '2026-09')
+            config = self.display_start(database, '2026-09')
+            original = Path.is_symlink
+            for redirected in (config.parent, config):
+                with self.subTest(path=redirected), \
+                     patch.object(Path,'is_symlink',lambda path:path==redirected or original(path)), \
+                     patch.object(Path,'read_text',side_effect=AssertionError('must not follow config redirect')):
+                    with self.assertRaisesRegex(ValueError,'display|展示'):
+                        data.source_tracking_months(database, ledger_store.read_state(database), '2026-11')
+
+    def test_local_directory_cannot_be_replaced_by_an_ordinary_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root/'local').write_text('not a directory',encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'display|展示'):
+                data.source_tracking_months(root/'data/account.sqlite3', {'rows':[],'rates':[]}, '2026-11')
+
+    def test_junction_local_config_is_rejected_before_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database = self.make_database(Path(temp)/'owner', '2026-09')
+            config = self.display_start(database, '2026-09')
+            original = Path.is_junction
+            for redirected in (config.parent, config):
+                with self.subTest(path=redirected), \
+                     patch.object(Path,'is_junction',lambda path:path==redirected or original(path)), \
+                     patch.object(Path,'read_text',side_effect=AssertionError('must not follow config junction')):
+                    with self.assertRaisesRegex(ValueError,'display|展示'):
+                        data.source_tracking_months(database, ledger_store.read_state(database), '2026-11')
+
+    def test_config_change_during_generation_preserves_previous_snapshot(self):
+        import ledger_calculation
+        with tempfile.TemporaryDirectory() as temp, patch.object(data,'current_month',return_value='2026-11'):
+            database = self.make_database(Path(temp)/'owner', '2026-09')
+            config = self.display_start(database, '2026-09')
+            data.sync_snapshot(database)
+            cache_path = database.parent.parent/'.runtime/dashboard.json'
+            baseline = cache_path.read_bytes()
+            original = ledger_calculation.calculate_month
+            def changed(*args):
+                config.write_text('{"trackingStartMonth":"2026-10"}',encoding='utf-8')
+                return original(*args)
+            with patch.object(ledger_calculation,'calculate_month',side_effect=changed):
+                with self.assertRaisesRegex(RuntimeError,'展示|配置'):
+                    data.sync_snapshot(database)
+            self.assertEqual(cache_path.read_bytes(),baseline)
+
     def test_each_owner_exports_own_start_and_empty_months(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(data, 'current_month', return_value='2027-02'):
             for owner, start, expected in (

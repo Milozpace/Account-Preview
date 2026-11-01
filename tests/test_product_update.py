@@ -338,6 +338,46 @@ class ProductUpdateOwnerSnapshotTests(ProductUpdateFixture, unittest.TestCase):
         self.assertEqual(rules.read_bytes(),b'owner changed while preparing environment')
 
 
+class ProductUpdateDisplaySettingsTests(ProductUpdateFixture, unittest.TestCase):
+    def test_adoption_preserves_explicit_legacy_start_without_executing_old_code(self):
+        onboarding.initialize(self.root,'2025-09',dict.fromkeys(__import__('account').POOLS,0),apply=True)
+        (self.root/'scripts/dashboard_data.py').write_text("raise AssertionError('never execute legacy source')\nTRACKING_START_MONTH = '2026-09'\n",encoding='utf-8')
+        before=ledger_store.source_hash(self.root/'data/account.sqlite3')
+        report=updater.adopt(self.root,profile='personal')
+        self.assertFalse((self.root/'local/display.json').exists())
+        self.adopt()
+        self.assertEqual(json.loads((self.root/'local/display.json').read_text()),{'trackingStartMonth':'2026-09'})
+        self.assertEqual(ledger_store.source_hash(self.root/'data/account.sqlite3'),before)
+        managed=updater.read_json(self.root/updater.STATE)['managed']
+        (self.root/'local/display.json').unlink()
+        self.adopt()  # resume an adoption recorded by an earlier updater
+        self.assertEqual(json.loads((self.root/'local/display.json').read_text()),{'trackingStartMonth':'2026-09'})
+        self.assertEqual(updater.read_json(self.root/updater.STATE)['managed'],managed)
+
+    def test_existing_display_choice_is_not_overwritten_or_shared_with_preview(self):
+        (self.root/'scripts/dashboard_data.py').write_text("TRACKING_START_MONTH = '2026-09'\n",encoding='utf-8')
+        config=self.root/'local/display.json'; config.write_text('{"trackingStartMonth":"2026-10"}')
+        self.adopt()
+        self.assertEqual(json.loads(config.read_text())['trackingStartMonth'],'2026-10')
+        config.unlink()
+        self.root.joinpath(updater.STATE).unlink()
+        updater.adopt(self.root,profile='preview',apply=True)
+        self.assertFalse(config.exists())
+
+    def test_concurrent_owner_choice_wins_legacy_config_capture(self):
+        onboarding.initialize(self.root,'2025-09',dict.fromkeys(__import__('account').POOLS,0),apply=True)
+        (self.root/'scripts/dashboard_data.py').write_text("TRACKING_START_MONTH = '2026-09'\n",encoding='utf-8')
+        config=self.root/'local/display.json'
+        parse=updater.ast.parse
+        def choose_after_preflight(text):
+            config.write_text('{"trackingStartMonth":"2026-10"}')
+            return parse(text)
+        with patch.object(updater.ast,'parse',side_effect=choose_after_preflight):
+            result=self.adopt()
+        self.assertEqual(json.loads(config.read_text())['trackingStartMonth'],'2026-10')
+        self.assertFalse(result['display']['changed'])
+
+
 class ProductUpdateEnvironmentBoundaryTests(ProductUpdateFixture, unittest.TestCase):
     def test_redirected_venv_or_runtime_environment_paths_fail_before_preparation(self):
         self.adopt(); self.release()

@@ -20,7 +20,7 @@ def sync_database_snapshot(database):
     with dashboard_data.sync_lock(runtime):
         state = ledger_store.read_state(database)
         month = dashboard_data.current_month()
-        months = dashboard_data.tracked_months(state, month)
+        months = dashboard_data.source_tracking_months(database, state, month)
         views = [dashboard_data.build_month(state['rows'], selected,
                     ledger_calculation.calculate_month(state, selected, month)) for selected in months]
         last = max((account.timestamp(row['交易时间']) for row in state['rows']),default=None)
@@ -38,6 +38,8 @@ def sync_database_snapshot(database):
             ledger_source.assert_active(database)
             if ledger_store.source_hash(database) != state['sourceHash'] or dashboard_data.current_month() != month:
                 raise RuntimeError('导出期间账本或月份已变化，已保留有效快照')
+            if dashboard_data.source_tracking_months(database, state, month) != months:
+                raise RuntimeError('导出期间展示配置已变化，已保留有效快照')
             os.replace(draft,runtime / 'dashboard.json')
         return dict(ok=True,generatedAt=snapshot['generatedAt'],months=months,ledgerCount=len(state['rows']),
                     sourceHash=state['sourceHash'],calculationEngine='python',originalUnchanged=True)

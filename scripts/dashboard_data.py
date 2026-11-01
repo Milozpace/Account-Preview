@@ -43,13 +43,64 @@ def display_months(month, start_month=None):
         first = (first-timedelta(days=1)).replace(day=1)
 
 
-def tracked_months(state, month):
+def _tracking_start_month(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}', value):
+        raise ValueError('local/display.json 展示起点必须是有效的YYYY-MM月份')
+    try:
+        date.fromisoformat(value + '-01')
+    except ValueError:
+        raise ValueError('local/display.json 展示起点必须是有效的YYYY-MM月份') from None
+    return value
+
+
+def local_tracking_start(source):
+    """Read only this installation's optional, non-redirected display preference."""
+    root = ledger_source.project_root(source)
+    local = root / 'local'
+    path = local / 'display.json'
+    try:
+        for component in (local, path):
+            if (component.is_symlink()
+                    or (hasattr(component, 'is_junction') and component.is_junction())
+                    or component.resolve() != component):
+                raise ValueError('local/display.json 展示配置路径不能重定向')
+            if not component.exists():
+                return None
+            if component == local and not component.is_dir():
+                raise ValueError('local/display.json 展示配置目录必须是本机普通目录')
+        if not local.is_dir() or not path.is_file():
+            raise ValueError('local/display.json 展示配置必须是本机普通文件')
+
+        def unique_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('local/display.json 展示配置不能包含重复字段')
+                result[key] = value
+            return result
+
+        value = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique_keys)
+    except (OSError, UnicodeError, RuntimeError, json.JSONDecodeError) as error:
+        raise ValueError('local/display.json 展示配置无法读取或格式无效') from error
+    if not isinstance(value, dict) or set(value) != {'trackingStartMonth'}:
+        raise ValueError('local/display.json 展示配置仅允许trackingStartMonth字段')
+    return _tracking_start_month(value['trackingStartMonth'])
+
+
+def tracked_months(state, month, start_month=None):
     """Derive this ledger's history start from its own budget and transaction dates."""
     import ledger_calculation
+    if start_month is not None:
+        return display_months(month, min(month, _tracking_start_month(start_month)))
     starts = [ledger_calculation.month_key(month)]
     starts.extend(ledger_calculation.month_key(rate['生效月份']) for rate in state['rates'])
     starts.extend(ledger_calculation.month_key(account.timestamp(row['交易时间'])) for row in state['rows'])
     return display_months(month, min(starts))
+
+
+def source_tracking_months(source, state, month):
+    """Use one owner-local policy for both generated snapshots and cache checks."""
+    return tracked_months(state, month, local_tracking_start(source))
 
 
 def required_cents(value, label):
@@ -274,7 +325,7 @@ def snapshot_current(workbook,snapshot,month=None):
         calendar_month = month or current_month()
         if ledger_source.is_database(workbook):
             import ledger_store
-            months = tracked_months(ledger_store.read_state(workbook), calendar_month)
+            months = source_tracking_months(workbook, ledger_store.read_state(workbook), calendar_month)
         else:
             months = None  # Preserve the legacy Excel cache contract.
     except ValueError:
