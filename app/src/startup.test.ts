@@ -410,7 +410,7 @@ describe('Windows local presentation and isolated preview',()=>{
     const readsBefore=invokeState.seen.filter(command=>command==='ledger_status_command').length;
     if(hasSnapshot)currentStatus={...initialStatus,pendingRevision:5};
     // Native buttons emit the same delegated click for pointer and keyboard activation.
-    activateRenderedButton('data-open','sync',detail);await flush(25);
+    activateRenderedButton('data-settings-tab','sync',detail);await flush(25);
     expect(mainHtml()).toContain('data-settings-panel="sync" aria-labelledby="settings-sync-title"');
     expect(mainHtml()).toContain('id="sync-form"');
     expect(mainHtml()).toContain('id="show-pairing"');
