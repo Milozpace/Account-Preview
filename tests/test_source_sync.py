@@ -18,8 +18,9 @@ class SourceSyncTests(unittest.TestCase):
         self.assertIsNotNone(source_sync, 'source synchronization tool must exist')
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.a = Path(self.tmp.name) / 'source'
-        self.b = Path(self.tmp.name) / 'target'
+        # macOS TMPDIR may use /var -> /private/var; the API expects canonical roots.
+        self.a = Path(self.tmp.name).resolve() / 'source'
+        self.b = Path(self.tmp.name).resolve() / 'target'
         self.a.mkdir(); self.b.mkdir()
 
     def write(self, root, name, content):
