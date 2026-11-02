@@ -264,15 +264,15 @@ class BudgetSettingsTests(unittest.TestCase):
 
     def test_desktop_commands_use_bounded_stdin_and_budget_status(self):
         script = Path(app_desktop.__file__)
-        status = subprocess.run([sys.executable, '-X', 'utf8', str(script), 'budget-status', '--project-root', str(self.root)], capture_output=True, text=True)
+        status = subprocess.run([sys.executable, '-X', 'utf8', str(script), 'budget-status', '--project-root', str(self.root)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(json.loads(status.stdout)['suggestedMonth'], '2026-09')
         preview = subprocess.run([sys.executable, '-X', 'utf8', str(script), 'budget-preview', '--project-root', str(self.root)],
-                                 input=json.dumps(self.payload()), capture_output=True, text=True)
+                                 input=json.dumps(self.payload()), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(preview.returncode, 0, preview.stderr)
         self.assertFalse(json.loads(preview.stdout)['applied'])
         oversized = subprocess.run([sys.executable, '-X', 'utf8', str(script), 'budget-save', '--project-root', str(self.root)],
-                                   input=' ' * 16385, capture_output=True, text=True)
+                                   input=' ' * 16385, capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(oversized.returncode, 0)
         self.assertFalse(self.db.with_name('account.previous.sqlite3').exists())
 
@@ -298,7 +298,7 @@ class BudgetSettingsTests(unittest.TestCase):
     def test_desktop_budget_commands_can_apply_and_refuse_redirected_roots(self):
         script = Path(app_desktop.__file__)
         saved = subprocess.run([sys.executable, '-X', 'utf8', str(script), 'budget-save', '--project-root', str(self.root)],
-                               input=json.dumps(self.payload()), capture_output=True, text=True)
+                               input=json.dumps(self.payload()), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(saved.returncode, 0, saved.stderr)
         self.assertTrue(json.loads(saved.stdout)['applied'])
         (self.root / '.git').write_text('gitdir: synthetic', encoding='utf-8')
