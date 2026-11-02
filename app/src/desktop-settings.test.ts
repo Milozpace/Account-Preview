@@ -1,6 +1,20 @@
 import {describe,it,expect} from 'vitest';
-import {desktopSettingsHtml,desktopSyncHtml} from './desktop-settings';
+import {desktopSettingsHtml,desktopSyncHtml,desktopConnectionHtml} from './desktop-settings';
 describe('desktop settings content',()=>{
+ it('shows saved connection status without credential fields until explicitly editing',()=>{
+  const html=desktopConnectionHtml({configured:true,known:true,editing:false,busy:false});
+  expect(html).toContain('已配置');expect(html).toContain('data-action="manage-connection"');
+  expect(html).not.toContain('id="account"');expect(html).not.toContain('id="password"');
+  const edit=desktopConnectionHtml({configured:true,known:true,editing:true,busy:false});
+  expect(edit).toContain('id="sync-form"');expect(edit).toContain('取消更换');
+  expect(desktopConnectionHtml({configured:false,known:false,editing:false,busy:false})).not.toContain('id="sync-form"');
+  expect(desktopConnectionHtml({configured:false,known:true,editing:false,busy:false})).toContain('id="sync-form"');
+ });
+ it('offers retry instead of an endless loading message when connection status fails',()=>{
+  const html=desktopConnectionHtml({configured:false,known:false,editing:false,busy:false,readError:'读取失败'});
+  expect(html).toContain('data-action="retry-connection-status"');expect(html).toContain('读取失败');
+  expect(html).not.toContain('正在读取本机连接状态');expect(html).not.toContain('id="sync-form"');
+ });
  it('keeps only the sidebar sync entry and removes the old general shortcut',()=>{
   const html=desktopSettingsHtml({section:'general',theme:'system',motion:'system',config:null,version:'',diagnostics:''});
   const general=html.match(/<section data-settings-panel="general"[^>]*>([\s\S]*?)<\/section>/)![1];
@@ -21,8 +35,8 @@ describe('desktop settings content',()=>{
  });
  it('provides separate budget and sync categories while preserving inactive form markup',()=>{
   const html=desktopSettingsHtml({section:'budget',theme:'system',motion:'system',config:null,version:'',diagnostics:'',budgetContent:'<input id="budget-month">',syncContent:'<form id="sync-form"></form>'});
-  expect(html).toContain('data-settings-tab="budget" aria-current="page">四池预算');
-  expect(html).toContain('data-settings-tab="sync">手机与同步');
+  expect(html).toMatch(/data-settings-tab="budget" aria-current="page">[\s\S]*?<span>四池预算<\/span>/);
+  expect(html).toMatch(/data-settings-tab="sync">[\s\S]*?<span>手机与同步<\/span>/);
   expect(html).toContain('data-settings-panel="budget" aria-labelledby="settings-budget-title"');
   expect(html).toContain('data-settings-panel="sync" hidden');
   expect(html).toContain('<input id="budget-month">');

@@ -485,6 +485,42 @@ describe('Windows local presentation and isolated preview',()=>{
     if(command==='app_version')return Promise.resolve('0.3.0-test');
     return Promise.reject(new Error(`unexpected command ${command}`));
   };
+  it('repaints a settings page when saved connection status arrives after the local view',async()=>{
+    let finish:((value:unknown)=>void)|undefined;
+    invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):command==='sync_status'?new Promise(resolve=>finish=resolve):common(command);
+    await import('./main');await flush(30);click('#settings-button');
+    expect(mainHtml()).not.toContain('id="account"');
+    finish?.({configured:true,paired:true});await flush(30);
+    expect(mainHtml()).toContain('更换凭据');expect(mainHtml()).not.toContain('id="account"');
+    activateRenderedButton('data-action','manage-connection');
+    expect(mainHtml()).toContain('id="account"');expect(mainHtml()).toContain('取消更换');
+    activateRenderedButton('data-action','manage-connection');expect(mainHtml()).not.toContain('id="account"');
+  });
+  it('rereads connection status when entering sync settings without performing a cloud request',async()=>{
+    let configured=true;
+    invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):command==='sync_status'?Promise.resolve({configured,paired:true}):common(command);
+    await import('./main');await flush(30);click('#settings-button');
+    expect(mainHtml()).not.toContain('id="account"');configured=false;
+    activateRenderedButton('data-settings-tab','sync');await flush(30);
+    expect(mainHtml()).toContain('id="account"');
+    expect(invokeState.seen.filter(command=>command==='sync_status').length).toBeGreaterThan(1);
+    expect(invokeState.seen).not.toContain('ledger_fetch');
+  });
+  it('clears the obsolete no-cache warning once an authoritative local snapshot is available',async()=>{
+    invokeState.impl=command=>command==='ledger_cache'?Promise.resolve(null):command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):common(command);
+    await import('./main');await flush(30);goto('sync');await flush(30);
+    expect(mainHtml()).toContain('本机快照可用');
+    expect(mainHtml()).not.toContain('尚未同步到任何账单版本');
+  });
+  it('shows a retry after an initial connection-state failure and recovers without fetching cloud data',async()=>{
+    let failing=true;
+    invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):command==='sync_status'&&failing?Promise.reject('unavailable'):common(command);
+    await import('./main');await flush(30);goto('sync');await flush(30);
+    expect(mainHtml()).toContain('同步设置读取失败');expect(mainHtml()).not.toContain('正在读取本机连接状态');
+    failing=false;activateRenderedButton('data-action','retry-connection-status');await flush(30);
+    expect(mainHtml()).toContain('更换凭据');expect(mainHtml()).not.toContain('同步设置读取失败');
+    expect(invokeState.seen).not.toContain('ledger_fetch');
+  });
   it('keeps budget changes in the local API and rereads after a pre-save load finishes late',async()=>{
     let releaseOld:((result:unknown)=>void)|undefined;let loads=0;
     const amounts={'运行账户':'100.00','随心消费':'20.00','旅行/体验':'10.00','成长/项目/耐用品':'0.00'};
@@ -536,10 +572,10 @@ describe('Windows local presentation and isolated preview',()=>{
     // Native buttons emit the same delegated click for pointer and keyboard activation.
     activateRenderedButton('data-settings-tab','sync',detail);await flush(25);
     expect(mainHtml()).toContain('data-settings-panel="sync" aria-labelledby="settings-sync-title"');
-    expect(mainHtml()).toContain('id="sync-form"');
+    expect(mainHtml()).toContain('更换凭据');
     expect(mainHtml()).toContain('id="show-pairing"');
     expect(mainHtml()).not.toContain('id="scan-pairing"');
-    expect(mainHtml()).toContain(hasSnapshot?'第 5 版（尚未发布成功）':'未初始化（需先在电脑初始化或扫码配对）');
+    expect(mainHtml()).toContain(hasSnapshot?'第 5 版 · 尚未发布成功':'已绑定项目 · 暂无快照');
     expect(invokeState.seen.filter(command=>command==='ledger_status_command')).toHaveLength(readsBefore+1);
     activateRenderedButton('data-settings-tab','general');
     expect(mainHtml()).toContain('data-settings-panel="general"');
