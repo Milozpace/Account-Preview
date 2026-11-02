@@ -585,7 +585,7 @@ async function refreshProbeSummary(): Promise<void> {
 async function refreshDesktopSettings():Promise<void>{
   if(!isTauri()||state.preview)return;
   await Promise.all([refreshLedgerStatus(),refreshProbeSummary()]);
-  if(state.view==='settings'&&!state.editingConnection)render();
+  if(state.view==='settings')render();
 }
 
 async function retryPhoneSetup():Promise<void>{
