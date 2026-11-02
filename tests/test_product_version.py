@@ -20,7 +20,7 @@ class VersionTests(unittest.TestCase):
     def test_canonical_manifest_and_sync(self):
         module = self.module()
         manifest = module.load(ROOT)
-        self.assertEqual(manifest['nativeVersion'], manifest['version'].split('-')[0])
+        self.assertGreaterEqual(module.native_key(manifest['nativeVersion']), module.version_key(manifest['version'])[:3])
         self.assertEqual(manifest['profiles']['personal']['identifier'], 'com.account.probe')
         self.assertEqual(module.check(ROOT), [])
 
@@ -59,10 +59,18 @@ class VersionTests(unittest.TestCase):
         with self.assertRaises(ValueError): module.validate(candidate, previous=old)
         candidate['androidVersionCode'] += 1
         with self.assertRaises(ValueError): module.validate(candidate, previous=old)
-        native = f'{major}.{minor}.{patch+1}'
+        native_major,native_minor,native_patch=module.native_key(old['nativeVersion'])
+        native = f'{native_major}.{native_minor}.{native_patch+1}'
         candidate.update(version=native+'-preview.1', tag='v'+native+'-preview.1', nativeVersion=native)
         candidate['androidVersionCode'] = max(candidate['androidVersionCode'], major*1_000_000+minor*1_000+patch+1)
         self.assertEqual(module.validate(candidate, previous=old), candidate)
+
+    def test_preview_release_can_keep_product_series_with_newer_internal_installer(self):
+        module=self.module(); old=copy.deepcopy(module.load(ROOT))
+        old.update(version='0.4.0-preview.1',tag='v0.4.0-preview.1',nativeVersion='0.4.0',androidVersionCode=4000)
+        candidate=copy.deepcopy(old)
+        candidate.update(version='0.4.0-preview.2',tag='v0.4.0-preview.2',nativeVersion='0.4.2',androidVersionCode=4002)
+        self.assertEqual(module.validate(candidate,previous=old),candidate)
 
 
 if __name__ == '__main__': unittest.main()

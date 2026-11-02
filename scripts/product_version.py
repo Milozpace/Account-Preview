@@ -24,12 +24,19 @@ def version_key(value):
     return tuple(map(int, match.groups()))
 
 
+def native_key(value):
+    if not isinstance(value,str): raise ValueError('原生安装版本须为 X.Y.Z。')
+    match=re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',value)
+    if not match: raise ValueError('原生安装版本须为 X.Y.Z。')
+    return tuple(map(int,match.groups()))
+
+
 def validate(data, previous=None):
     if not isinstance(data, dict): raise ValueError('release.json 须为对象。')
     key = version_key(data.get('version'))
-    native = '.'.join(map(str, key[:3]))
-    if data.get('tag') != 'v' + data['version'] or data.get('nativeVersion') != native:
-        raise ValueError('tag/nativeVersion 与候选版本不一致。')
+    native = native_key(data.get('nativeVersion'))
+    if data.get('tag') != 'v' + data['version'] or native < key[:3]:
+        raise ValueError('tag 须匹配产品版本，原生安装版本不得早于产品系列。')
     if data.get('channel') != 'private-preview' or data.get('repository') != 'Milozpace/Account-Preview':
         raise ValueError('发布来源或频道无效。')
     code = data.get('androidVersionCode')
@@ -40,9 +47,10 @@ def validate(data, previous=None):
     if previous:
         old = version_key(previous['version'])
         if key < old: raise ValueError('拒绝版本降级。')
-        if key == old and code != previous['androidVersionCode']:
-            raise ValueError('同一版本不可重用为不同 Android versionCode。')
-        if key > old and (key[:3] <= old[:3] or code <= previous['androidVersionCode']):
+        old_native=native_key(previous['nativeVersion'])
+        if key == old and (native != old_native or code != previous['androidVersionCode']):
+            raise ValueError('同一版本不可重用为不同安装版本。')
+        if key > old and (native <= old_native or code <= previous['androidVersionCode']):
             raise ValueError('新安装版本的 nativeVersion 和 Android versionCode 均必须严格增加。')
     return data
 
@@ -101,11 +109,15 @@ def main():
     setter = sub.add_parser('set')
     setter.add_argument('--version', required=True)
     setter.add_argument('--android-version-code', type=int)
+    setter.add_argument('--native-version', help='独立的递增安装版本；默认在需要时增加安装补丁号。')
     setter.add_argument('--apply', action='store_true')
     args = parser.parse_args(); data = load(args.root)
     if args.command == 'set':
         candidate = dict(data); candidate['version'] = args.version; candidate['tag'] = 'v' + args.version
-        key = version_key(args.version); candidate['nativeVersion'] = '.'.join(map(str, key[:3]))
+        key = version_key(args.version)
+        old_native=native_key(data['nativeVersion'])
+        next_native=key[:3] if key[:3]>old_native else (old_native[0],old_native[1],old_native[2]+1) if args.version!=data['version'] else old_native
+        candidate['nativeVersion'] = args.native_version or '.'.join(map(str,next_native))
         candidate['androidVersionCode'] = args.android_version_code if args.android_version_code is not None else max(
             key[0]*1_000_000 + key[1]*1_000 + key[2], data['androidVersionCode'] + int(args.version != data['version']))
         validate(candidate, previous=data)

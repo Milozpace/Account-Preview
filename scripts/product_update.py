@@ -342,7 +342,9 @@ def validate_release(directory, profile, target):
     if manifest.get('ledgerSchema')!=1 or manifest.get('snapshotSchema')!=2: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')
-    if manifest.get('nativeVersion')!='.'.join(map(str,version_tuple(version)[:3])): raise ValueError('原生版本与产品版本不匹配。')
+    native=manifest.get('nativeVersion')
+    if not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native) or tuple(map(int,native.split('.')))<version_tuple(version)[:3]:
+        raise ValueError('原生安装版本无效或早于产品系列。')
     selected=manifest.get('profiles',{}).get(profile)
     if not isinstance(selected,dict) or any(selected.get(k)!=v for k,v in PROFILES[profile].items()): raise ValueError('发布安装身份与本机 profile 不匹配。')
     platform_asset=selected.get('platforms',{}).get(target)

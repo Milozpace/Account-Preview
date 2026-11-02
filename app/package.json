@@ -1,6 +1,6 @@
 {
   "name": "account-app",
-  "version": "0.4.1-preview.1",
+  "version": "0.4.0-preview.2",
   "private": true,
   "type": "module",
   "scripts": {

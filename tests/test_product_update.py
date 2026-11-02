@@ -43,7 +43,7 @@ class ProductUpdateFixture:
     def adopt(self, profile='personal'):
         return updater.adopt(self.root, profile=profile, apply=True)
 
-    def release(self, profile='personal', version='0.4.1-preview.1', source=None, **changes):
+    def release(self, profile='personal', version='0.4.1-preview.1', source=None, native_version='0.4.1', **changes):
         source = source or {'scripts/shared.py': b'new code', 'scripts/new.py': b'new tool',
                             'docs/记账规则.md': b'new shared instructions', 'AGENTS.md': b'new shared entry'}
         source = dict(source)
@@ -53,13 +53,13 @@ class ProductUpdateFixture:
         identifier = {'personal':'com.account.probe', 'preview':'com.account.preview'}[profile]
         files = {'bin/ledger_cli.exe':b'helper', 'bin/bill_inbox_cli.exe':b'inbox', 'bin/sync_diagnose.exe':b'diagnose',
                  'install/Account.exe':b'installer'}
-        inner = dict(format=1, version=version, nativeVersion='0.4.1', platform='windows-x64', profile=profile,
+        inner = dict(format=1, version=version, nativeVersion=native_version, platform='windows-x64', profile=profile,
                      identifier=identifier, commit='a'*40, files={name:sha(data) for name,data in files.items()})
         with zipfile.ZipFile(self.assets / 'bundle.zip', 'w') as z:
             z.writestr('manifest.json', json.dumps(inner))
             for name,data in files.items(): z.writestr(name,data)
         manifest = dict(format=1, version=version, tag='v'+version, channel='private-preview', commit='a'*40,
-                        nativeVersion='0.4.1', ledgerSchema=1, snapshotSchema=2, notesSha256=sha(b'notes'),
+                        nativeVersion=native_version, ledgerSchema=1, snapshotSchema=2, notesSha256=sha(b'notes'),
                         source={'asset':'source.zip','sha256':sha((self.assets/'source.zip').read_bytes())},
                         profiles={profile:dict(identifier=identifier,desktopConfig='AccountDesktop' if profile=='personal' else 'AccountPreview',
                             platforms={'windows-x64':{'asset':'bundle.zip','sha256':sha((self.assets/'bundle.zip').read_bytes())}})})
@@ -72,6 +72,12 @@ class ProductUpdateFixture:
                               installer=lambda path:self.installs.append(Path(path)), **kwargs)
 
 class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
+    def test_preview_with_independent_native_version_preserves_owner_on_update(self):
+        self.adopt()
+        self.release(version='0.4.0-preview.2',native_version='0.4.2')
+        self.assertTrue(self.update(apply=True)['ok'])
+        self.assertEqual((self.root/'local/个人规则.md').read_bytes(),b'owner secret')
+
     def test_adopt_defaults_to_readonly_and_requires_explicit_owner_profile(self):
         with self.assertRaises(ValueError): updater.adopt(self.root)
         report = updater.adopt(self.root, profile='personal')
