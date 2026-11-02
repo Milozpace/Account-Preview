@@ -1,0 +1,35 @@
+/* First-use surfaces share the phone palette, with one aligned primary action. */
+html[data-layout=mobile] .setup-welcome{padding:52px 20px 38px;text-align:center;min-height:340px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+html[data-layout=mobile] .setup-emblem{display:grid;place-items:center;width:56px;height:56px;margin:0 auto 22px;border-radius:18px;background:var(--ui-hover,#e9ede6);color:var(--accent);}
+html[data-layout=mobile] .setup-emblem .ui-icon{width:27px;height:27px;stroke-width:1.5;}
+html[data-layout=mobile] #main :is(.setup-welcome,.setup-intro) h2{font-size:23px;line-height:1.4;font-weight:550;letter-spacing:-.025em;margin:0 0 12px;}
+html[data-layout=mobile] .setup-welcome>p{max-width:270px;margin:0 auto;color:var(--muted);font-size:14px;line-height:1.8;}
+html[data-layout=mobile] .setup-actions{display:flex;justify-content:center;width:100%;margin:28px 0 0;}
+html[data-layout=mobile] .setup-primary{display:flex;align-items:center;justify-content:center;min-height:48px;width:100%;max-width:320px;padding:12px 20px;border:0;border-radius:13px;background:var(--accent);color:#fffefa;font-size:15px;font-weight:500;line-height:1.5;}
+html[data-layout=mobile] .setup-primary:disabled{opacity:.55;}
+html[data-layout=mobile] .setup-primary:focus-visible{outline:2px solid var(--accent);outline-offset:4px;}
+html[data-layout=mobile] .setup-primary:active{filter:brightness(.94);}
+html[data-layout=mobile] .setup-intro{text-align:center;padding:24px 12px 20px;}
+html[data-layout=mobile] .setup-intro .sync-subtitle{margin:0 auto;max-width:300px;font-size:14px;line-height:1.8;}
+html[data-layout=mobile] .setup-progress{list-style:none;display:flex;justify-content:space-between;gap:8px;padding:8px 0 0;margin:0 0 20px;color:var(--muted);font-size:12px;}
+html[data-layout=mobile] .setup-progress li{display:flex;align-items:center;gap:6px;}
+html[data-layout=mobile] .setup-progress li>span{display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--line);border-radius:50%;font-size:11px;}
+html[data-layout=mobile] .setup-progress [aria-current=step]{color:var(--accent);font-weight:600;}
+html[data-layout=mobile] .setup-progress [aria-current=step]>span{border-color:var(--accent);background:var(--ui-hover,#e9ede6);}
+html[data-layout=mobile] .setup-panel{padding:8px 12px 20px;}
+html[data-layout=mobile] .setup-panel .setup-actions{margin-top:16px;}
+html[data-layout=mobile] .setup-panel form{max-width:360px;margin:0 auto;}
+html[data-layout=mobile] .setup-panel label{display:block;font-size:14px;margin:18px 0 8px;}
+html[data-layout=mobile] .setup-panel input{box-sizing:border-box;width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);font-size:16px;}
+html[data-layout=mobile] .setup-panel :is(#pair-status,#sync-status):empty{display:none;}
+html[data-layout=mobile] .setup-help{max-width:360px;margin:22px auto 0;color:var(--muted);font-size:13px;line-height:1.8;}
+html[data-layout=mobile] .setup-help summary{cursor:pointer;min-height:44px;padding:8px 0;box-sizing:border-box;}
+html[data-layout=mobile] .setup-help p{margin:0 0 10px;}
+html[data-layout=mobile] .setup-complete{text-align:center;color:var(--muted);font-size:12px;margin:0 0 24px;}
+html[data-layout=mobile] .connection-feedback{margin:8px 0 22px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;font-size:13px;line-height:1.7;}
+html[data-layout=mobile] .connection-feedback p{margin:0;overflow-wrap:anywhere;}
+html[data-layout=mobile] .connection-feedback details{margin-top:8px;color:var(--muted);}
+html[data-layout=mobile] .connection-feedback summary{min-height:32px;cursor:pointer;}
+html[data-layout=mobile] .status-connection{margin-left:auto;min-height:36px;padding:0 4px;color:var(--muted);font-size:11px;}
+html[data-layout=mobile] #status-bar{align-items:center;flex-wrap:nowrap;}
+html[data-layout=mobile][data-theme=dark] .setup-primary{background:#9bb2a4;color:#17211b;}

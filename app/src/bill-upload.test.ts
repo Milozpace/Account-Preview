@@ -4,8 +4,9 @@ import {myHtml} from './mobile';
 import {Navigation} from './navigation';
 const entry=(status:BillUploadItem['status']='uploaded'):BillUploadItem=>({id:'a'.repeat(64),fileName:'微信账单.xlsx',byteCount:4096,status});
 describe('raw bill upload session',()=>{
- it('keeps the upload entry available in My without ledger data and restores its navigation',()=>{
-  expect(myHtml(null,'')).toContain('data-open="upload"');expect(myHtml(null,'')).toContain('上传原始账单');
+ it('offers upload with a ready connection even before the first ledger download',()=>{
+  expect(myHtml(null,'已连接',true)).toContain('data-open="upload"');expect(myHtml(null,'已连接',true)).toContain('上传原始账单');
+  expect(myHtml(null,'未配对',false)).not.toContain('data-open="upload"');
   const navigation=new Navigation();navigation.selectRoot('my');
   expect(navigation.restore({root:'my',stacks:{home:[{view:'home'}],analysis:[{view:'analysis'}],my:[{view:'my'},{view:'upload'}]}})).toBe(true);
   expect(navigation.back()).toBe(true);expect(navigation.current.view).toBe('my');

@@ -224,8 +224,7 @@ describe('page startup flow (ledger cache-first display)', () => {
     await importMainOnce();
     await flush();
     // Startup display: ledger_cache already resolved, ledger_fetch still hanging.
-    expect(statusBarHtml()).toContain('本地缓存 · 第 2 版');
-    expect(statusBarHtml()).toContain('未连接云端确认');
+    expect(statusBarHtml()).toContain('本地账单');
     expect(statusBarHtml()).not.toContain('云端已确认');
     expect(mainHtml()).toContain('个人净消费');
     // The record list lives in the bills view; navigate there to confirm
@@ -241,13 +240,14 @@ describe('page startup flow (ledger cache-first display)', () => {
   it('drains the hanging fetch and switches to the cloud-confirmed view', async () => {
     releaseStartupFetch?.({ kind: 'updated', revision: 3, snapshot: CACHED_SNAPSHOT });
     await flush();
-    expect(statusBarHtml()).toContain('云端已确认 · 第 3 版');
-    expect(statusBarHtml()).toContain('自动检查：云端版本 3。');
+    expect(statusBarHtml()).toContain('已同步');
+    expect(statusBarHtml()).not.toContain('自动检查：');
     expect(mainHtml()).toContain('个人净消费');
   });
 
   it('keeps the snapshot visible when the network fails', async () => {
     invokeState.impl = (command) => {
+      if(command==='ledger_status_command')return Promise.resolve(LEDGER_READY);
       if (command === 'ledger_fetch') {
         return Promise.reject('云端拒绝访问（401/403），请检查坚果云应用密码是否有效。');
       }
@@ -255,31 +255,38 @@ describe('page startup flow (ledger cache-first display)', () => {
     };
     click('#fetch-button');
     await flush();
-    expect(statusBarHtml()).toContain('已保留当前数据');
+    expect(statusBarHtml()).toContain('同步需处理');
     expect(mainHtml()).toContain('个人净消费');
+    goto('sync');await flush();
+    expect(mainHtml()).toContain('已有账单仍可查看');
+    expect(mainHtml()).toContain('401/403');
+    goto('home');
   });
 
   it('reports a cloud without publications and keeps showing the cache', async () => {
     invokeState.impl = (command) => {
+      if(command==='ledger_status_command')return Promise.resolve(LEDGER_READY);
       if (command === 'ledger_fetch') return Promise.resolve({ kind: 'cloud-empty', hasCache: true });
       return Promise.reject(new Error(`unexpected command ${command}`));
     };
     click('#fetch-button');
     await flush();
-    expect(statusBarHtml()).toContain('云端还没有发布文件，已保留本地缓存');
-    // The retained cache is the last cloud-confirmed version, so the label stays honest.
-    expect(statusBarHtml()).toContain('云端已确认 · 第 3 版');
+    expect(statusBarHtml()).toContain('本地账单');
+    expect(statusBarHtml()).not.toContain('已同步');
     expect(mainHtml()).toContain('个人净消费');
   });
 
   it('shows a partially verified download as cache, never as a cloud-confirmed version', async () => {
     invokeState.impl = (command) => command === 'ledger_fetch'
       ? Promise.resolve({ kind: 'updated', revision: 4, warning: '部分云端文件检查未完成，可重试。', snapshot: CACHED_SNAPSHOT })
-      : Promise.reject(new Error(`unexpected command ${command}`));
+      : command==='ledger_status_command'?Promise.resolve(LEDGER_READY):Promise.reject(new Error(`unexpected command ${command}`));
     click('#fetch-button');
     await flush();
-    expect(statusBarHtml()).toContain('部分云端文件检查未完成');
-    expect(statusBarHtml()).toContain('本地缓存 · 第 4 版');
+    expect(statusBarHtml()).toContain('同步需处理');
+    goto('sync');await flush();
+    expect(mainHtml()).toContain('部分云端文件检查未完成');
+    expect(mainHtml()).toContain('第 4 版');
+    goto('home');
     expect(statusBarHtml()).not.toContain('云端已确认');
     expect(mainHtml()).toContain('个人净消费');
   });
@@ -314,6 +321,8 @@ describe('page startup flow (ledger cache-first display)', () => {
 describe('native first run without pairing', () => {
   beforeEach(() => {
     vi.resetModules();
+    elements.clear();navButtons.forEach(button=>button.handlers={});
+    invokeState.context={platform:'Android',preview:false};
     invokeState.seen = [];
   });
 
@@ -338,7 +347,7 @@ describe('native first run without pairing', () => {
     expect(invokeState.seen).not.toContain('ledger_fetch');
   });
 
-  it('keeps an empty state with an honest reason when the cache read errors', async () => {
+  it('does not read identity-dependent caches or show an error on a fresh device', async () => {
     invokeState.impl = (command) => {
       if (command === 'ledger_status_command') {
         return Promise.resolve({ initialized: false, publishEnabled: false, cachedRevision: null, pendingRevision: null, lastPublishedRevision: null });
@@ -353,9 +362,61 @@ describe('native first run without pairing', () => {
     await import('./main');
     await flush();
     expect(statusBarHtml()).toContain('尚无账单数据');
-    expect(statusBarHtml()).toContain('正式账本尚未初始化');
+    expect(statusBarHtml()).not.toContain('正式账本尚未初始化');
+    expect(invokeState.seen).not.toContain('ledger_cache');
+    expect(elements.get('#status-bar')!.hidden).toBe(true);
     expect(mainHtml()).not.toContain('个人净消费');
     expect(invokeState.seen).not.toContain('ledger_fetch');
+  });
+
+  it('keeps incomplete configuration out of fetch and bill tools across tabs',async()=>{
+    invokeState.impl=command=>command==='ledger_status_command'?Promise.resolve({...LEDGER_READY,initialized:false}):command==='sync_status'?Promise.resolve({configured:false,paired:false}):Promise.resolve(null);
+    await import('./main');await flush();
+    const my=navButtons.find(button=>button.dataset.view==='my')!;
+    for(const handler of my.handlers.click??[])handler();
+    expect(elements.get('#status-bar')!.hidden).toBe(true);
+    expect(mainHtml()).not.toContain('data-open="bills"');expect(mainHtml()).not.toContain('data-open="upload"');
+    goto('sync');await flush();
+    expect(mainHtml()).toContain('id="scan-pairing"');expect(mainHtml()).not.toContain('id="fetch-button"');
+    click('#fetch-button');await flush();
+    expect(invokeState.seen).not.toContain('ledger_fetch');
+  });
+
+  it('resumes at connection settings after scanning without resetting identity',async()=>{
+    let paired=false;
+    invokeState.impl=command=>{
+      if(command==='ledger_status_command')return Promise.resolve({...LEDGER_READY,initialized:paired});
+      if(command==='sync_status')return Promise.resolve({configured:false,paired:false});
+      if(command==='ledger_import_pairing'){paired=true;return Promise.resolve(LEDGER_READY);}
+      return Promise.resolve(null);
+    };
+    const scanner=await import('@tauri-apps/plugin-barcode-scanner');
+    vi.mocked(scanner.scan).mockResolvedValue({content:'synthetic pairing fixture'} as never);
+    await import('./main');await flush();goto('sync');await flush();click('#scan-pairing');await flush(30);
+    expect(mainHtml()).toContain('id="sync-form"');expect(mainHtml()).not.toContain('id="scan-pairing"');
+    expect(mainHtml()).toContain('无需重新扫码');expect(invokeState.seen).not.toContain('ledger_fetch');
+    expect(invokeState.seen.filter(name=>name==='ledger_import_pairing')).toHaveLength(1);
+  });
+
+  it('does not interpret a failed status read as an unpaired device',async()=>{
+    invokeState.impl=command=>command==='ledger_status_command'?Promise.reject('安全存储暂时不可用'):command==='sync_status'?Promise.resolve({configured:true,paired:true}):Promise.resolve(null);
+    await import('./main');await flush();goto('sync');await flush();
+    expect(mainHtml()).toContain('重新读取状态');expect(mainHtml()).not.toContain('id="scan-pairing"');
+    expect(mainHtml()).toContain('安全存储暂时不可用');expect(invokeState.seen).not.toContain('ledger_cache');
+  });
+  it('recovers the offline cache when a status retry succeeds',async()=>{
+    let available=false;
+    invokeState.impl=command=>{
+      if(command==='ledger_status_command')return available?Promise.resolve(LEDGER_READY):Promise.reject('storage unavailable');
+      if(command==='sync_status')return Promise.resolve({configured:true,paired:true});
+      if(command==='ledger_cache')return Promise.resolve({revision:2,snapshot:CACHED_SNAPSHOT});
+      return Promise.resolve(null);
+    };
+    await import('./main');await flush();goto('sync');await flush();
+    available=true;activateRenderedButton('data-action','retry-setup');await flush(30);
+    expect(mainHtml()).toContain('本地数据可用');expect(invokeState.seen).toContain('ledger_cache');
+    expect(invokeState.seen).not.toContain('ledger_fetch');
+    goto('home');expect(mainHtml()).toContain('个人净消费');
   });
 });
 

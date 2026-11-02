@@ -19,8 +19,10 @@ import { onboardingHtml, dateInspectionHtml, recordInspectionHtml } from './mobi
 import { mountMobileMotion, type MobileTransition } from './mobile-motion';
 import { loadMotionPreference, saveMotionPreference, prefersReducedMotion, type MotionPreference } from './mobile-preferences';
 import {mobileSyncHtml} from './mobile-sync';
+import {setupPhase} from './mobile-setup';
 import {MobilePickers} from './mobile-picker';
 import './mobile-picker.css';
+import './mobile-setup.css';
 import { loadThemePreference, saveThemePreference, type ThemePreference } from './mobile-theme';
 import {buildAnalysisExport} from '../../dashboard/src/analysis-export';
 import {exportFormHtml, ExportSession, updateExportFeedback, downloadExport} from '../../dashboard/src/export-ui';
@@ -53,6 +55,7 @@ const state={
   settingsSection:'general' as SettingsSection,configFeedback:'',configError:false,
   chartDate:null as string|null,chartRecord:null as string|null,
   editingConnection:false,editingPairing:false,probeSummaryLoaded:false,checkingCloud:false,exportMonth:'',
+  setupError:'',
 };
 const exportSession=new ExportSession();
 const uploadSession=new BillUploadSession();
@@ -67,6 +70,8 @@ const selector=document.querySelector<HTMLSelectElement>('#month-selector')!;
 const settingsButton=document.querySelector<HTMLButtonElement>('#settings-button')!;
 const mobile=()=>state.android||(!isTauri()&&typeof window.matchMedia==='function'&&window.matchMedia('(max-width: 700px)').matches);
 const currentMonth=()=>getMonth(state.snapshot,state.selectedMonth);
+const phonePhase=()=>setupPhase(state.ledger?.initialized??null,state.probeConfigured,state.probeSummaryLoaded);
+const phoneReady=()=>phonePhase()==='ready';
 const scroll=()=>typeof window.scrollY==='number'?window.scrollY:0;
 const restoreScroll=(top:number)=>{if(typeof window.scrollTo==='function')window.scrollTo({top,behavior:'instant'});};
 const sourceLabel=()=>state.source==='cloud'?`云端已确认 · 第 ${state.revision} 版`:state.source==='cache'?`本地缓存 · 第 ${state.revision} 版（未连接云端确认）`:state.source==='local'?'本机快照 · 云端状态单独确认':state.source==='file'?'本地核验文件 · 未上云':state.source==='sample'?'合成预览数据 · 非真实账单':'';
@@ -79,7 +84,11 @@ function renderStatusBar():void {
   statusBar.innerHTML=`<span class="status-summary">${escapeHtml(date||(!state.snapshot?'尚无账单数据':''))}</span><span class="status-detail ${state.messageTone|| (warning?'tone-warn':'')}">${escapeHtml(parts.join(' · '))}</span>`;
   statusBar.title=[...parts,state.snapshot?.generatedAt?`快照生成 ${dateTitle(state.snapshot.generatedAt,true)}`:''].filter(Boolean).join(' · ');
   statusBar.classList.toggle('has-warning',Boolean(warning)||Boolean(state.messageTone)||state.source==='sample');
-  const hidden=mobile()&&(state.view==='sync'||(state.view!=='home'&&!warning&&!state.messageTone&&state.source!=='sample'));
+  if(mobile()&&state.source!=='sample'){
+    statusBar.innerHTML=`<span class="status-summary">${escapeHtml(date||(!state.snapshot?'尚无账单数据':''))}</span>${state.snapshot?`<button type="button" class="quiet-button status-connection" data-status-sync>${state.messageTone?'同步需处理':state.source==='cloud'?'已同步':'本地账单'}</button>`:''}`;
+    statusBar.querySelector?.('[data-status-sync]')?.addEventListener('click',()=>open({view:'sync'}));
+  }
+  const hidden=mobile()&&(state.view!=='home'||!state.snapshot)&&state.source!=='sample';
   statusBar.hidden=hidden;statusBar.classList.toggle('is-hidden',hidden);
 }
 function renderSelector():void {
@@ -88,6 +97,7 @@ function renderSelector():void {
   selector.disabled=!state.snapshot||state.busy;
 }
 function open(screen:Screen):void {
+  if(mobile()&&((['bills','export','detail','pool'].includes(screen.view)&&!state.snapshot)||(screen.view==='upload'&&!phoneReady())))screen={view:'sync'};
   if(screen.view==='export'){state.exportMonth=state.selectedMonth??'';if(!exportSession.busy)exportSession.clear();}
   hideQr();
   searchComposing=false;queuedRender=false;
@@ -165,8 +175,8 @@ function viewHtml():string {
   if(state.view==='settings')return settingsPageHtml();
   if(state.view==='diagnostics')return mobile()?settingsPageHtml():diagnosticsHtml();
   if(state.view==='about')return `<section class="about"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>生活账本</h1><p>让数字回到生活里。</p><dl class="detail-list"><dt>版本</dt><dd>${escapeHtml(state.version||'开发预览')}</dd><dt>查看范围</dt><dd>当前快照中的近两个月</dd><dt>数据来源</dt><dd>已校验的 SQLite 账本展示快照</dd></dl></section>`;
-  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.source==='cache'?'本地数据可用':sourceLabel());
-  if(!month)return state.loading?empty('正在打开生活账本','正在读取本地数据。'):onboardingHtml(Boolean(state.ledger?.initialized),state.probeConfigured);
+  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady());
+  if(!month)return state.loading?empty('正在打开生活账本','正在读取本地数据。'):onboardingHtml(state.ledger?.initialized??null,state.probeConfigured,state.probeSummaryLoaded,state.view==='analysis',state.checkingCloud);
   if(state.view==='bills')return mobileBills(month,nav.current.query??emptyQuery());
   if(state.view==='pool')return poolHtml(month,nav.current.poolId??'');
   if(state.view==='detail')return detailHtml();
@@ -376,6 +386,7 @@ main.addEventListener('click',event=>{
   if(!button)return;
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
+  if(data.action==='retry-setup'){void retryPhoneSetup();return;}
   if(data.settingsTab){selectSettingsSection(data.settingsTab as SettingsSection);return;}
   if(data.record){open({view:'detail',recordId:data.record});return;}
   if(data.pool){open({view:'pool',poolId:data.pool});return;}
@@ -390,6 +401,7 @@ main.addEventListener('click',event=>{
 });
 function updateBusy():void {
   for(const button of document.querySelectorAll<HTMLButtonElement>('.actions button, .settings-save'))button.disabled=state.busy||!isTauri()||state.preview;
+  if(mobile())for(const button of document.querySelectorAll<HTMLButtonElement>('.setup-primary, [data-action="retry-setup"]'))button.disabled=state.busy||state.checkingCloud||!isTauri()||state.preview;
   for(const button of document.querySelectorAll<HTMLButtonElement>('#bill-upload-choose, #bill-upload-check, [data-upload-retry]'))button.disabled=uploadSession.busy||!state.android||!isTauri()||state.preview;
   if(!mobile())for(const id of ['project-root','python-path']){const input=document.querySelector<HTMLInputElement>(`#${id}`);if(input)input.disabled=state.busy;}
   selector.disabled=!availableMonths(state.snapshot).length||state.busy;
@@ -448,15 +460,15 @@ function ledgerStatusHtml(): string {
 
 function pairingHtml(): string {
   return state.android
-    ? `<div class="actions"><button id="scan-pairing" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>扫码配对</button></div>
-       <p class="hint">扫描电脑端显示的正式账本配对二维码。重复扫码不会重置已有配对。</p>`
+    ? `<div class="setup-actions"><button class="setup-primary" id="scan-pairing" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>${state.busy?'正在配对…':'扫码配对'}</button></div>
+       <details class="setup-help"><summary>电脑上还没有配对二维码？</summary><p>请让电脑上的 Agent 按项目“手机与同步”说明启用同步，然后在电脑版“设置 → 手机与同步”显示二维码。只扫描本人账本的二维码。</p></details>`
     : `<div class="actions"><button id="show-pairing" type="button" ${state.busy || !isTauri() ? 'disabled' : ''}>显示配对二维码</button></div>
        <div id="qr-panel" hidden><img id="pairing-qr" alt="正式账本设备配对二维码"><p class="hint">二维码含账本密钥，只给自己的设备扫描。显示两分钟后自动隐藏。</p><button id="hide-qr" class="back-button" type="button">立即隐藏</button></div>`;
 }
 function syncHtml(): string {
   const pairing=pairingHtml();
   if(!mobile()){state.settingsSection='sync';return settingsPageHtml();}
-  if(mobile())return mobileSyncHtml({initialized:state.ledger?.initialized??null,configured:state.probeConfigured,connectionKnown:state.probeSummaryLoaded,hasData:Boolean(state.snapshot),source:state.source,revision:state.revision,checking:state.checkingCloud,warning:[state.messageTone?state.message:'',coverageNote(state.snapshot)].filter(Boolean).join(' '),editingConnection:state.editingConnection,editingPairing:state.editingPairing},credentialsHtml(),pairing);
+  if(mobile())return mobileSyncHtml({initialized:state.ledger?.initialized??null,configured:state.probeConfigured,connectionKnown:state.probeSummaryLoaded,hasData:Boolean(state.snapshot),source:state.source,revision:state.revision,checking:state.checkingCloud,warning:[state.messageTone?state.message:'',coverageNote(state.snapshot)].filter(Boolean).join(' '),editingConnection:state.editingConnection,editingPairing:state.editingPairing,setupError:state.setupError},credentialsHtml(),pairing);
   return '';
 }
 
@@ -501,14 +513,17 @@ function shortError(error: unknown, fallback: string): string {
 
 async function doFetch(operation: string): Promise<void> {
   if(state.preview)return;
-  state.checkingCloud=true;if(state.view==='sync')render();
+  if(state.android&&!phoneReady()){if(state.view==='sync')render();return;}
+  state.setupError='';
+  state.checkingCloud=true;if(state.view==='sync'||state.android)render();
   try {
     const outcome = await invoke<LedgerFetchOutcome>('ledger_fetch');
     if (outcome.kind === 'cloud-empty') {
+      if(state.android&&state.snapshot)state.source='cache';
       state.message = outcome.hasCache
         ? `${operation}：云端还没有发布文件，已保留本地缓存。`
         : `${operation}：云端还没有发布文件。请先在电脑上发布，或在手机完成配对。`;
-      state.messageTone = 'tone-warn';
+      state.messageTone = state.android?'':'tone-warn';
     } else if (state.source === 'local') {
       // A cloud check never replaces the desktop's authoritative local view.
       const matches=sameSnapshotContent(state.snapshot,outcome.snapshot);
@@ -539,6 +554,7 @@ async function refreshLedgerStatus(): Promise<void> {
   try {
     state.ledger = await invoke<LedgerStatusSummary>('ledger_status_command');
   } catch (error) {
+    if(state.android){state.setupError=shortError(error,'设备状态读取失败，请重试。');return;}
     state.message = shortError(error, '正式账本状态检查未能完成。');
     state.messageTone = 'tone-error';
   }
@@ -551,8 +567,23 @@ async function refreshProbeSummary(): Promise<void> {
     state.probePaired = summary.paired;
     state.probeSummaryLoaded=true;
   } catch {
-    // Probe configuration is optional for the ledger UI.
+    if(state.android)state.setupError='同步设置读取失败，请重试。已有配对和数据保持不变。';
   }
+}
+
+async function retryPhoneSetup():Promise<void>{
+  if(state.busy)return;
+  state.setupError='';
+  await withBusy(async()=>{
+    await refreshLedgerStatus();await refreshProbeSummary();
+    if(state.ledger?.initialized&&!state.snapshot){
+      try{
+        const cached=await invoke<LedgerCacheOutcome|null>('ledger_cache');
+        if(cached)applySnapshot(cached.snapshot,'cache',cached.revision);
+      }catch(error){state.setupError=shortError(error,'本地账单暂时无法读取，请重试。');}
+    }
+  });
+  render();
 }
 
 const refreshController = new RefreshController({
@@ -619,6 +650,8 @@ async function onShowPairing(): Promise<void> {
 }
 
 async function onScanPairing(): Promise<void> {
+  if(state.busy||state.preview||!state.android||!isTauri())return;
+  state.setupError='';
   let paired = false;
   await withBusy(async () => {
     let payload = '';
@@ -639,17 +672,24 @@ async function onScanPairing(): Promise<void> {
       payload = '';
     }
   }).catch((error) => {
+    state.setupError=shortError(error,'扫码配对未能完成。');
     const target = document.querySelector<HTMLElement>('#pair-status');
     if (target) target.textContent = shortError(error, '扫码配对未能完成。');
   });
   if (paired) {
+    state.message='';state.messageTone='';
     pairStatus('配对完成。正式账本状态已更新，配置坚果云凭据后即可同步。');
-    state.editingPairing=false;render();
+    state.editingPairing=false;
+    await refreshProbeSummary();
+    if(phoneReady())refreshController.requestAuto();
   }
+  render();
 }
 
 async function onSyncSubmit(event: Event): Promise<void> {
   event.preventDefault();
+  if(state.busy||state.preview||(state.android&&!state.ledger?.initialized))return;
+  state.setupError='';
   const accountInput = document.querySelector<HTMLInputElement>('#account');
   const passwordInput = document.querySelector<HTMLInputElement>('#password');
   const statusLine = document.querySelector<HTMLElement>('#sync-status');
@@ -666,13 +706,15 @@ async function onSyncSubmit(event: Event): Promise<void> {
     const summary = await invoke<ProbeSyncSummary>('sync_configure', { account, appPassword });
     state.probeConfigured = summary.configured;
     state.probePaired = summary.paired;
+    state.probeSummaryLoaded=true;
     accountInput.value = '';
     configured = true;
   }).catch((error) => {
-    state.message=shortError(error,'同步凭据保存未能完成。');state.messageTone='tone-error';
-    statusLine.textContent = state.message;
+    if(state.android){state.setupError=shortError(error,'同步凭据保存未能完成。');statusLine.textContent=state.setupError;}
+    else{state.message=shortError(error,'同步凭据保存未能完成。');state.messageTone='tone-error';statusLine.textContent=state.message;}
   });
   if (configured) {
+    state.message='';state.messageTone='';
     statusLine.textContent = '已配置。凭据保存在本机系统安全存储中，可随时重新输入更换。';
     const saveButton = document.querySelector<HTMLButtonElement>('#save-sync');
     if (saveButton) saveButton.textContent = '更换同步凭据';
@@ -752,6 +794,7 @@ async function onProbeStatus(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function credentialsHtml():string {
+  if(mobile())return `<div class="setup-panel"><form id="sync-form"><label for="account">坚果云账号</label><input id="account" name="account" autocomplete="off" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="账号邮箱"><label for="password">应用密码</label><input id="password" name="password" type="password" autocomplete="new-password" placeholder="当前手机的应用密码"><div class="setup-actions"><button class="setup-primary" id="save-sync" type="submit">${state.busy?'正在保存…':'保存并连接'}</button></div></form><p id="sync-status" role="status" aria-live="polite"></p><details class="setup-help"><summary>如何获取应用密码？</summary><p>在坚果云的“账户信息 → 安全选项 → 第三方应用管理”中添加本手机的应用密码。它不是登录密码，直接填在这里即可，无需发给 Agent。</p></details></div>`;
   return `<div class="card-block"><h2>同步连接</h2><form id="sync-form"><label for="account">坚果云账号</label><input id="account" name="account" autocomplete="off" inputmode="email"><label for="password">应用密码</label><input id="password" name="password" type="password" autocomplete="new-password"><div class="actions"><button id="save-sync" type="submit">${state.probeConfigured?'更换同步凭据':'保存同步凭据'}</button></div></form><p id="sync-status" class="hint" role="status">${state.probeConfigured?'已配置，凭据保存在本机系统安全存储中。':'尚未配置，输入应用密码后保存。'}</p></div>`;
 }
 selector.addEventListener('change',()=>{
@@ -798,11 +841,12 @@ async function boot():Promise<void>{
     }
   }catch{ /* Older native host: the browser user agent remains a safe layout fallback. */ }
   const statusTask=refreshLedgerStatus();
+  if(state.android)await statusTask;
   let cacheWarning:string|null=null;
   try{
-    const cached=await invoke<LedgerCacheOutcome|null>('ledger_cache');
+    const cached=state.android&&state.ledger?.initialized!==true?null:await invoke<LedgerCacheOutcome|null>('ledger_cache');
     if(cached){applySnapshot(cached.snapshot,'cache',cached.revision);state.message='';state.messageTone='';state.loading=false;render();}
-    else{state.message='尚未同步到任何账单版本。';state.messageTone='tone-warn';}
+    else{state.message=state.android?'':'尚未同步到任何账单版本。';state.messageTone=state.android?'':'tone-warn';}
   }catch(error){cacheWarning=shortError(error,'本地缓存读取未能完成。');state.message=cacheWarning;state.messageTone='tone-warn';}
   await statusTask;
   if(!state.android){

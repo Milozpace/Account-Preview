@@ -563,20 +563,22 @@ pub fn fetch_flow<V: SecretVault + Sync, T: Transaction>(
     })
 }
 
-fn sync_summary<V: SecretVault>(vault: &V) -> SyncStatusSummary {
-    let configured = vault
-        .load_secret(CONFIG_SLOT)
-        .ok()
-        .flatten()
-        .map(|bytes| serde_json::from_slice::<SyncConfig>(&bytes).is_ok())
-        .unwrap_or(false)
-        && vault.load_secret(PASSWORD_SLOT).ok().flatten().is_some();
-    let paired = load_content_key(vault).ok().flatten().is_some();
-    SyncStatusSummary {
+fn sync_summary<V: SecretVault>(vault: &V) -> Result<SyncStatusSummary, String> {
+    let config = vault.load_secret(CONFIG_SLOT)?;
+    let configured = match config {
+        Some(bytes) => {
+            serde_json::from_slice::<SyncConfig>(&bytes)
+                .map_err(|_| "同步设置无法读取，请保留配置并重试。".to_string())?;
+            vault.load_secret(PASSWORD_SLOT)?.is_some()
+        }
+        None => false,
+    };
+    let paired = load_content_key(vault)?.is_some();
+    Ok(SyncStatusSummary {
         configured,
         paired,
         pending_revision: None,
-    }
+    })
 }
 
 /// Best-effort read of an unconfirmed pending publish revision. Only the
@@ -688,7 +690,7 @@ fn apply_configure<V: SecretVault>(
         }
         return Err(error);
     }
-    Ok(sync_summary(vault))
+    sync_summary(vault)
 }
 
 #[tauri::command]
@@ -731,7 +733,7 @@ pub async fn sync_status(app: tauri::AppHandle) -> Result<SyncStatusSummary, Str
             .0
             .lock()
             .map_err(|_| "验证操作状态异常，请重启应用。".to_string())?;
-        let mut summary = sync_summary(&SyncVault(app.platform()));
+        let mut summary = sync_summary(&SyncVault(app.platform()))?;
         if let Ok(directory) = app.path().app_data_dir() {
             summary.pending_revision = pending_revision(&directory, &SyncVault(app.platform()));
         }
@@ -1380,6 +1382,26 @@ fn check_existing_pending<V: SecretVault>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn setup_status_read_errors_are_not_unconfigured() {
+        struct Unreadable;
+        impl SecretVault for Unreadable {
+            fn load_secret(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
+                Err("storage unavailable".into())
+            }
+            fn store_secret(&self, _: &str, _: &[u8]) -> Result<(), String> {
+                panic!("read only")
+            }
+            fn delete_secret(&self, _: &str) -> Result<(), String> {
+                panic!("read only")
+            }
+        }
+        let status = serde_json::to_value(sync_summary(&Unreadable)).unwrap();
+        assert!(
+            status.get("Err").is_some(),
+            "storage failure must not be unconfigured"
+        );
+    }
     use crate::probe::FIXTURE;
     use crate::probe_cache::persist_key;
     use crate::webdav::tests_support::{MockRequest, MockResponse, hierarchy_server, spawn_server};
@@ -2847,7 +2869,7 @@ mod tests {
         assert!(error.contains("写入失败"), "unexpected error: {error}");
         assert!(vault.load_secret(CONFIG_SLOT).unwrap().is_none());
         assert!(vault.load_secret(PASSWORD_SLOT).unwrap().is_none());
-        assert!(!sync_summary(&vault).configured);
+        assert!(!sync_summary(&vault).unwrap().configured);
         // Once the storage works again, the same configuration succeeds.
         let healthy = vault.inner.clone();
         let summary = apply_configure(&healthy, "tester@example.test", "pw").unwrap();

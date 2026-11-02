@@ -92,7 +92,10 @@ impl SecretVault for LedgerCliVault {
 }
 
 fn status_lines(vault: &LedgerCliVault, dir: &Path) -> Vec<String> {
-    let summary = crate::ledger_sync::summarize_ledger(vault, Some(dir));
+    let summary = match crate::ledger_sync::summarize_ledger(vault, Some(dir)) {
+        Ok(summary) => summary,
+        Err(error) => return vec![format!("账本状态读取未完成：{error}")],
+    };
     vec![
         format!("正式账本已初始化：{}", summary.initialized),
         format!(
@@ -228,10 +231,9 @@ fn status_json<V: SecretVault>(vault: &V, dir: &Path) -> Result<String, String> 
     if identity_present != key_present {
         return Err("本机账本身份不完整，请保留现场检查。".into());
     }
-    // Propagate vault permission/corruption failures hidden by the UI's
-    // best-effort summary. Only the boolean summary reaches stdout.
+    // Only status booleans and revision metadata reach stdout, never secrets.
     drop(vault.load_secret(crate::ledger::LEDGER_PUBLISH_ENABLED_SLOT)?);
-    serde_json::to_string(&crate::ledger_sync::summarize_ledger(vault, Some(dir)))
+    serde_json::to_string(&crate::ledger_sync::summarize_ledger(vault, Some(dir))?)
         .map_err(|_| "本机账本状态序列化失败。".into())
 }
 

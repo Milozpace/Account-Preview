@@ -883,16 +883,19 @@ pub fn accept_pairing<V: SecretVault>(
     if ledger::load_identity(vault)?.is_none() {
         ledger::persist_identity(vault, &identity)?;
     }
-    Ok(summarize_ledger(vault, None))
+    summarize_ledger(vault, None)
 }
 
-pub fn summarize_ledger<V: SecretVault>(vault: &V, dir: Option<&Path>) -> LedgerStatusSummary {
-    let initialized = ledger::load_identity(vault).ok().flatten().is_some()
-        && ledger::load_key(vault).ok().flatten().is_some();
+pub fn summarize_ledger<V: SecretVault>(
+    vault: &V,
+    dir: Option<&Path>,
+) -> Result<LedgerStatusSummary, String> {
+    // Missing slots mean first use; unreadable slots must remain an error.
+    let identity = ledger::load_identity(vault)?;
+    let key = ledger::load_key(vault)?;
+    let initialized = identity.is_some() && key.is_some();
     let publish_enabled = vault
-        .load_secret(crate::ledger::LEDGER_PUBLISH_ENABLED_SLOT)
-        .ok()
-        .flatten()
+        .load_secret(crate::ledger::LEDGER_PUBLISH_ENABLED_SLOT)?
         .map(|bytes| bytes == b"true")
         .unwrap_or(false);
     let mut summary = LedgerStatusSummary {
@@ -904,10 +907,7 @@ pub fn summarize_ledger<V: SecretVault>(vault: &V, dir: Option<&Path>) -> Ledger
     };
     if let Some(dir) = dir
         && initialized
-        && let (Some(identity), Ok(Some(key))) = (
-            ledger::load_identity(vault).ok().flatten(),
-            ledger::load_key(vault),
-        )
+        && let (Some(identity), Some(key)) = (identity, key)
     {
         summary.cached_revision = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity)
             .ok()
@@ -923,7 +923,7 @@ pub fn summarize_ledger<V: SecretVault>(vault: &V, dir: Option<&Path>) -> Ledger
                 })
                 .map(|envelope| envelope.metadata.revision);
     }
-    summary
+    Ok(summary)
 }
 
 /// Trusted local initialization: generate and persist the business identity
@@ -940,7 +940,7 @@ pub fn initialize<V: SecretVault>(vault: &V) -> Result<LedgerStatusSummary, Stri
     let key = ContentKey::generate().map_err(|_| "设备无法生成安全随机密钥。".to_string())?;
     ledger::persist_identity(vault, &identity)?;
     ledger::persist_key(vault, &key)?;
-    Ok(summarize_ledger(vault, None))
+    summarize_ledger(vault, None)
 }
 
 fn random_suffix() -> String {
@@ -990,10 +990,7 @@ pub async fn ledger_status_command(app: tauri::AppHandle) -> Result<LedgerStatus
             .path()
             .app_data_dir()
             .map_err(|_| "无法定位应用数据目录。".to_string())?;
-        Ok(summarize_ledger(
-            &SyncVault(app.platform()),
-            Some(&directory),
-        ))
+        summarize_ledger(&SyncVault(app.platform()), Some(&directory))
     })
     .await
     .map_err(|_| "正式账本状态检查未能完成。".to_string())?
@@ -1167,6 +1164,26 @@ pub async fn ledger_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn setup_status_read_errors_are_not_unpaired() {
+        struct Unreadable;
+        impl SecretVault for Unreadable {
+            fn load_secret(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
+                Err("storage unavailable".into())
+            }
+            fn store_secret(&self, _: &str, _: &[u8]) -> Result<(), String> {
+                panic!("read only")
+            }
+            fn delete_secret(&self, _: &str) -> Result<(), String> {
+                panic!("read only")
+            }
+        }
+        let status = serde_json::to_value(summarize_ledger(&Unreadable, None)).unwrap();
+        assert!(
+            status.get("Err").is_some(),
+            "storage failure must not be an unpaired status"
+        );
+    }
     use crate::ledger::tests::{MemorySlots, valid_payload};
     use crate::webdav::tests_support::{MockRequest, MockResponse, spawn_server};
     use std::sync::Mutex as StdMutex;

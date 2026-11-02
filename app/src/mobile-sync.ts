@@ -1,20 +1,28 @@
 import {escapeHtml as e} from '../../dashboard/src/helpers';
 import {uiIcon} from '../../dashboard/src/ui-icons';
+import {setupPhase,connectionError} from './mobile-setup';
 
 export interface MobileSyncState {
   initialized:boolean|null;configured:boolean;connectionKnown:boolean;hasData:boolean;
   source:string;revision:number|null;checking:boolean;warning:string;
   editingConnection:boolean;editingPairing:boolean;
+  setupError?:string;
 }
 
-/** Phone connection details appear only for a missing step or explicit management. */
+/** Show one missing step; preserve existing identity and connection on return. */
 export function mobileSyncHtml(state:MobileSyncState,credentials:string,pairing:string):string {
-  const title=state.checking?'正在检查更新':state.source==='cloud'&&!state.warning?'已同步':state.hasData?'本地数据可用':state.initialized&&state.configured?'等待首次同步':'连接账本';
-  const subtitle=state.revision!=null?`第 ${state.revision} 版${state.source==='cache'?' · 尚未确认云端更新':''}`:state.initialized===null?'设备状态尚未确认':state.initialized&&state.configured?'电脑发布后即可获取账单':state.initialized===false?'扫描电脑上的配对二维码':'';
-  const showConnection=state.editingConnection||(state.connectionKnown&&!state.configured);
-  const showPairing=state.editingPairing||state.initialized===false;
+  const phase=setupPhase(state.initialized,state.configured,state.connectionKnown);
+  const ready=phase==='ready',pair=phase==='pair';
+  const issue=state.setupError||state.warning;
+  const feedback=issue?`<div class="connection-feedback" role="status"><p>${e(state.setupError?'本次操作未完成，请查看详情后重试。':connectionError(issue))}</p>${state.hasData?'<p>已有账单仍可查看。</p>':''}<details><summary>问题详情</summary><p>${e(issue)}</p></details></div>`:'';
+  const title=phase==='checking'?'正在确认连接':pair?'连接电脑账本':phase==='connect'?'设置同步连接':state.checking?'正在获取账单':state.source==='cloud'&&!issue?'已同步':state.hasData?'本地数据可用':'等待首次同步';
+  const subtitle=phase==='checking'?'设备状态尚未确认，请重试读取。':pair?'在电脑打开“设置 → 手机与同步”，显示配对二维码。':phase==='connect'?'已完成设备配对，接下来连接坚果云。':state.revision!=null?`第 ${state.revision} 版${state.source==='cache'?' · 可离线查看':''}`:'电脑同步账单后，在这里获取。';
+  const steps=!ready?`<ol class="setup-progress" aria-label="连接步骤">${['扫码配对','同步连接','获取账单'].map((name,index)=>`<li${(pair&&index===0)||(phase==='connect'&&index===1)?' aria-current="step"':''}><span aria-hidden="true">${index+1}</span>${name}</li>`).join('')}</ol>`:'';
+  const showConnection=phase==='connect'||(ready&&state.editingConnection);
+  const showPairing=pair||(ready&&state.editingPairing);
   const row=(action:string,label:string,status:string,expanded:boolean)=>`<button type="button" class="menu-row sync-management-row" data-action="${action}" aria-expanded="${expanded}"><span>${label}</span><span class="menu-value">${status}</span><span class="row-chevron" aria-hidden="true">${uiIcon(expanded?'up':'right')}</span></button>`;
-  return `<section class="mobile-sync"><div class="sync-summary card-block"><div class="sync-symbol ${state.warning?'has-warning':''}" aria-hidden="true">${uiIcon(state.warning?'warning':state.source==='cloud'?'check':'sync')}</div><h2>${title}</h2>${subtitle?`<p class="sync-subtitle">${e(subtitle)}</p>`:''}${state.warning?`<p class="sync-warning" role="status">${e(state.warning)}</p>`:''}<div class="actions"><button id="fetch-button" type="button" ${state.checking?'disabled':''}>${state.checking?'正在检查…':'检查更新'}</button></div></div>
-    <div class="menu-group">${row('manage-connection','同步连接',state.configured?'已连接':state.connectionKnown?'未连接':'连接设置',showConnection)}${row('manage-pairing','设备配对',state.initialized?'已配对':state.initialized===false?'未配对':'未确认',showPairing)}</div>
-    ${showConnection?credentials:''}${showPairing?`<div class="card-block"><h2>设备配对</h2>${pairing}<p id="pair-status" role="status" aria-live="polite"></p></div>`:''}</section>`;
+  return `<section class="mobile-sync">${steps}<div class="setup-intro"><div class="setup-emblem" aria-hidden="true">${uiIcon(ready&&state.source==='cloud'&&!issue?'check':'sync')}</div><h2>${title}</h2><p class="sync-subtitle">${e(subtitle)}</p>${ready?`<div class="setup-actions"><button class="setup-primary" id="fetch-button" type="button" ${state.checking?'disabled':''}>${state.checking?'正在获取…':state.hasData?'检查更新':'获取账单'}</button></div>`:phase==='checking'?'<button type="button" class="quiet-button" data-action="retry-setup">重新读取状态</button>':''}</div>
+    ${showPairing?`<div class="setup-panel">${pairing}<p id="pair-status" role="status" aria-live="polite"></p></div>`:''}
+    ${showConnection?credentials:''}${feedback}
+    ${ready?`<div class="menu-group">${row('manage-connection','同步连接','已配置',showConnection)}${row('manage-pairing','设备配对','已配对',showPairing)}</div>`:phase==='connect'?'<p class="setup-complete">设备已配对，无需重新扫码。</p>':''}</section>`;
 }

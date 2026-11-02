@@ -6,14 +6,18 @@ import { filterRecords, type AppV2Month, type AppV2Snapshot } from './bills';
 import { emptyQuery, groupDays, selectBills, type BillQuery, type AnalysisTab } from './navigation';
 import type { LedgerRecord } from '../../dashboard/src/types';
 import {uiIcon} from '../../dashboard/src/ui-icons';
+import {setupPhase} from './mobile-setup';
 
 const arrow = `<span class="row-chevron" aria-hidden="true">${uiIcon('right')}</span>`;
 export const empty = (title: string, text = '') => `<div class="empty-state"><span aria-hidden="true">◌</span><h3>${e(title)}</h3>${text?`<p>${e(text)}</p>`:''}</div>`;
 const sectionHeading = (title: string, action = '') => `<div class="mobile-section-heading"><h2>${e(title)}</h2>${action}</div>`;
 const more = `<button class="quiet-button" type="button" data-action="all-bills">查看全部 ${uiIcon('right')}</button>`;
 
-export function onboardingHtml(paired:boolean,configured:boolean):string {
-  return `<section class="onboarding card-block">${empty('尚无账单数据',!paired?'先连接同步，并扫描电脑上的配对二维码。':!configured?'账本已配对，连接同步后即可读取账单。':'账本已连接，检查云端更新以读取已发布的账单。')}<div class="actions"><button type="button" data-open="sync">${paired&&configured?'数据同步':'连接与配对'}</button>${paired&&configured?'<button type="button" data-action="fetch-empty">检查云端更新</button>':''}</div></section>`;
+export function onboardingHtml(paired:boolean|null,configured:boolean,connectionKnown=true,analysis=false,checking=false):string {
+  const phase=setupPhase(paired,configured,connectionKnown);
+  const title=checking?'正在获取账单':phase==='checking'?'正在确认连接':phase==='pair'?'连接电脑账本':phase==='connect'?'完成同步连接':'等待第一份账单';
+  const text=phase==='checking'?'请稍候，正在读取本机设备状态。':phase==='pair'?'连接后，在手机查看电脑整理好的账单。':phase==='connect'?'已完成配对，设置同步连接后即可获取账单。':'电脑同步账单后，即可在这里查看。';
+  return `<section class="onboarding setup-welcome"><div class="setup-emblem" aria-hidden="true">${uiIcon(analysis?'search':'sync')}</div><h2>${analysis&&phase==='ready'?'暂无可分析的账单':title}</h2><p>${text}</p>${phase!=='checking'?`<div class="setup-actions"><button type="button" class="setup-primary" ${phase==='ready'?'data-action="fetch-empty"':'data-open="sync"'}>${phase==='pair'?'连接电脑账本':phase==='connect'?'设置同步连接':'获取账单'}</button></div>`:'<button type="button" class="quiet-button" data-open="sync">查看连接状态</button>'}</section>`;
 }
 
 export function dateInspectionHtml(month:AppV2Month,date:string|null):string {
@@ -83,7 +87,8 @@ export function poolHtml(month: AppV2Month, id: string): string {
   return `<section class="pool-detail" style="--pool-color:${poolColors[id]}"><div class="pool-detail-hero"><span class="eyebrow">${e(pool.name)}池</span><h2>剩余额度</h2><strong>¥ ${value(pool.availableCents)}</strong>${active&&pool.overrunCents>0?`<p class="overrun">超支 ¥ ${money(pool.overrunCents)}</p>`:''}<div class="pool-track"><i style="width:${boundedWidth(active?pool.usageRatio:null)}%"></i></div></div><dl class="pool-facts"><div><dt>新增额度</dt><dd>¥ ${value(pool.budgetCents)}</dd></div>${id==='travel'||id==='growth'?`<div><dt>历史承接</dt><dd>¥ ${value(pool.carryCents)}</dd></div>`:''}<div><dt>已用${pool.spentCents<0?' · 负调整':''}</dt><dd>¥ ${money(pool.spentCents)}</dd></div><div><dt>使用进度</dt><dd>${percent(active?pool.usageRatio:null)}</dd></div></dl>${!active?'<p class="mechanism-note">该月未设预算，仍按用途统计消费；可在电脑版“四池预算”设置额度。</p>':''}${sectionHeading('对应消费',`<span class="small-unit">${records.length} 笔</span>`)}${records.length?groupedRecords(records):empty('这个月还没有对应消费')}</section>`;
 }
 
-export function myHtml(snapshot: AppV2Snapshot|null, status: string): string {
+export function myHtml(snapshot: AppV2Snapshot|null, status: string,canUpload=Boolean(snapshot)): string {
   const row=(view:string,label:string,mark:string,sub='')=>`<button type="button" class="menu-row" data-open="${view}"><span class="menu-icon" aria-hidden="true">${mark}</span><span><strong>${label}</strong>${sub?`<small>${e(sub)}</small>`:''}</span>${arrow}</button>`;
-  return `<section class="my"><div class="my-heading"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>生活账本</h1>${snapshot?.sourceLastRecordedAt?`<p>账单截至 ${e(dateTitle(snapshot.sourceLastRecordedAt))}</p>`:''}</div></div><div class="menu-group">${row('bills','账单查询',uiIcon('search'))}${row('export','导出账单',uiIcon('export'))}${row('upload','上传原始账单',uiIcon('upload'))}</div><div class="menu-group">${row('sync','数据同步',uiIcon('sync'),status)}${row('settings','应用设置',uiIcon('settings'))}${row('about','关于',uiIcon('info'))}</div></section>`;
+  const tools=(snapshot?row('bills','账单查询',uiIcon('search'))+row('export','导出账单',uiIcon('export')):'')+(canUpload?row('upload','上传原始账单',uiIcon('upload')):'');
+  return `<section class="my"><div class="my-heading"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>生活账本</h1>${snapshot?.sourceLastRecordedAt?`<p>账单截至 ${e(dateTitle(snapshot.sourceLastRecordedAt))}</p>`:''}</div></div>${tools?`<div class="menu-group">${tools}</div>`:''}<div class="menu-group">${row('sync',snapshot?'数据同步':'连接电脑账本',uiIcon('sync'),status)}${row('settings','应用设置',uiIcon('settings'))}${row('about','关于',uiIcon('info'))}</div></section>`;
 }

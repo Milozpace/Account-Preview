@@ -13,9 +13,15 @@ describe('mobile presentation', () => {
   });
   it('offers real first-run setup without showing synthetic amounts or transactions',()=>{
     const html=onboardingHtml(false,false);
-    expect(html).toContain('尚无账单数据');expect(html).toContain('data-open="sync"');
+    expect(html).toContain('连接电脑账本');expect(html).toContain('data-open="sync"');
+    expect(html).not.toContain('◌');
     expect(html).not.toContain('个人净消费');expect(html).not.toContain('data-record=');
     expect(onboardingHtml(true,true)).toContain('data-action="fetch-empty"');
+  });
+  it('hides unavailable bill tools but keeps preferences and connection available',()=>{
+    const html=myHtml(null,'未连接');
+    for(const view of ['bills','export','upload'])expect(html).not.toContain(`data-open="${view}"`);
+    for(const view of ['sync','settings','about'])expect(html).toContain(`data-open="${view}"`);
   });
   it('touch chart selections have explicit detail actions and escaped snapshot values',()=>{
     const record={...month.records[0],title:'<img onerror=bad>'};
@@ -65,7 +71,7 @@ describe('mobile presentation', () => {
     expect(html).toContain('负调整');
   });
   it('keeps auxiliary entrances on My rather than introducing an account service', () => {
-    const html = myHtml(null,'');
+    const html = myHtml(fixture as never,'');
     for (const text of ['账单查询','数据同步','应用设置','关于']) expect(html).toContain(text);
     expect(html).not.toContain('登录');
   });

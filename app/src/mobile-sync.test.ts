@@ -2,6 +2,15 @@ import {describe,it,expect} from 'vitest';
 import {mobileSyncHtml,type MobileSyncState} from './mobile-sync';
 const connected:MobileSyncState={initialized:true,configured:true,connectionKnown:true,hasData:true,source:'cloud',revision:2,checking:false,warning:'',editingConnection:false,editingPairing:false};
 describe('mobile sync has progressive connection controls',()=>{
+ it('starts with pairing only, without fetch or credential forms',()=>{
+  const html=mobileSyncHtml({...connected,initialized:false,configured:false,hasData:false,source:'none',revision:null},'<form id="sync-form"></form>','<button id="scan-pairing">扫码配对</button>');
+  expect(html).toContain('id="scan-pairing"');expect(html).not.toContain('id="fetch-button"');expect(html).not.toContain('id="sync-form"');
+  expect(html).toContain('连接电脑账本');
+ });
+ it('resumes credential setup after pairing, with no competing fetch button',()=>{
+  const html=mobileSyncHtml({...connected,configured:false,hasData:false,source:'none'},'<form id="sync-form"></form>','<button id="scan-pairing">扫码</button>');
+  expect(html).toContain('id="sync-form"');expect(html).not.toContain('id="scan-pairing"');expect(html).not.toContain('id="fetch-button"');
+ });
  it('shows actual synced status while hiding connected credential and pairing forms',()=>{
   const html=mobileSyncHtml(connected,'<form id="sync-form"></form>','<button id="scan-pairing">扫码</button>');
   expect(html).toContain('已同步');expect(html).toContain('第 2 版');expect(html).toContain('id="fetch-button"');
