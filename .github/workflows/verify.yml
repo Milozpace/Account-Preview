@@ -237,6 +237,7 @@ jobs:
           import json, os, subprocess
           apks = list(Path('app/src-tauri/gen/android/app/build/outputs/apk').glob('**/*-release-unsigned.apk'))
           assert len(apks) == 1, apks
+          subprocess.run(['python','scripts/verify_android_apk.py',str(apks[0])],check=True)
           version = json.load(open('release.json'))['version']
           profile = os.environ['PROFILE']
           output = f'dist/Account-{profile.title()}-{version}-android-arm64.zip'

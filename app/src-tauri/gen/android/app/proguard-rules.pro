@@ -25,6 +25,13 @@
 # build strips it and every HTTPS handshake fails on Android.
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
 
+# ML Kit discovers these manifest registrars through reflection. R8 full mode
+# keeps their class names via firebase-components, but can remove constructors.
+# ComponentDiscovery then fails and opening the scanner crashes on the UI thread.
+-keep class com.google.mlkit.** implements com.google.firebase.components.ComponentRegistrar {
+    public <init>();
+}
+
 # Display-only WebView interface is called by its JavaScript method name.
 -keepclassmembers class com.account.preview.MainActivity$AppearanceBridge {
     @android.webkit.JavascriptInterface <methods>;
