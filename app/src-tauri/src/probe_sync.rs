@@ -24,7 +24,7 @@ use tauri_plugin_platform::PlatformExt;
 use zeroize::Zeroizing;
 
 pub const DEFAULT_BASE_URL: &str = "https://dav.jianguoyun.com/dav/";
-pub const REMOTE_DIRECTORY: &str = "Account/probe";
+pub const REMOTE_DIRECTORY: &str = crate::cloud_scope::PROBE_DIRECTORY;
 pub const REMOTE_FILE: &str = "latest.enc";
 const REMOTE_PENDING_FILE: &str = "latest.enc.pending";
 
@@ -34,7 +34,7 @@ pub const PROBE_KEY_SLOT: &str = "probe-content-key-v1";
 
 const CACHE_FILE: &str = "synthetic-probe.enc";
 const PENDING_FILE: &str = "publish-pending.enc";
-const STATE_FILE: &str = "publish-state.json";
+const STATE_FILE: &str = crate::cloud_scope::PROBE_STATE;
 
 const PAYLOAD_SCHEMA: &str = "account-synthetic-probe-v1";
 const RECORD_ONE: &str = "demo-001";
@@ -154,7 +154,7 @@ impl SyncConfig {
         // binding protects the test ledger identity and the fixed remote
         // layout from being silently re-pointed.
         if self.base_url.is_empty()
-            || self.directory != REMOTE_DIRECTORY
+            || !crate::cloud_scope::accepts_stored_probe_directory(&self.directory)
             || self.file != REMOTE_FILE
             || self.ledger_id != PROBE_LEDGER
             || self.account_id != PROBE_ACCOUNT
@@ -168,9 +168,9 @@ impl SyncConfig {
 
     fn resolved_directory(&self) -> String {
         if self.test_round == 2 {
-            format!("{}/session-2", self.directory)
+            format!("{REMOTE_DIRECTORY}/session-2")
         } else {
-            self.directory.clone()
+            REMOTE_DIRECTORY.into()
         }
     }
 }
@@ -399,7 +399,7 @@ fn build_bound_client<V: SecretVault>(
     WebDavClient::new(
         &config.base_url,
         &if original_layout {
-            config.directory.clone()
+            REMOTE_DIRECTORY.into()
         } else {
             config.resolved_directory()
         },
@@ -454,9 +454,17 @@ fn prepare_pending(dir: &Path, key: &ContentKey) -> Result<EncryptedEnvelope, St
     let cache_revision = read_cache(&dir.join(CACHE_FILE), key)?
         .map(|envelope| envelope.metadata.revision)
         .unwrap_or(0);
+    // A new cloud scope has no confirmation yet. Its pending must not roll
+    // back the retained old-scope cache. Confirmed synthetic rounds retain
+    // their established retry semantics (fixture cache can be historical).
+    let pending_floor = if state_revision == 0 {
+        cache_revision
+    } else {
+        state_revision
+    };
     let pending_path = dir.join(PENDING_FILE);
     if let Some(pending) =
-        read_cache(&pending_path, key)?.filter(|pending| pending.metadata.revision > state_revision)
+        read_cache(&pending_path, key)?.filter(|pending| pending.metadata.revision > pending_floor)
     {
         return Ok(pending);
     }
@@ -586,8 +594,17 @@ fn sync_summary<V: SecretVault>(vault: &V) -> Result<SyncStatusSummary, String> 
 fn pending_revision<V: SecretVault>(dir: &Path, vault: &V) -> Option<u64> {
     let key = load_content_key(vault).ok()??;
     let state_revision = load_publish_state(dir).ok()?;
+    let cache_revision = read_cache(&dir.join(CACHE_FILE), &key)
+        .ok()?
+        .map(|cache| cache.metadata.revision)
+        .unwrap_or(0);
+    let pending_floor = if state_revision == 0 {
+        cache_revision
+    } else {
+        state_revision
+    };
     let pending = read_cache(&dir.join(PENDING_FILE), &key).ok()??;
-    (pending.metadata.revision > state_revision).then_some(pending.metadata.revision)
+    (pending.metadata.revision > pending_floor).then_some(pending.metadata.revision)
 }
 
 /// Validates and applies a sync configuration against the vault.
@@ -1015,7 +1032,7 @@ fn run_diagnostic<V: SecretVault>(
     // Phase 2: confined service-semantics probes inside our own diag directory.
     let diag_dir = diag_directory_name();
     lines.push(format!(
-        "【语义测试】以下请求全部限制在 Account/probe/{diag_dir}/ 内，仅使用非密文的占位字节。"
+        "【语义测试】以下请求全部限制在 {REMOTE_DIRECTORY}/{diag_dir}/ 内，仅使用非密文的占位字节。"
     ));
     let pending_rel = format!("{diag_dir}/diag.enc.pending");
     let moved_rel = format!("{diag_dir}/diag.enc");
@@ -1595,6 +1612,42 @@ mod tests {
         vault
     }
 
+    #[test]
+    fn cloud_namespace_legacy_config_preserves_credentials_but_never_selects_old_preview_path() {
+        let (base, seen) = spawn_server(Arc::new(|_| MockResponse {
+            status: 404,
+            headers: vec![],
+            body: vec![],
+            truncate_body_after: None,
+        }));
+        let vault = seeded_vault(&base, None);
+        let mut config: SyncConfig =
+            serde_json::from_slice(&vault.load_secret(CONFIG_SLOT).unwrap().unwrap()).unwrap();
+        config.directory = "Account/probe".into();
+        config.test_round = 2;
+        let original = serde_json::to_vec(&config).unwrap();
+        vault.store_secret(CONFIG_SLOT, &original).unwrap();
+        let password = vault.load_secret(PASSWORD_SLOT).unwrap();
+        for (original_layout, suffix) in [(true, "latest.enc"), (false, "session-2/latest.enc")] {
+            let client = build_bound_client(&vault, original_layout).unwrap();
+            assert!(client.get(REMOTE_FILE).unwrap().is_none());
+            assert_eq!(
+                seen.lock().unwrap().last().unwrap().path,
+                format!("/{REMOTE_DIRECTORY}/{suffix}")
+            );
+        }
+        assert_eq!(vault.load_secret(CONFIG_SLOT).unwrap().unwrap(), original);
+        assert_eq!(vault.load_secret(PASSWORD_SLOT).unwrap(), password);
+        for invalid in [
+            "Account/probe/other",
+            "Account-Preview/probe/../ledger",
+            "Other/probe",
+        ] {
+            config.directory = invalid.into();
+            assert!(config.matches_binding().is_err());
+        }
+    }
+
     /// Install a content key and persist a local cache at `revision`.
     fn pair_cache(vault: &MemorySlots, dir: &Path, revision: u64) -> ContentKey {
         let key = ensure_content_key(vault, &dir.join(CACHE_FILE)).unwrap();
@@ -1740,6 +1793,49 @@ mod tests {
     }
 
     #[test]
+    fn cloud_namespace_probe_upgrade_never_reuses_pending_older_than_retained_cache() {
+        if crate::cloud_scope::IDENTIFIER != "com.account.preview" {
+            return;
+        }
+        let (_, _, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base, None);
+        let dir = tempfile::tempdir().unwrap();
+        let key = pair_cache(&vault, dir.path(), 5);
+        fs::write(
+            dir.path().join(PENDING_FILE),
+            envelope_for(&key, &build_payload(2), 2),
+        )
+        .unwrap();
+        let legacy_state = br#"{"lastPublishedRevision":5}"#;
+        fs::write(dir.path().join("publish-state.json"), legacy_state).unwrap();
+        let legacy_intent = b"legacy recovery proof";
+        fs::write(dir.path().join("publish-slot-intent.json"), legacy_intent).unwrap();
+        assert_eq!(pending_revision(dir.path(), &vault), None);
+        assert_eq!(
+            publish_flow(&vault, dir.path(), &InlineTx)
+                .unwrap()
+                .revision,
+            6
+        );
+        assert_eq!(
+            read_cache(&dir.path().join(CACHE_FILE), &key)
+                .unwrap()
+                .unwrap()
+                .metadata
+                .revision,
+            6
+        );
+        assert_eq!(
+            fs::read(dir.path().join("publish-state.json")).unwrap(),
+            legacy_state
+        );
+        assert_eq!(
+            fs::read(dir.path().join("publish-slot-intent.json")).unwrap(),
+            legacy_intent
+        );
+    }
+
+    #[test]
     fn slots_publish_three_versions_without_move_or_legacy_overwrite() {
         let (files, seen, base) = slot_server(Arc::default());
         let vault = seeded_vault(&base, None);
@@ -1756,17 +1852,21 @@ mod tests {
         let files = files.lock().unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(
-            EncryptedEnvelope::from_json(&files["/Account/probe/snapshot-a.enc"])
-                .unwrap()
-                .metadata
-                .revision,
+            EncryptedEnvelope::from_json(
+                &files[concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc")]
+            )
+            .unwrap()
+            .metadata
+            .revision,
             4
         );
         assert_eq!(
-            EncryptedEnvelope::from_json(&files["/Account/probe/snapshot-b.enc"])
-                .unwrap()
-                .metadata
-                .revision,
+            EncryptedEnvelope::from_json(
+                &files[concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc")]
+            )
+            .unwrap()
+            .metadata
+            .revision,
             3
         );
         assert!(
@@ -1785,10 +1885,10 @@ mod tests {
         let key = pair_cache(&vault, dir.path(), 4);
         save_publish_state(dir.path(), 4).unwrap();
         let old = envelope_for(&key, &build_payload(4), 4);
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/probe/latest.enc".into(), old.clone());
+        files.lock().unwrap().insert(
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc").into(),
+            old.clone(),
+        );
         let pending = prepare_pending(dir.path(), &key)
             .unwrap()
             .to_json()
@@ -1801,10 +1901,14 @@ mod tests {
             5
         );
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/snapshot-a.enc"],
+            files.lock().unwrap()
+                [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc")],
             pending
         );
-        assert_eq!(files.lock().unwrap()["/Account/probe/latest.enc"], old);
+        assert_eq!(
+            files.lock().unwrap()[concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc")],
+            old
+        );
         assert!(
             seen.lock()
                 .unwrap()
@@ -1822,13 +1926,16 @@ mod tests {
         let key = pair_cache(&vault, dir.path(), 1);
         publish_flow(&vault, dir.path(), &InlineTx).unwrap();
         publish_flow(&vault, dir.path(), &InlineTx).unwrap();
-        let stable = files.lock().unwrap()["/Account/probe/snapshot-b.enc"].clone();
+        let stable = files.lock().unwrap()
+            [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc")]
+        .clone();
         fault.lock().unwrap().put_failure = Some("partial");
         assert!(publish_flow(&vault, dir.path(), &InlineTx).is_err());
         let pending = fs::read(dir.path().join(PENDING_FILE)).unwrap();
         assert_eq!(cached_revision(&vault, dir.path()), 3);
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/snapshot-b.enc"],
+            files.lock().unwrap()
+                [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc")],
             stable
         );
         let phone = seeded_vault(&base, Some(&key));
@@ -1845,7 +1952,8 @@ mod tests {
             4
         );
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/snapshot-a.enc"],
+            files.lock().unwrap()
+                [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc")],
             pending
         );
         let writes: Vec<_> = seen
@@ -1921,17 +2029,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key = pair_cache(&vault, dir.path(), 2);
         files.lock().unwrap().insert(
-            "/Account/probe/snapshot-a.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc").into(),
             b"unknown broken bytes".to_vec(),
         );
         files.lock().unwrap().insert(
-            "/Account/probe/snapshot-b.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc").into(),
             envelope_for(&key, &build_payload(2), 2),
         );
         assert!(publish_flow(&vault, dir.path(), &InlineTx).is_err());
         assert!(seen.lock().unwrap().iter().all(|r| r.method != "PUT"));
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/snapshot-a.enc"],
+            files.lock().unwrap()
+                [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc")],
             b"unknown broken bytes"
         );
     }
@@ -1947,7 +2056,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key = pair_cache(&vault, dir.path(), 1);
         files.lock().unwrap().insert(
-            "/Account/probe/snapshot-b.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc").into(),
             envelope_for(&key, &build_payload(3), 3),
         );
         let result = fetch_flow(&vault, dir.path(), &InlineTx).unwrap();
@@ -1971,7 +2080,7 @@ mod tests {
         let key = pair_cache(&vault, dir.path(), 1);
         for file in ["snapshot-a.enc", "snapshot-b.enc"] {
             files.lock().unwrap().insert(
-                format!("/Account/probe/{file}"),
+                format!("/{REMOTE_DIRECTORY}/{file}"),
                 envelope_for(&key, &build_payload(3), 3),
             );
         }
@@ -2010,15 +2119,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         pair_cache(&vault, dir.path(), 1);
         files.lock().unwrap().insert(
-            "/Account/probe/snapshot-b.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-b.enc").into(),
             fs::read(dir.path().join(CACHE_FILE)).unwrap(),
         );
         let stranger = ContentKey::generate().unwrap();
         let foreign = envelope_for(&stranger, &build_payload(9), 9);
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/probe/snapshot-a.enc".into(), foreign.clone());
+        files.lock().unwrap().insert(
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc").into(),
+            foreign.clone(),
+        );
         let fetched = fetch_flow(&vault, dir.path(), &InlineTx).unwrap();
         assert!(matches!(
             fetched,
@@ -2034,7 +2143,8 @@ mod tests {
         ));
         assert!(publish_flow(&vault, dir.path(), &InlineTx).is_err());
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/snapshot-a.enc"],
+            files.lock().unwrap()
+                [concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/snapshot-a.enc")],
             foreign
         );
         assert!(seen.lock().unwrap().iter().all(|r| r.method != "PUT"));
@@ -2440,17 +2550,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key = pair_cache(&vault, dir.path(), 1);
         let legacy = envelope_for(&key, &build_payload(1), 1);
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/probe/latest.enc".into(), legacy.clone());
+        files.lock().unwrap().insert(
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc").into(),
+            legacy.clone(),
+        );
         assert_eq!(
             publish_flow(&vault, dir.path(), &InlineTx)
                 .unwrap()
                 .revision,
             2
         );
-        assert_eq!(files.lock().unwrap()["/Account/probe/latest.enc"], legacy);
+        assert_eq!(
+            files.lock().unwrap()[concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc")],
+            legacy
+        );
         assert!(
             seen.lock()
                 .unwrap()
@@ -2466,27 +2579,39 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key = pair_cache(&vault, dir.path(), 1);
         let legacy = envelope_for(&key, &build_payload(1), 1);
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/probe/latest.enc".into(), legacy.clone());
+        files.lock().unwrap().insert(
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc").into(),
+            legacy.clone(),
+        );
         let pending = prepare_pending(dir.path(), &key)
             .unwrap()
             .to_json()
             .unwrap();
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/probe/latest.enc.pending".into(), pending.clone());
+        files.lock().unwrap().insert(
+            concat!(
+                "/",
+                env!("ACCOUNT_REMOTE_ROOT"),
+                "/probe/latest.enc.pending"
+            )
+            .into(),
+            pending.clone(),
+        );
         assert_eq!(
             publish_flow(&vault, dir.path(), &InlineTx)
                 .unwrap()
                 .revision,
             2
         );
-        assert_eq!(files.lock().unwrap()["/Account/probe/latest.enc"], legacy);
         assert_eq!(
-            files.lock().unwrap()["/Account/probe/latest.enc.pending"],
+            files.lock().unwrap()[concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/probe/latest.enc")],
+            legacy
+        );
+        assert_eq!(
+            files.lock().unwrap()[concat!(
+                "/",
+                env!("ACCOUNT_REMOTE_ROOT"),
+                "/probe/latest.enc.pending"
+            )],
             pending
         );
         assert!(
@@ -2508,7 +2633,12 @@ mod tests {
         assert_eq!(outcome.revision, 2);
         {
             let map = entries.lock().unwrap();
-            let official = map.get("Account/probe/snapshot-a.enc").unwrap();
+            let official = map
+                .get(concat!(
+                    env!("ACCOUNT_REMOTE_ROOT"),
+                    "/probe/snapshot-a.enc"
+                ))
+                .unwrap();
             assert_eq!(official.0, 'f');
         }
         // The pending file is gone locally and the state advanced.

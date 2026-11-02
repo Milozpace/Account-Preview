@@ -5,6 +5,19 @@
 mod tests {
     use super::*;
     #[test]
+    fn cloud_namespace_inbox_matches_the_installed_product() {
+        let root = match crate::cloud_scope::IDENTIFIER {
+            "com.account.preview" => "Account-Preview",
+            "com.account.probe" => "Account",
+            _ => panic!("Unsupported installation identity"),
+        };
+        let directory = Context::test().directory().unwrap();
+        assert!(
+            directory.starts_with(&format!("{root}/inbox/")),
+            "{directory}"
+        );
+    }
+    #[test]
     fn rejects_unsafe_names_and_accepts_bill_basenames() {
         for name in [
             "../a.csv",
@@ -220,7 +233,11 @@ impl Context {
     }
     fn directory(&self) -> Result<String, String> {
         let stable = serde_json::to_vec(&self.identity).map_err(|_| fail())?;
-        Ok(format!("Account/inbox/{}", &digest(&stable)[..32]))
+        Ok(format!(
+            "{}/{}",
+            crate::cloud_scope::INBOX_DIRECTORY,
+            &digest(&stable)[..32]
+        ))
     }
     fn key(&self, purpose: Purpose) -> ContentKey {
         let mut hasher = Sha256::new();

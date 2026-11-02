@@ -1,8 +1,11 @@
 mod analysis_export;
 pub mod bill_inbox;
 mod bill_upload;
+mod cloud_scope;
 mod desktop_bridge;
 mod desktop_budget;
+#[cfg(test)]
+mod install_profile;
 mod ledger;
 mod ledger_sync;
 mod probe;
@@ -11,6 +14,23 @@ mod probe_sync;
 mod probe_transaction;
 mod tls;
 mod webdav;
+
+#[cfg(test)]
+mod cloud_namespace_tests {
+    #[test]
+    fn cloud_namespace_matches_the_installed_product() {
+        let root = match crate::cloud_scope::IDENTIFIER {
+            "com.account.preview" => "Account-Preview",
+            "com.account.probe" => "Account",
+            _ => panic!("Unsupported installation identity"),
+        };
+        assert_eq!(
+            crate::ledger::LEDGER_REMOTE_DIRECTORY,
+            format!("{root}/ledger")
+        );
+        assert_eq!(crate::probe_sync::REMOTE_DIRECTORY, format!("{root}/probe"));
+    }
+}
 
 /// Windows CLI support for the ledger publisher binary.
 #[cfg(any(windows, target_os = "macos"))]

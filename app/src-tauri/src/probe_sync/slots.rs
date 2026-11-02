@@ -4,7 +4,7 @@ use super::*;
 use std::io::Write;
 
 pub(super) const FILES: [&str; 2] = ["snapshot-a.enc", "snapshot-b.enc"];
-const INTENT_FILE: &str = "publish-slot-intent.json";
+pub(super) const INTENT_FILE: &str = crate::cloud_scope::PROBE_INTENT;
 
 enum Read {
     Missing,

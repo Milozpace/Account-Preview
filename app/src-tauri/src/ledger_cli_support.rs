@@ -27,11 +27,7 @@ pub fn open_vault(data_dir: &Path) -> Result<LedgerCliVault, String> {
 /// Same application identifier and platform base as Tauri app_data_dir and
 /// app_config_dir. Never fall back to a previous production identifier.
 pub fn data_directory() -> Result<PathBuf, String> {
-    let configuration: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
-        .map_err(|_| "应用身份配置无效。")?;
-    let identifier = configuration["identifier"]
-        .as_str()
-        .ok_or("应用身份配置无效。")?;
+    let identifier = crate::cloud_scope::IDENTIFIER;
     if identifier.is_empty()
         || !identifier
             .bytes()
@@ -169,7 +165,7 @@ pub fn run_cli(args: Vec<String>) -> LedgerOutcome {
             "--status-json" if args.len() == 1 => Ok(vec![status_json(&vault, &dir)?]),
             "--enable-publish" if args.len() == 1 => {
                 crate::ledger_sync::enable_publish(&vault)?;
-                Ok(vec!["真实发布开关已启用。此后 --publish 将真实上传到坚果云 Account/ledger。".into()])
+                Ok(vec![format!("真实发布开关已启用。此后 --publish 将真实上传到坚果云 {}。", crate::cloud_scope::LEDGER_DIRECTORY)])
             }
             "--prepare" | "--publish" => {
                 let payload = args.get(1).ok_or("缺少账单快照文件路径参数。")?;

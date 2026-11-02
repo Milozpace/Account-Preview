@@ -53,12 +53,7 @@ pub(super) fn prepare<V: SecretVault>(
         }
     }
     // Fixed whitelist: only this synthetic probe's encrypted files and counters.
-    let names = [
-        CACHE_FILE,
-        PENDING_FILE,
-        STATE_FILE,
-        "publish-slot-intent.json",
-    ];
+    let names = [CACHE_FILE, PENDING_FILE, STATE_FILE, slots::INTENT_FILE];
     let mut saved_names = Vec::new();
     for name in names {
         let source = dir.join(name);
@@ -230,7 +225,7 @@ mod tests {
         );
         assert_eq!(
             config(&vault).resolved_directory(),
-            "Account/probe/session-2"
+            format!("{REMOTE_DIRECTORY}/session-2")
         );
         let entries: Vec<_> = fs::read_dir(dir.path().join("test-round-backups"))
             .unwrap()

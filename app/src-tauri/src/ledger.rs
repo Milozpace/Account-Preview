@@ -13,7 +13,7 @@ use account_app_core::{
 use serde::Deserialize;
 use std::{fs, io::Write, path::Path};
 
-pub const LEDGER_REMOTE_DIRECTORY: &str = "Account/ledger";
+pub const LEDGER_REMOTE_DIRECTORY: &str = crate::cloud_scope::LEDGER_DIRECTORY;
 pub const LEDGER_REMOTE_FILE_A: &str = "snapshot-a.enc";
 pub const LEDGER_REMOTE_FILE_B: &str = "snapshot-b.enc";
 pub const LEDGER_FILES: [&str; 2] = [LEDGER_REMOTE_FILE_A, LEDGER_REMOTE_FILE_B];
@@ -26,8 +26,8 @@ pub const LEDGER_PUBLISH_ENABLED_SLOT: &str = "ledger-publish-enabled-v1";
 
 pub const LEDGER_CACHE_FILE: &str = "ledger-cache.enc";
 pub const LEDGER_PENDING_FILE: &str = "ledger-pending.enc";
-pub const LEDGER_STATE_FILE: &str = "ledger-publish-state.json";
-pub const LEDGER_INTENT_FILE: &str = "ledger-slot-intent.json";
+pub const LEDGER_STATE_FILE: &str = crate::cloud_scope::LEDGER_STATE;
+pub const LEDGER_INTENT_FILE: &str = crate::cloud_scope::LEDGER_INTENT;
 
 pub const SAMPLE_PLAINTEXT: &[u8] = b"account-ledger-pairing-sample-v1";
 pub const PAIRING_KIND: &str = "account-ledger-pairing-v1";
@@ -545,7 +545,9 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
         }
     } else if month_list.first() != Some(&snapshot.calendar_month)
         || month_list.iter().any(|month| !valid_month(month))
-        || month_list.windows(2).any(|pair| previous_month(&pair[0]).as_ref() != Some(&pair[1]))
+        || month_list
+            .windows(2)
+            .any(|pair| previous_month(&pair[0]).as_ref() != Some(&pair[1]))
     {
         // The exporter owns the start date; this envelope proves continuity only.
         return Err("快照必须从当月连续覆盖至声明的最早月份，已拒绝。".into());
@@ -818,7 +820,10 @@ pub mod tests {
         for index in 0..2 {
             let mut value: serde_json::Value = serde_json::from_str(payload).unwrap();
             value["months"].as_array_mut().unwrap().remove(index);
-            value["coverage"]["months"].as_array_mut().unwrap().remove(index);
+            value["coverage"]["months"]
+                .as_array_mut()
+                .unwrap()
+                .remove(index);
             assert!(parse_payload(value.to_string().as_bytes()).is_err());
         }
         for invalid in ["2026-12", "2026-13", "0000-11"] {

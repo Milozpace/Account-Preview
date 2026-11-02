@@ -229,7 +229,9 @@ fn decide_pending(
     let unconfirmed_upload = load_intent_unchecked(dir)
         .map_err(|e| step_err(STEP_PENDING, e))?
         .is_some_and(|intent| intent.envelope.metadata.revision > state_revision);
-    if let Some(pending) = existing.filter(|pending| pending.metadata.revision > state_revision) {
+    if let Some(pending) =
+        existing.filter(|pending| pending.metadata.revision > state_revision.max(cache_revision))
+    {
         let pending_plain = ZeroizingVec(
             decrypt(&pending, key, identity.expected())
                 .map_err(|error| step_err(STEP_PENDING, format!("待发内容无法认证：{error}")))?,
@@ -322,7 +324,7 @@ impl Drop for ZeroizingVec {
 }
 
 // ---------------------------------------------------------------------------
-// Slot protocol (no legacy-file branch: `Account/ledger` starts empty).
+// Slot protocol in the build-bound ledger directory; no old-directory fallback.
 // ---------------------------------------------------------------------------
 
 enum Read {
@@ -524,9 +526,13 @@ pub fn publish_staged<V: SecretVault + Sync, T: Transaction>(
     // mutate durable state while this upload is in flight.
     tx.run(|| {
         let state_revision = load_publish_state(dir).map_err(|e| step_err(STEP_PENDING, e))?;
+        let cache_revision = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity)
+            .map_err(|e| step_err(STEP_KEY_CACHE, e))?
+            .map(|cache| cache.metadata.revision)
+            .unwrap_or(0);
         let envelope = ledger::read_cache(&dir.join(LEDGER_PENDING_FILE), &key, &identity)
             .map_err(|e| step_err(STEP_PENDING, e))?
-            .filter(|pending| pending.metadata.revision > state_revision)
+            .filter(|pending| pending.metadata.revision > state_revision.max(cache_revision))
             .ok_or("没有待发内容。请先用准备命令暂存账单快照。".to_string())?;
         let intent = load_intent(dir, &envelope).map_err(|e| step_err(STEP_PENDING, e))?;
         client
@@ -919,7 +925,11 @@ pub fn summarize_ledger<V: SecretVault>(
                 .ok()
                 .flatten()
                 .filter(|envelope| {
-                    envelope.metadata.revision > summary.last_published_revision.unwrap_or(0)
+                    envelope.metadata.revision
+                        > summary
+                            .last_published_revision
+                            .unwrap_or(0)
+                            .max(summary.cached_revision.unwrap_or(0))
                 })
                 .map(|envelope| envelope.metadata.revision);
     }
@@ -1339,6 +1349,109 @@ mod tests {
     }
 
     #[test]
+    fn cloud_namespace_preview_upgrade_preserves_cache_and_old_scope_evidence() {
+        if crate::cloud_scope::IDENTIFIER != "com.account.preview" {
+            return;
+        }
+        let (files, _, base) = slot_server(Arc::new(StdMutex::new(Fault::default())));
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let identity = ledger::load_identity(&vault).unwrap().unwrap();
+        let key = ledger::load_key(&vault).unwrap().unwrap();
+        let payload = valid_payload();
+        let make = |revision| {
+            encrypt(
+                &payload,
+                &key,
+                SnapshotMetadata {
+                    format_version: 1,
+                    ledger_id: identity.ledger_id.clone(),
+                    account_id: identity.account_id.clone(),
+                    key_generation: identity.key_generation,
+                    revision,
+                },
+            )
+            .unwrap()
+        };
+        ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &make(5)).unwrap();
+        ledger::persist_cache(&dir.path().join(LEDGER_PENDING_FILE), &make(2)).unwrap();
+        let legacy_state = br#"{"lastPublishedRevision":5}"#;
+        let legacy_intent = b"old recovery evidence stays untouched";
+        fs::write(dir.path().join("ledger-publish-state.json"), legacy_state).unwrap();
+        fs::write(dir.path().join("ledger-slot-intent.json"), legacy_intent).unwrap();
+        assert!(publish_staged(&vault, dir.path(), &InlineTx).is_err());
+        assert_eq!(cached_revision(&vault, dir.path()), 5);
+        assert!(files.lock().unwrap().is_empty());
+        let path = write_payload(dir.path(), "snapshot.json", &payload);
+        let result = prepare_and_publish(&vault, dir.path(), &InlineTx, &path, false).unwrap();
+        assert!(!result.already_published);
+        assert_eq!(result.revision, 6);
+        assert_eq!(
+            cloud_revision(&files, "/Account-Preview/ledger/snapshot-a.enc"),
+            6
+        );
+        assert_eq!(cached_revision(&vault, dir.path()), 6);
+        assert_eq!(
+            fs::read(dir.path().join("ledger-publish-state.json")).unwrap(),
+            legacy_state
+        );
+        assert_eq!(
+            fs::read(dir.path().join("ledger-slot-intent.json")).unwrap(),
+            legacy_intent
+        );
+        assert_eq!(ledger::load_identity(&vault).unwrap().unwrap(), identity);
+    }
+
+    #[test]
+    fn cloud_namespace_preview_publish_and_phone_fetch_never_touch_personal_paths() {
+        if crate::cloud_scope::IDENTIFIER != "com.account.preview" {
+            return;
+        }
+        let (files, seen, base) = slot_server(Arc::new(StdMutex::new(Fault::default())));
+        let production = [
+            (
+                "/Account/ledger/snapshot-a.enc",
+                b"personal-ledger".to_vec(),
+            ),
+            ("/Account/probe/snapshot-a.enc", b"personal-probe".to_vec()),
+            (
+                "/Account/inbox/private/existing.bill.enc",
+                b"personal-inbox".to_vec(),
+            ),
+        ];
+        for (path, bytes) in &production {
+            files.lock().unwrap().insert((*path).into(), bytes.clone());
+        }
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_payload(dir.path(), "snapshot.json", &valid_payload());
+        prepare_and_publish(&vault, dir.path(), &InlineTx, &path, false).unwrap();
+        let phone = seeded_vault(&base);
+        // A paired phone uses the desktop identity/key, not a new ledger.
+        for slot in [ledger::LEDGER_IDENTITY_SLOT, ledger::LEDGER_KEY_SLOT] {
+            phone
+                .store_secret(slot, &vault.load_secret(slot).unwrap().unwrap())
+                .unwrap();
+        }
+        let phone_dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            fetch_flow(&phone, phone_dir.path(), &InlineTx).unwrap(),
+            LedgerFetchOutcome::Updated { revision: 1, .. }
+        ));
+        assert_eq!(cached_revision(&phone, phone_dir.path()), 1);
+        for (path, bytes) in &production {
+            assert_eq!(files.lock().unwrap().get(*path), Some(bytes));
+        }
+        assert!(seen.lock().unwrap().iter().all(|request| request.path != "/Account" && !request.path.starts_with("/Account/")));
+        assert!(
+            files
+                .lock()
+                .unwrap()
+                .contains_key("/Account-Preview/ledger/snapshot-a.enc")
+        );
+    }
+
+    #[test]
     fn three_consecutive_publishes_reuse_slots_without_move() {
         let fault = Arc::new(StdMutex::new(Fault::default()));
         let (files, seen, base) = slot_server(fault);
@@ -1357,8 +1470,20 @@ mod tests {
             let published = publish_staged(&vault, dir.path(), &InlineTx).unwrap();
             assert_eq!(published.revision, revision);
         }
-        assert_eq!(cloud_revision(&files, "/Account/ledger/snapshot-a.enc"), 3);
-        assert_eq!(cloud_revision(&files, "/Account/ledger/snapshot-b.enc"), 2);
+        assert_eq!(
+            cloud_revision(
+                &files,
+                concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-a.enc")
+            ),
+            3
+        );
+        assert_eq!(
+            cloud_revision(
+                &files,
+                concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-b.enc")
+            ),
+            2
+        );
         assert!(
             seen.lock()
                 .unwrap()
@@ -1384,7 +1509,13 @@ mod tests {
             "identical content must not manufacture a new version"
         );
         assert_eq!(outcome.revision, 1);
-        assert_eq!(cloud_revision(&files, "/Account/ledger/snapshot-a.enc"), 1);
+        assert_eq!(
+            cloud_revision(
+                &files,
+                concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-a.enc")
+            ),
+            1
+        );
         assert!(!dir.path().join(LEDGER_PENDING_FILE).exists());
     }
 
@@ -1409,12 +1540,22 @@ mod tests {
         // Publishing now uploads only the newest content; version 1 never reaches the cloud.
         let published = publish_staged(&vault, dir.path(), &InlineTx).unwrap();
         assert_eq!(published.revision, 2);
-        assert_eq!(cloud_revision(&files, "/Account/ledger/snapshot-a.enc"), 2);
+        assert_eq!(
+            cloud_revision(
+                &files,
+                concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-a.enc")
+            ),
+            2
+        );
         assert_eq!(cached_revision(&vault, dir.path()), 2);
         let bytes = files
             .lock()
             .unwrap()
-            .get("/Account/ledger/snapshot-a.enc")
+            .get(concat!(
+                "/",
+                env!("ACCOUNT_REMOTE_ROOT"),
+                "/ledger/snapshot-a.enc"
+            ))
             .unwrap()
             .clone();
         let envelope = EncryptedEnvelope::from_json(&bytes).unwrap();
@@ -1461,7 +1602,11 @@ mod tests {
             files
                 .lock()
                 .unwrap()
-                .get("/Account/ledger/snapshot-a.enc")
+                .get(concat!(
+                    "/",
+                    env!("ACCOUNT_REMOTE_ROOT"),
+                    "/ledger/snapshot-a.enc"
+                ))
                 .unwrap(),
             &pending
         );
@@ -1518,13 +1663,13 @@ mod tests {
             .unwrap()
         };
         files.lock().unwrap().insert(
-            "/Account/ledger/snapshot-a.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-a.enc").into(),
             b"unknown broken bytes".to_vec(),
         );
-        files
-            .lock()
-            .unwrap()
-            .insert("/Account/ledger/snapshot-b.enc".into(), stranger);
+        files.lock().unwrap().insert(
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-b.enc").into(),
+            stranger,
+        );
         let path = write_payload(dir.path(), "snapshot.json", &valid_payload());
         assert!(prepare_and_publish(&vault, dir.path(), &InlineTx, &path, false).is_err());
         assert!(seen.lock().unwrap().iter().all(|r| r.method != "PUT"));
@@ -1532,7 +1677,11 @@ mod tests {
             files
                 .lock()
                 .unwrap()
-                .get("/Account/ledger/snapshot-a.enc")
+                .get(concat!(
+                    "/",
+                    env!("ACCOUNT_REMOTE_ROOT"),
+                    "/ledger/snapshot-a.enc"
+                ))
                 .unwrap(),
             b"unknown broken bytes"
         );
@@ -1546,7 +1695,7 @@ mod tests {
         let identity = ledger::load_identity(&vault).unwrap().unwrap();
         let key = ledger::load_key(&vault).unwrap().unwrap();
         files.lock().unwrap().insert(
-            "/Account/ledger/snapshot-a.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-a.enc").into(),
             encrypt(
                 &payload_variant(&valid_payload(), "high"),
                 &key,
@@ -1573,7 +1722,7 @@ mod tests {
         ));
         // A lower cloud version is rejected and keeps the cache.
         files.lock().unwrap().insert(
-            "/Account/ledger/snapshot-b.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-b.enc").into(),
             encrypt(
                 &valid_payload(),
                 &key,
@@ -1610,7 +1759,7 @@ mod tests {
         let identity = ledger::load_identity(&vault).unwrap().unwrap();
         let key = ledger::load_key(&vault).unwrap().unwrap();
         files.lock().unwrap().insert(
-            "/Account/ledger/snapshot-b.enc".into(),
+            concat!("/", env!("ACCOUNT_REMOTE_ROOT"), "/ledger/snapshot-b.enc").into(),
             encrypt(
                 &valid_payload(),
                 &key,
