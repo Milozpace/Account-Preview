@@ -282,10 +282,10 @@ function searchBills(input:HTMLInputElement):void {
 function selectSettingsSection(section:SettingsSection):void {
   if(!['general','budget','sync','advanced','diagnostics'].includes(section))return;
   if(section!=='sync')hideQr();
+  if(section!=='budget'&&budgetSession.editing)budgetSession.cancelEdit();
   state.settingsSection=section;
   restoreScroll(0);
-  document.querySelectorAll<HTMLElement>('[data-settings-panel]').forEach(panel=>{panel.hidden=panel.dataset.settingsPanel!==section;});
-  document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]').forEach(tab=>{if(tab.dataset.settingsTab===section)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
+  render();
   if(section==='budget'&&!budgetSession.status)void loadBudget();
   if(section==='sync')void refreshDesktopSettings();
 }
@@ -305,14 +305,17 @@ async function saveBudget():Promise<void> {
   if(state.view==='settings')render();
 }
 function bindView():void {
+  document.querySelector<HTMLButtonElement>('#budget-start-edit')?.addEventListener('click',()=>{budgetSession.beginEdit();render();document.querySelector<HTMLInputElement>('#budget-operation')?.focus?.({preventScroll:true});});
+  document.querySelector<HTMLButtonElement>('#budget-cancel-edit')?.addEventListener('click',()=>{budgetSession.cancelEdit();render();});
+  document.querySelector<HTMLButtonElement>('#budget-revise')?.addEventListener('click',()=>{budgetSession.revise();render();});
+  document.querySelector<HTMLSelectElement>('#budget-view-month')?.addEventListener('change',event=>{budgetSession.selectMonth((event.target as HTMLSelectElement).value);render();});
   document.querySelector<HTMLButtonElement>('#bill-upload-choose')?.addEventListener('click',()=>void chooseBillUpload());
   document.querySelector<HTMLButtonElement>('#bill-upload-check')?.addEventListener('click',()=>void loadBillUploads(true));
   document.querySelectorAll<HTMLButtonElement>('[data-upload-retry]').forEach(button=>button.addEventListener('click',()=>void retryBillUpload(button.dataset.uploadRetry!)));
   document.querySelector<HTMLFormElement>('#budget-form')?.addEventListener('submit',event=>{event.preventDefault();void previewBudget();});
   document.querySelector<HTMLButtonElement>('#budget-confirm-save')?.addEventListener('click',()=>void saveBudget());
   document.querySelector<HTMLButtonElement>('#budget-reload')?.addEventListener('click',()=>void loadBudget(true));
-  document.querySelector<HTMLSelectElement>('#budget-existing-rate')?.addEventListener('change',event=>{const month=(event.target as HTMLSelectElement).value;if(month){budgetSession.selectMonth(month);render();}});
-  for(const [id,field] of [['budget-month','effective'],['budget-reason','reason'],['budget-operation','运行账户'],['budget-free','随心消费'],['budget-travel','旅行/体验'],['budget-growth','成长/项目/耐用品']]) {
+  for(const [id,field] of [['budget-month','effective'],['budget-operation','运行账户'],['budget-free','随心消费'],['budget-travel','旅行/体验'],['budget-growth','成长/项目/耐用品']]) {
     document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input',event=>{budgetSession.change(field,(event.target as HTMLInputElement).value);document.querySelector<HTMLElement>('.budget-preview')?.remove();});
   }
   document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach(button=>button.addEventListener('click',()=>{
@@ -385,7 +388,7 @@ async function saveAnalysisExport():Promise<void>{
 main.addEventListener('click',event=>{
   const target=event.target as HTMLElement|null;
   if(!target?.closest)return;
-  const button=target.closest<HTMLElement>('[data-record],[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-analysis],[data-highlight-pool],[data-settings-tab],#expand-categories');
+  const button=target.closest<HTMLElement>('[data-record],button[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-analysis],[data-highlight-pool],[data-settings-tab],#expand-categories');
   if(!button)return;
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
@@ -404,7 +407,7 @@ main.addEventListener('click',event=>{
   switch(data.action){case 'edit-budget':if(!mobile()){state.settingsSection='budget';if(state.view==='settings')render();else open({view:'settings'});if(!budgetSession.status)void loadBudget();}break;case 'manage-connection':state.editingConnection=!state.editingConnection;state.setupError='';render();break;case 'manage-pairing':state.editingPairing=!state.editingPairing;render();break;case 'chart-date-bills':if(data.inspectDate)openBills({date:data.inspectDate});break;case 'chart-record-detail':if(data.inspectRecord)open({view:'detail',recordId:data.inspectRecord});break;case 'fetch-empty':refreshController.requestManual();break;case 'back':case 'back-to-bills':back();break;case 'all-bills':openBills();break;case 'clear-filters':updateQuery(emptyQuery());break;case 'clear-search':updateQuery({query:''});break;case 'clear-date':updateQuery({date:''});break;}
 });
 function updateBusy():void {
-  for(const button of document.querySelectorAll<HTMLButtonElement>('.actions button, .settings-save'))button.disabled=state.busy||!isTauri()||state.preview;
+  for(const button of document.querySelectorAll<HTMLButtonElement>('.actions button, .settings-save'))button.disabled=state.busy||Boolean(button.closest?.('.desktop-budget-settings')&&(budgetSession.busy||budgetSession.loading))||!isTauri()||state.preview;
   if(mobile())for(const button of document.querySelectorAll<HTMLButtonElement>('.setup-primary, [data-action="retry-setup"]'))button.disabled=state.busy||state.checkingCloud||!isTauri()||state.preview;
   for(const button of document.querySelectorAll<HTMLButtonElement>('#bill-upload-choose, #bill-upload-check, [data-upload-retry]'))button.disabled=uploadSession.busy||!state.android||!isTauri()||state.preview;
   if(!mobile())for(const id of ['project-root','python-path']){const input=document.querySelector<HTMLInputElement>(`#${id}`);if(input)input.disabled=state.busy;}

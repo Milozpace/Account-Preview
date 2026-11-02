@@ -162,7 +162,7 @@ function mainHtml(): string {
 }
 
 function click(id: string): void {
-  for (const handler of elements.get(id)!.handlers.click ?? []) handler();
+  for (const handler of [...(elements.get(id)!.handlers.click ?? [])]) handler();
 }
 
 /** Use only an actual rendered native button, then bubble its click to the real router. */
@@ -535,6 +535,8 @@ describe('Windows local presentation and isolated preview',()=>{
       return common(command);
     };
     await import('./main');await flush(20);click('#settings-button');activateRenderedButton('data-settings-tab','budget');await flush(20);
+    expect(mainHtml()).not.toContain('id="budget-form"');
+    click('#budget-start-edit');
     expect(mainHtml()).toContain('id="budget-form"');
     const input=elements.get('#budget-operation')!;input.value='120';
     input.handlers.input.at(-1)!({target:input});
@@ -554,8 +556,17 @@ describe('Windows local presentation and isolated preview',()=>{
     await import('./main');await flush(30);
     expect(mainHtml()).toContain('未设预算，默认额度为0');
     activateRenderedButton('data-action','edit-budget');await flush(20);
-    expect(mainHtml()).toContain('id="budget-form"');expect(mainHtml()).toContain('data-settings-panel="budget" aria-labelledby="settings-budget-title"');
+    expect(mainHtml()).toContain('id="budget-start-edit"');expect(mainHtml()).not.toContain('id="budget-form"');expect(mainHtml()).toContain('data-settings-panel="budget" aria-labelledby="settings-budget-title"');
     for(const command of ['desktop_budget_save','desktop_refresh_snapshot','ledger_fetch'])expect(invokeState.seen).not.toContain(command);
+  });
+  it('discards budget editing when switching categories and returns to plain locked amounts',async()=>{
+    const amounts={'运行账户':'100.00','随心消费':'20.00','旅行/体验':'10.00','成长/项目/耐用品':'0.00'};
+    invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):command==='desktop_budget_status'?Promise.resolve({sourceHash:'a'.repeat(64),revision:2,suggestedMonth:'2026-10',rates:[{effective:'2026-10',amounts}]}):common(command);
+    await import('./main');await flush(30);click('#settings-button');activateRenderedButton('data-settings-tab','budget');await flush(30);
+    click('#budget-start-edit');expect(mainHtml()).toContain('id="budget-form"');
+    activateRenderedButton('data-settings-tab','general');activateRenderedButton('data-settings-tab','budget');
+    expect(mainHtml()).toContain('id="budget-start-edit"');expect(mainHtml()).not.toContain('id="budget-form"');
+    expect(invokeState.seen).not.toContain('desktop_budget_save');
   });
   it.each([{hasSnapshot:false,detail:1},{hasSnapshot:true,detail:0}])('opens sync from settings and returns with hasSnapshot=$hasSnapshot (click detail=$detail)',async({hasSnapshot,detail})=>{
     const initialStatus=hasSnapshot?LEDGER_READY:{initialized:false,publishEnabled:false,cachedRevision:null,pendingRevision:null,lastPublishedRevision:null};
