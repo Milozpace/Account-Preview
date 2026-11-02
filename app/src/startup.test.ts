@@ -398,6 +398,58 @@ describe('native first run without pairing', () => {
     expect(invokeState.seen.filter(name=>name==='ledger_import_pairing')).toHaveLength(1);
   });
 
+  it('closes the camera and allows a new scan even when native cancel leaves scan pending',async()=>{
+    invokeState.impl=command=>command==='ledger_status_command'?Promise.resolve({...LEDGER_READY,initialized:false}):command==='sync_status'?Promise.resolve({configured:false,paired:false}):Promise.resolve(null);
+    const scanner=await import('@tauri-apps/plugin-barcode-scanner');
+    vi.mocked(scanner.scan).mockReset().mockImplementation(()=>new Promise(()=>{}));
+    vi.mocked(scanner.cancel).mockClear();
+    await import('./main');await flush();goto('sync');await flush();click('#scan-pairing');await flush();
+    expect(elements.get('#pairing-scan')?.hidden).toBe(false);
+    expect(scanner.scan).toHaveBeenCalledWith(expect.objectContaining({windowed:true}));
+    click('#cancel-pairing-scan');await flush(30);
+    expect(elements.get('#pairing-scan')?.hidden).toBe(true);
+    expect(scanner.cancel).toHaveBeenCalledTimes(1);
+    expect(invokeState.seen).not.toContain('ledger_import_pairing');
+    expect(mainHtml()).toContain('id="scan-pairing"');
+    click('#scan-pairing');await flush();
+    expect(scanner.scan).toHaveBeenCalledTimes(2);
+    click('#cancel-pairing-scan');await flush(30);
+    expect(scanner.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses system back to dismiss scanning without navigating away or importing a late result',async()=>{
+    invokeState.impl=command=>command==='ledger_status_command'?Promise.resolve({...LEDGER_READY,initialized:false}):command==='sync_status'?Promise.resolve({configured:false,paired:false}):Promise.resolve(null);
+    const scanner=await import('@tauri-apps/plugin-barcode-scanner');
+    let complete!:(result:never)=>void;
+    vi.mocked(scanner.scan).mockReset().mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
+    const events=new Map<string,EventListener>();
+    const listener=vi.spyOn(window,'addEventListener').mockImplementation((type,handler)=>{events.set(type,handler as EventListener);});
+    try{
+      await import('./main');await flush();goto('sync');await flush();click('#scan-pairing');await flush();
+      events.get('popstate')?.({state:{}} as PopStateEvent);await flush(30);
+      expect(elements.get('#pairing-scan')?.hidden).toBe(true);
+      expect(mainHtml()).toContain('id="scan-pairing"');
+      complete({content:'synthetic cancelled result'} as never);await flush(20);
+      expect(invokeState.seen).not.toContain('ledger_import_pairing');
+    }finally{listener.mockRestore();}
+  });
+
+  it('treats the native cancelled rejection as a clean return to pairing',async()=>{
+    invokeState.impl=command=>command==='ledger_status_command'?Promise.resolve({...LEDGER_READY,initialized:false}):command==='sync_status'?Promise.resolve({configured:false,paired:false}):Promise.resolve(null);
+    const scanner=await import('@tauri-apps/plugin-barcode-scanner');
+    let rejectNative!:(reason:string)=>void;
+    vi.mocked(scanner.scan).mockReset().mockImplementation(()=>new Promise((_,reject)=>{rejectNative=reject;}));
+    vi.mocked(scanner.cancel).mockImplementation(async()=>{rejectNative('cancelled');});
+    try{
+      await import('./main');await flush();goto('sync');await flush();click('#scan-pairing');await flush();
+      click('#cancel-pairing-scan');await flush(30);
+      expect(elements.get('#pairing-scan')?.hidden).toBe(true);
+      expect(mainHtml()).toContain('id="scan-pairing"');
+      expect(mainHtml()).not.toContain('扫码未完成');
+      expect(invokeState.seen).not.toContain('ledger_import_pairing');
+    }finally{vi.mocked(scanner.cancel).mockImplementation(async()=>undefined);}
+  });
+
   it('does not interpret a failed status read as an unpaired device',async()=>{
     invokeState.impl=command=>command==='ledger_status_command'?Promise.reject('安全存储暂时不可用'):command==='sync_status'?Promise.resolve({configured:true,paired:true}):Promise.resolve(null);
     await import('./main');await flush();goto('sync');await flush();

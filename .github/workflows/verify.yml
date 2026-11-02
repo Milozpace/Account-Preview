@@ -228,6 +228,7 @@ jobs:
           npm run tauri -- android build --ci --target aarch64 --apk
           cd src-tauri/gen/android
           sh ./gradlew :tauri-plugin-platform:testDebugUnitTest
+          sh ./gradlew :tauri-plugin-barcode-scanner:testDebugUnitTest
       - name: Assemble Android candidate bundle
         shell: python
         env:

@@ -128,3 +128,17 @@ dependencies {
 }
 
 apply(from = file("tauri.build.gradle.kts"))
+
+// Preserve upstream Rust/JS/manifest/dependencies, replacing only Android source
+// until its cancel and asynchronous callback lifecycle is fixed upstream.
+val scannerProject = project(":tauri-plugin-barcode-scanner")
+scannerProject.plugins.withId("com.android.library") {
+    scannerProject.extensions.configure<com.android.build.gradle.BaseExtension> {
+        sourceSets.getByName("main").java.setSrcDirs(listOf(
+            rootProject.file("../../../plugins/barcode-scanner-android/src/main/java")
+        ))
+        sourceSets.getByName("test").java.setSrcDirs(listOf(
+            rootProject.file("../../../plugins/barcode-scanner-android/src/test/java")
+        ))
+    }
+}

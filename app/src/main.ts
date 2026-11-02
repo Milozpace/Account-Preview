@@ -4,6 +4,8 @@ import {uiIcon} from '../../dashboard/src/ui-icons';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { scan, cancel, Format, checkPermissions, requestPermissions } from '@tauri-apps/plugin-barcode-scanner';
 import { PairingQrController } from './pairing-qr';
+import { PairingScanSession } from './pairing-scan';
+import './pairing-scan.css';
 import { RefreshController } from './refresh';
 import { availableMonths, coverageNote, getMonth, monthLabel, resolveMonth, type AppV2Snapshot } from './bills';
 import { sampleSnapshot } from './sample';
@@ -634,6 +636,34 @@ function pairStatus(message: string): void {
   if (target) target.textContent = message;
 }
 
+const scanView=document.querySelector<HTMLElement>('#pairing-scan');
+if(scanView)scanView.hidden=true;
+const pairingScanner=new PairingScanSession(
+  ()=>scan({cameraDirection:'back',formats:[Format.QRCode],windowed:true}),
+  cancel,
+  active=>{
+    if(scanView)scanView.hidden=!active;
+    document.documentElement?.classList?.toggle('account-scanning',active);
+    document.querySelector<HTMLElement>('#app')?.toggleAttribute?.('inert',active);
+    if(active){
+      rememberHistory();
+      window.history?.pushState?.({...window.history.state,accountScanner:true},'');
+      const feedback=document.querySelector<HTMLElement>('#pairing-scan-status');if(feedback)feedback.textContent='';
+      document.querySelector<HTMLButtonElement>('#cancel-pairing-scan')?.focus?.();
+    }else if(window.history?.state?.accountScanner)window.history.back();
+  },
+);
+async function cancelPairingScan():Promise<void>{
+  try{await pairingScanner.cancel();}
+  catch{
+    const feedback=document.querySelector<HTMLElement>('#pairing-scan-status');
+    if(feedback)feedback.textContent='相机未能关闭，请再次点击返回。';
+    if(pairingScanner.active&&window.history&&!window.history.state?.accountScanner)
+      window.history.pushState({...window.history.state,accountScanner:true},'');
+  }
+}
+document.querySelector<HTMLButtonElement>('#cancel-pairing-scan')?.addEventListener('click',()=>void cancelPairingScan());
+
 async function onShowPairing(): Promise<void> {
   await withBusy(async () => {
     const displayed = await qrController.display(() => invoke<string>('ledger_create_pairing'));
@@ -659,7 +689,8 @@ async function onScanPairing(): Promise<void> {
       let permission = await checkPermissions();
       if (permission !== 'granted') permission = await requestPermissions();
       if (permission !== 'granted') throw new Error('camera unavailable');
-      const scanned = await scan({ cameraDirection: 'back', formats: [Format.QRCode] });
+      const scanned = await pairingScanner.run();
+      if(!scanned)return;
       payload = scanned.content;
       scanned.content = '';
     } catch {
@@ -807,21 +838,23 @@ document.querySelector<HTMLButtonElement>('#back-to-top')?.addEventListener('cli
 document.addEventListener('visibilitychange',()=>{
   if(state.preview)return;
   if(state.view==='upload'){if(document.hidden)uploadRefresh.stop();else uploadRefresh.sync(true);}
-  if(document.hidden)hideQr();
+  if(document.hidden){hideQr();void cancelPairingScan();}
   else if(!state.android){void loadDesktop().then(()=>render());}
   else if(state.probeConfigured&&state.ledger?.initialized)refreshController.requestAuto();
 });
-window.addEventListener('pagehide',()=>{uploadPageActive=false;uploadRefresh.stop();hideQr();charts?.disposeCharts();disposeMotion?.();pickers?.destroy();pickers=undefined;if(state.android)void cancel().catch(()=>undefined);});
+window.addEventListener('pagehide',()=>{uploadPageActive=false;uploadRefresh.stop();hideQr();charts?.disposeCharts();disposeMotion?.();pickers?.destroy();pickers=undefined;void cancelPairingScan();});
 window.addEventListener('pageshow',()=>{uploadPageActive=true;uploadRefresh.sync(true);});
 window.history?.replaceState?.(historyState(),'');
 if(window.history&&'scrollRestoration'in window.history)window.history.scrollRestoration='manual';
 window.addEventListener('popstate',(event:PopStateEvent)=>{
+  if(pairingScanner.active&&!event.state?.accountScanner){void cancelPairingScan();return;}
+  if(event.state?.accountScanner){window.history?.back();return;}
   if(pickers?.isOpen&&!event.state?.accountPicker){pickers.closeFromHistory();const choose=pendingPickerAction;pendingPickerAction=undefined;choose?.();return;}
   hideQr();searchComposing=false;queuedRender=false;
   const restored=pendingParentNavigation??event.state?.accountNav;pendingParentNavigation=null;
   if(nav.restore(restored)){historyPosition=event.state?.accountPosition??historyPosition;reconcileNavigation();window.history?.replaceState?.(historyState(),'');render('back');restoreScroll(nav.current.scroll??0);focusHeading();}
 });
-window.addEventListener('keydown',(event:KeyboardEvent)=>{if(event.defaultPrevented||pickers?.isOpen)return;if(event.key==='Escape'&&nav.canBack){event.preventDefault();back();}});
+window.addEventListener('keydown',(event:KeyboardEvent)=>{if(event.defaultPrevented||pickers?.isOpen)return;if(event.key==='Escape'&&pairingScanner.active){event.preventDefault();void cancelPairingScan();}else if(event.key==='Escape'&&nav.canBack){event.preventDefault();back();}});
 let previousMobile=mobile();
 window.addEventListener('resize',()=>{const next=mobile();if(next!==previousMobile){previousMobile=next;render();}});
 if(typeof window.matchMedia==='function')window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change',()=>{if(mobile())render();});

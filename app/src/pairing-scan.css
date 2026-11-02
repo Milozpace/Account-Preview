@@ -1,0 +1,11 @@
+html.account-scanning,html.account-scanning body{background:transparent!important;}
+html.account-scanning #app{visibility:hidden;}
+#pairing-scan[hidden]{display:none!important;}
+#pairing-scan{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;justify-content:space-between;color:#fff;background:transparent;}
+.pairing-scan-header{display:flex;align-items:center;gap:18px;padding:12px 16px;background:#161719e6;}
+#cancel-pairing-scan{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:74px;min-height:48px;padding:10px 12px;border:1px solid #ffffff70;border-radius:10px;color:#fff;background:#ffffff12;font-size:16px;}
+#cancel-pairing-scan:focus-visible{outline:2px solid #fff;outline-offset:3px;}
+.pairing-scan-header h1{margin:0;font-size:18px;font-weight:500;}
+.pairing-scan-hint{padding:18px 20px 24px;text-align:center;background:#161719df;font-size:14px;line-height:1.7;}
+.pairing-scan-hint p{margin:0;}
+#pairing-scan-status:empty{display:none;}
