@@ -56,7 +56,6 @@ jobs:
           import json, os
           targets = [
               dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis', profile='preview'),
-              dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis', profile='personal'),
               dict(os='macos-15', platform='macos-arm64', target='aarch64-apple-darwin', bundles='dmg', profile='preview'),
               dict(os='macos-15-intel', platform='macos-x64', target='x86_64-apple-darwin', bundles='dmg', profile='preview'),
           ]
@@ -190,7 +189,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [preview, personal]
+        profile: [preview]
     timeout-minutes: 50
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.runtime/android-target

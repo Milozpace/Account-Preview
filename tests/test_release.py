@@ -31,6 +31,7 @@ class ReleaseTests(unittest.TestCase):
         directory.mkdir()
         manifest = json.loads((root/'release.json').read_text(encoding='utf-8'))
         for profile, config in manifest['profiles'].items():
+            if profile != 'preview': continue
             for platform in config['platforms']:
                 binary = directory/'binaries'; binary.mkdir(exist_ok=True)
                 ext = '.exe' if platform.startswith('windows') else ''
@@ -52,7 +53,8 @@ class ReleaseTests(unittest.TestCase):
             result = release.prepare_release(root, assets, commit, notes)
             manifest = json.loads((assets/'release-manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['commit'], commit)
-            self.assertEqual(manifest['profiles']['personal']['identifier'], 'com.account.probe')
+            self.assertEqual(set(manifest['profiles']), {'preview'})
+            self.assertEqual(len(result['assets']), 7)
             self.assertEqual(manifest['source']['sha256'], release.sha(assets/manifest['source']['asset']))
             self.assertTrue((assets/'SHA256SUMS').exists())
             self.assertTrue(result['ok'])
@@ -68,7 +70,7 @@ class ReleaseTests(unittest.TestCase):
             notes = parent/'notes.md'; notes.write_text('  ', encoding='utf-8')
             with self.assertRaises(ValueError): release.prepare_release(root, assets, commit, notes)
             notes.write_text('User notes', encoding='utf-8')
-            apk = next(assets.glob('*Personal*android*.zip')); saved = apk.read_bytes(); apk.unlink()
+            apk = next(assets.glob('*Preview*android*.zip')); saved = apk.read_bytes(); apk.unlink()
             with self.assertRaises(ValueError): release.prepare_release(root, assets, commit, notes)
             apk.write_bytes(saved)
             with zipfile.ZipFile(apk, 'w') as archive:
@@ -86,6 +88,41 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), second.read_bytes())
             (root/'untracked.py').write_text('dirty')
             with self.assertRaises(ValueError): release.source_archive(root, parent/'third.zip', commit=commit)
+
+    def test_public_preparation_rejects_personal_packages_and_notes_attachments(self):
+        for name in ('Account-Personal-local.zip', '0.4.0-preview.3.md'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                parent=Path(folder); root=parent/'repo'; commit=self.repository(root)
+                assets=parent/'assets'; self.assets(root,assets,commit)
+                notes=parent/'notes.md'; notes.write_text('Author notes')
+                (assets/name).write_bytes(b'not for public upload')
+                with self.assertRaisesRegex(ValueError,'公开|附件|个人'):
+                    release.prepare_release(root,assets,commit,notes)
+
+    def test_personal_local_package_has_independent_version_and_verifiable_public_source(self):
+        from scripts import product_update
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder);root=parent/'repo';commit=self.repository(root)
+            version_file=parent/'personal-version.json'
+            version_file.write_text('{"version":"0.3.16","androidVersionCode":3016}')
+            assets=parent/'personal-assets';assets.mkdir()
+            binary=parent/'bin';binary.mkdir()
+            for name in ['ledger_cli','bill_inbox_cli','sync_diagnose']:(binary/(name+'.exe')).write_bytes(b'fixture')
+            for platform,suffix in [('windows-x64','.exe'),('android-arm64','.apk')]:
+                installer=parent/('fixture'+suffix);installer.write_bytes(b'fixture')
+                release.bundle(platform,binary,installer,assets/f'Account-Personal-0.3.16-{platform}.zip',
+                               profile='personal',root=root,commit=commit,personal_version_file=version_file)
+            notes=parent/'notes.md';notes.write_text('User local update notes')
+            result=release.prepare_release(root,assets,commit,notes,'personal-local',version_file)
+            manifest=json.loads((assets/'release-manifest.json').read_text())
+            self.assertEqual(manifest['version'],'0.3.16');self.assertEqual(manifest['nativeVersion'],'0.3.16')
+            self.assertEqual(manifest['sourceVersion'],json.loads((root/'release.json').read_text())['version'])
+            self.assertEqual(set(manifest['profiles']),{'personal'});self.assertEqual(len(result['assets']),5)
+            self.assertIsNone(manifest['tag'])
+            validated=product_update.validate_release(assets,'personal','windows-x64')
+            self.assertEqual(validated[0]['version'],'0.3.16')
+            with self.assertRaises(ValueError):product_update.validate_release(assets,'preview','windows-x64')
+            with self.assertRaises(ValueError):release.public_assets(root,assets,commit,notes)
 
     def test_release_bundle_detects_payload_tampering_and_cross_profile(self):
         self.assertTrue(hasattr(release, 'verify_bundle'), 'bundle verification missing')

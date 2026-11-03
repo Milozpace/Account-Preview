@@ -162,6 +162,38 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
                     {'tag_name':'v99.0.0','draft':False,'prerelease':False}]
         self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.10-preview.2')
 
+    def test_personal_remote_route_stops_before_network_and_requires_local_package(self):
+        with patch.object(updater,'gh_json') as network:
+            with self.assertRaisesRegex(ValueError,'本地|release-dir'):
+                with updater.remote_release('windows-x64','personal'):pass
+            network.assert_not_called()
+
+    def test_personal_local_update_tracks_own_version_independently_of_source(self):
+        self.adopt();self.release()
+        manifest_path=self.assets/'release-manifest.json'
+        manifest=json.loads(manifest_path.read_text());source_version=manifest['version']
+        bundle=self.assets/'bundle.zip'
+        with zipfile.ZipFile(bundle) as archive:contents={n:archive.read(n) for n in archive.namelist()}
+        inner=json.loads(contents['manifest.json']);inner.update(version='0.3.16',nativeVersion='0.3.16',distribution='personal-local',sourceVersion=source_version)
+        contents['manifest.json']=json.dumps(inner).encode()
+        with zipfile.ZipFile(bundle,'w') as archive:
+            for name,data in contents.items():archive.writestr(name,data)
+        manifest.update(version='0.3.16',nativeVersion='0.3.16',sourceVersion=source_version,
+                        distribution='personal-local',channel='personal-local',tag=None)
+        manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+        manifest_path.write_text(json.dumps(manifest))
+        state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state['version']='0.4.0-preview.3'
+        state_path.write_text(json.dumps(state))
+        with self.assertRaisesRegex(ValueError,'原生版本.*versionCode'):
+            self.update(apply=True)
+        self.assertEqual(self.installs,[])
+        state['version']=None;state_path.write_text(json.dumps(state))
+        result=self.update(apply=True)
+        self.assertTrue(result['ok'],result);self.assertEqual(updater.status(self.root)['version'],'0.3.16')
+        state=json.loads((self.root/updater.STATE).read_text());self.assertEqual(state['sourceVersion'],source_version)
+        self.assertEqual(json.loads((self.root/'release.json').read_text())['version'],source_version)
+
     def test_two_owners_keep_independent_profile_and_binding(self):
         self.adopt('personal'); self.release('personal'); self.update(apply=True)
         other=self.base/'friend'; other.mkdir();

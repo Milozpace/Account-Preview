@@ -64,13 +64,17 @@ def platform_key(system=None, machine=None):
     raise ValueError('此试用版支持 Windows x64 和 macOS Apple Silicon/Intel。')
 
 
-def config_location(root=ROOT):
+def project_profile(root):
     sys.path.insert(0, str(ROOT/'scripts'))
     try:
         from runtime_tools import owner_profile
-        folder = owner_profile(root)['desktopConfig']
+        return owner_profile(root)
     finally:
         sys.path.pop(0)
+
+
+def config_location(root=ROOT):
+    folder = project_profile(root)['desktopConfig']
     if platform.system() == 'Windows':
         parent = os.environ.get('LOCALAPPDATA')
         if not parent: raise ValueError('无法定位本机配置目录。')
@@ -176,10 +180,21 @@ def stage_bundle(root, archive, target):
         version = manifest.get('version', '')
         if manifest.get('format') != 1 or manifest.get('platform') != target or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?', version):
             raise ValueError('发布包版本或平台不匹配。')
+        if manifest.get('profile') is not None or manifest.get('distribution')=='personal-local':
+            profile=project_profile(root)
+            if manifest.get('profile')!=profile['name'] or manifest.get('identifier')!=profile['identifier']:
+                raise ValueError('安装包与本机已采用的身份不匹配；个人包须明确采用 personal 身份。')
         source_release = root / 'release.json'
+        if manifest.get('distribution')=='personal-local' and not source_release.is_file():
+            raise ValueError('个人本地包必须与已核验的共享源码版本匹配。')
         if source_release.exists():
             expected = json.loads(source_release.read_text(encoding='utf-8'))
-            if expected.get('version') != version:
+            personal_local=(manifest.get('profile')=='personal' and manifest.get('identifier')=='com.account.probe'
+                            and manifest.get('distribution')=='personal-local'
+                            and manifest.get('sourceVersion')==expected.get('version')
+                            and manifest.get('nativeVersion')==version
+                            and re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version))
+            if expected.get('version') != version and not personal_local:
                 raise ValueError('源码与安装包版本不匹配；请使用同一已发布标签的源码和组件。')
         files = manifest.get('files')
         if not isinstance(files, dict) or set(names) != {'manifest.json', *files}:

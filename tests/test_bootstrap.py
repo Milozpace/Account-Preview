@@ -324,6 +324,41 @@ exit $LASTEXITCODE
             bootstrap.stage_bundle(self.root, archive, 'windows-x64')
         self.assertFalse((self.root/'.runtime').exists())
 
+    def test_personal_local_bundle_requires_own_identity_and_matching_source_version(self):
+        archive=self.bundle()
+        (self.root/'release.json').write_text(json.dumps({'version':'0.4.0-preview.3'}))
+        with zipfile.ZipFile(archive) as z:
+            contents={name:z.read(name) for name in z.namelist()}
+        manifest=json.loads(contents['manifest.json'])
+        manifest.update(version='0.3.16',nativeVersion='0.3.16',profile='personal',
+                        identifier='com.account.probe',distribution='personal-local',sourceVersion='0.4.0-preview.3')
+        for changes in ({'profile':'preview'},{'identifier':'com.account.preview'},
+                        {'sourceVersion':'0.4.0-preview.2'},{'distribution':'public'},
+                        {'nativeVersion':'0.4.3'}):
+            with self.subTest(changes=changes), patch.object(bootstrap,'project_profile',
+                    return_value={'name':'personal','identifier':'com.account.probe'}):
+                with zipfile.ZipFile(archive,'w') as z:
+                    for name,data in contents.items():
+                        z.writestr(name,json.dumps({**manifest,**changes}) if name=='manifest.json' else data)
+                with self.assertRaisesRegex(ValueError,'源码|身份'):
+                    bootstrap.stage_bundle(self.root,archive,'windows-x64')
+                self.assertFalse((self.root/'.runtime').exists())
+        with zipfile.ZipFile(archive,'w') as z:
+            for name,data in contents.items():
+                z.writestr(name,json.dumps(manifest) if name=='manifest.json' else data)
+        with self.assertRaisesRegex(ValueError,'身份'):
+            bootstrap.stage_bundle(self.root,archive,'windows-x64')
+        self.assertFalse((self.root/'.runtime').exists())
+        state=self.root/'.runtime/product/state.json';state.parent.mkdir(parents=True)
+        owner=dict(format=1,root=str(self.root),repository='Milozpace/Account-Preview',profile='preview')
+        state.write_text(json.dumps(owner))
+        with self.assertRaisesRegex(ValueError,'身份'):
+            bootstrap.stage_bundle(self.root,archive,'windows-x64')
+        self.assertFalse((self.root/'.runtime/helpers.json').exists())
+        owner['profile']='personal';state.write_text(json.dumps(owner))
+        result=bootstrap.stage_bundle(self.root,archive,'windows-x64')
+        self.assertTrue(Path(result['installer']).is_file())
+
     def test_native_setup_preserves_existing_identity_and_enables_both_gates(self):
         self.bundle()
         bootstrap.stage_bundle(self.root, self.root/'bundle.zip', 'windows-x64')

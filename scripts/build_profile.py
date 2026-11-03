@@ -5,8 +5,9 @@ from pathlib import Path
 import re
 try:
     import product_version
+    import personal_version
 except ModuleNotFoundError:
-    from scripts import product_version
+    from scripts import product_version, personal_version
 
 
 def inactive_android_build_sources(root, profiles, selected):
@@ -26,11 +27,15 @@ def inactive_android_build_sources(root, profiles, selected):
     return [path for profile, files in paths.items() if profile != selected for path in files if path.is_file()]
 
 
-def prepare(root, profile, platform, apply=False, isolated_build=False):
+def prepare(root, profile, platform, apply=False, isolated_build=False, personal_version_file=None):
     root = Path(root).resolve(); data = product_version.load(root)
     if profile not in data['profiles']: raise ValueError('未知构建档案。')
     selected = data['profiles'][profile]
     if platform not in selected['platforms']: raise ValueError('此档案不支持该平台。')
+    if profile == 'personal':
+        if apply and not isolated_build: raise ValueError('个人版本注入须显式指定隔离构建 --isolated-build。')
+        if (root/'data/account.sqlite3').exists(): raise ValueError('含账本的项目不得作为个人构建目录。')
+        data = personal_version.build_data(root, personal_version_file)
     remove_generated = inactive_android_build_sources(root, data['profiles'], profile) if platform == 'android-arm64' else []
     if apply and remove_generated:
         if not isolated_build: raise ValueError('清理重复 Android 生成源码须显式指定隔离构建 --isolated-build。')
@@ -43,6 +48,8 @@ def prepare(root, profile, platform, apply=False, isolated_build=False):
                              bridge_path.read_text(encoding='utf-8'))
     if count != 1: raise ValueError('桌面绑定路径无法唯一定位。')
     if apply:
+        for name, text in product_version.generated(root, data).items():
+            (root/name).write_text(text, encoding='utf-8', newline='\n')
         conf_path.write_text(json.dumps(conf, ensure_ascii=False, indent=2)+'\n', encoding='utf-8', newline='\n')
         bridge_path.write_text(content, encoding='utf-8', newline='\n')
         if platform == 'android-arm64':
@@ -82,6 +89,8 @@ def prepare(root, profile, platform, apply=False, isolated_build=False):
                 if path != target and path.exists(): path.unlink()
             for path in remove_generated: path.unlink()
     return {'ok': True, 'applied': apply, 'profile': profile, 'platform': platform,
+            'version': data['version'], 'nativeVersion': data['nativeVersion'],
+            'androidVersionCode': data['androidVersionCode'],
             'identifier': selected['identifier'], 'desktopConfig': selected['desktopConfig'],
             'removeGenerated': [path.relative_to(root).as_posix() for path in remove_generated],
             'android': '运行 tauri android init 重新生成 Java 包与 Gradle applicationId。' if platform == 'android-arm64' else None}
@@ -93,10 +102,11 @@ def main():
     parser.add_argument('--profile', choices=['preview', 'personal'], default='preview')
     parser.add_argument('--platform', required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--personal-version-file', type=Path)
     parser.add_argument('--isolated-build', action='store_true',
                         help='Confirm this is an isolated source build checkout; permits removing inactive generated buildSrc classes.')
     args = parser.parse_args()
-    print(json.dumps(prepare(args.root, args.profile, args.platform, args.apply, args.isolated_build), ensure_ascii=False))
+    print(json.dumps(prepare(args.root, args.profile, args.platform, args.apply, args.isolated_build, args.personal_version_file), ensure_ascii=False))
 
 
 if __name__ == '__main__': main()

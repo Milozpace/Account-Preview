@@ -232,7 +232,7 @@ def status(root):
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
     value=load_state(root)
     version=value.get('version')
-    if version: version_tuple(version)
+    if version: owner_version_tuple(version,value['profile'])
     release_docs=root/f'.runtime/product/releases/{version}/source' if version else None
     return {'ok':True,'root':str(root),'adopted':True,'profile':value['profile'],'version':value.get('version'),
             'repository':REPOSITORY,'managedFiles':len(value['managed']),'dryRun':True,
@@ -291,6 +291,12 @@ def version_tuple(version):
     return tuple(map(int,match.groups()))
 
 
+def owner_version_tuple(version, profile):
+    if profile == 'personal' and isinstance(version,str) and re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version):
+        return (*map(int,version.split('.')),0)
+    return version_tuple(version)
+
+
 def select_release(releases):
     candidates=[]
     for item in releases:
@@ -336,14 +342,24 @@ def validate_release(directory, profile, target):
     raw=manifest_path.read_bytes()
     if len(raw)>1024*1024: raise ValueError('发布清单过大。')
     manifest=json.loads(raw)
-    version=manifest.get('version'); version_tuple(version)
-    if manifest.get('format')!=1 or manifest.get('tag')!='v'+version or manifest.get('channel')!='private-preview' or manifest.get('draft') is True:
+    version=manifest.get('version')
+    local=manifest.get('distribution')=='personal-local'
+    if manifest.get('distribution') not in {None,'public','personal-local'}: raise ValueError('未知发布范围。')
+    if local:
+        if profile!='personal' or not isinstance(version,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version):
+            raise ValueError('个人本地包须使用独立的个人版本及 personal 身份。')
+        source_version=manifest.get('sourceVersion');version_tuple(source_version)
+        if manifest.get('tag') is not None or manifest.get('channel')!='personal-local':
+            raise ValueError('个人本地索引不创建公开标签或使用公开频道。')
+    else:
+        version_tuple(version);source_version=version
+    if manifest.get('format')!=1 or (not local and (manifest.get('tag')!='v'+version or manifest.get('channel')!='private-preview')) or manifest.get('draft') is True:
         raise ValueError('不是已发布 private-preview 格式；旧版无兼容清单时不可更新。')
     if manifest.get('ledgerSchema')!=1 or manifest.get('snapshotSchema')!=2: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')
     native=manifest.get('nativeVersion')
-    if not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native) or tuple(map(int,native.split('.')))<version_tuple(version)[:3]:
+    if not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native) or tuple(map(int,native.split('.')))<owner_version_tuple(version,profile)[:3] or (local and native!=version):
         raise ValueError('原生安装版本无效或早于产品系列。')
     selected=manifest.get('profiles',{}).get(profile)
     if not isinstance(selected,dict) or any(selected.get(k)!=v for k,v in PROFILES[profile].items()): raise ValueError('发布安装身份与本机 profile 不匹配。')
@@ -359,7 +375,8 @@ def validate_release(directory, profile, target):
     source=zip_contents(assets[0],source=True)
     try: source_version=json.loads(source['release.json'])
     except (KeyError,ValueError): raise ValueError('源码缺少产品版本清单。') from None
-    if any(source_version.get(key)!=manifest[key] for key in ('version','tag','channel')):
+    expected_source_version=manifest.get('sourceVersion') if local else version
+    if any(source_version.get(key)!=value for key,value in {'version':expected_source_version,'tag':'v'+expected_source_version,'channel':'private-preview'}.items()):
         raise ValueError('源码产品版本与发布清单不一致。')
     bundle=zip_contents(assets[1])
     try: inner=json.loads(bundle['manifest.json'])
@@ -368,6 +385,8 @@ def validate_release(directory, profile, target):
                       'profile':profile,'identifier':PROFILES[profile]['identifier']}.items():
         if inner.get(key)!=value: raise ValueError('内外安装包版本或安装身份不匹配。')
     if inner.get('commit')!=manifest['commit']: raise ValueError('安装包提交与源码不匹配。')
+    if local and (inner.get('distribution')!='personal-local' or inner.get('sourceVersion')!=manifest['sourceVersion']):
+        raise ValueError('个人安装包的共享源码版本或本地范围与索引不匹配。')
     files=inner.get('files')
     if not isinstance(files,dict) or set(bundle)!={'manifest.json',*files}: raise ValueError('安装包文件不匹配清单。')
     suffix='.exe' if target=='windows-x64' else ''
@@ -395,6 +414,8 @@ def gh_json(endpoint):
 
 @contextmanager
 def remote_release(target, profile):
+    if profile=='personal':
+        raise ValueError('个人版仅使用本地发布包；请提供 --release-dir 本地个人版本目录，不从公开 Release 下载。')
     releases=[]
     for page in range(1,101):
         batch=gh_json(f'repos/{REPOSITORY}/releases?per_page=100&page={page}')
@@ -522,7 +543,10 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                           prepare_environment=prepare_environment,desktop_config=desktop_config)
     manifest,source,bundle,manifest_hash,inner=validate_release(release_dir,state['profile'],target)
     version=manifest['version']; old_version=state.get('version')
-    if old_version and version_tuple(version)<version_tuple(old_version): raise ValueError('拒绝降级已采用的产品版本。')
+    if old_version and owner_version_tuple(version,state['profile'])<owner_version_tuple(old_version,state['profile']):
+        if manifest.get('distribution')=='personal-local' and '-preview.' in old_version:
+            raise ValueError('拒绝降级：本机已采用旧个人 preview 安装系列；须先核对已安装原生版本及 Android versionCode，再设置递增的个人版本。')
+        raise ValueError('拒绝降级已采用的产品版本。')
     ledger=ledger_report(root,manifest['ledgerSchema'])
     protected=protected_snapshot(root)
     desired={name:data for name,data in source.items() if managed_name(name)}
@@ -644,6 +668,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         if ledger_report(root,manifest['ledgerSchema'])!=ledger: raise ValueError('更新后账本业务哈希改变；不自动恢复账本，请核对并发记账。')
         assert_protected(root,protected)
         new_state={**state,'version':version,'manifestSha256':manifest_hash,'commit':manifest['commit'],
+                   'distribution':manifest.get('distribution','public'),'sourceVersion':manifest.get('sourceVersion',version),
                    'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items()}}}
         atomic_json(root/STATE,new_state)
         journal.update(phase='complete',binaryInstall='installed')

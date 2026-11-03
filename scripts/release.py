@@ -13,8 +13,9 @@ import tempfile
 import zipfile
 try:
     import product_version
+    import personal_version
 except ModuleNotFoundError:
-    from scripts import product_version
+    from scripts import product_version, personal_version
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'README.md', 'AGENTS.md', '.gitignore', 'bootstrap.py', 'bootstrap.ps1', 'bootstrap.sh',
@@ -114,8 +115,8 @@ def source_archive(root, output, commit=None):
     return {'ok': True, 'output': str(output), 'sha256': sha(output), 'files': len(selected)}
 
 
-def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, commit=None):
-    data = product_version.load(root)
+def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, commit=None, personal_version_file=None):
+    data = personal_version.build_data(root, personal_version_file) if profile == 'personal' else product_version.load(root)
     if profile not in data['profiles'] or platform not in data['profiles'][profile]['platforms']:
         raise ValueError('发布平台或安装档案无效。')
     selected = data['profiles'][profile]
@@ -136,6 +137,8 @@ def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, 
     manifest = {'format': 1, 'version': data['version'], 'nativeVersion': data['nativeVersion'],
                 'platform': platform, 'profile': profile, 'identifier': selected['identifier'], 'commit': commit,
                 'files': {name: sha(p) for name, p in files.items()}}
+    if profile == 'personal':
+        manifest.update(distribution='personal-local', sourceVersion=data['sourceVersion'])
     output = Path(output)
     if output.exists(): raise ValueError('输出已存在，拒绝覆盖。')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +158,8 @@ def verify_bundle(path, data, profile, platform, commit):
         expected = dict(format=1, version=data['version'], nativeVersion=data['nativeVersion'],
                         profile=profile, platform=platform, commit=commit,
                         identifier=data['profiles'][profile]['identifier'])
+        if data.get('distribution') == 'personal-local':
+            expected.update(distribution='personal-local', sourceVersion=data['sourceVersion'])
         if any(manifest.get(key) != value for key, value in expected.items()):
             raise ValueError('组件版本、提交、身份或平台不匹配：' + path.name)
         files = manifest.get('files')
@@ -180,11 +185,13 @@ def checksums(directory):
     return {'ok': True, 'files': len(paths)}
 
 
-def prepare_release(root, directory, commit, notes):
+def prepare_release(root, directory, commit, notes, distribution='public', personal_version_file=None):
     raw_notes = Path(notes).absolute()
     root, directory, notes = Path(root).resolve(), Path(directory).resolve(), Path(notes).resolve()
     fixed_commit(root, commit)
-    data = product_version.load(root)
+    if distribution not in {'public', 'personal-local'}: raise ValueError('未知发布范围。')
+    data = personal_version.build_data(root, personal_version_file) if distribution == 'personal-local' else product_version.load(root)
+    profiles = ('personal',) if distribution == 'personal-local' else ('preview',)
     if not notes.is_file() or not notes.read_text(encoding='utf-8-sig').strip():
         raise ValueError('须提供本人撰写的非空 notes 文件；工具不生成发布说明。')
     if notes.is_relative_to(root/'templates') or raw_notes.is_relative_to(root/'templates'):
@@ -192,11 +199,20 @@ def prepare_release(root, directory, commit, notes):
     if re.search(r'请本人填写|待填写|\b(?:TBD|TODO)\b', notes.read_text(encoding='utf-8-sig'), flags=re.IGNORECASE):
         raise ValueError('发布说明仍含占位内容；请本人完成后再准备。')
     if not directory.is_dir(): raise ValueError('候选组件目录不存在。')
-    source_name = f"Account-Preview-{data['version']}-source.zip"
+    source_name = f"Account-{'Personal' if distribution == 'personal-local' else 'Preview'}-{data['version']}-source.zip"
+    component_names = {f"Account-{profile.title()}-{data['version']}-{platform}.zip"
+                       for profile in profiles for platform in data['profiles'][profile]['platforms']}
+    allowed = component_names | {source_name, 'release-manifest.json', 'SHA256SUMS'}
+    # Notes are only used as the Release body; a mixed staging directory must never become an upload list.
+    if notes.is_relative_to(directory) or any(p.name not in allowed or not p.is_file() or p.is_symlink() for p in directory.iterdir()):
+        raise ValueError('发布目录含非允许附件；公开包不得混入个人包或 Markdown 说明附件。')
     manifest = dict(format=1, version=data['version'], tag=data['tag'], channel=data['channel'],
                     commit=commit, nativeVersion=data['nativeVersion'], ledgerSchema=1, snapshotSchema=2,
-                    profiles={}, notesSha256=sha(notes))
-    for profile, config in data['profiles'].items():
+                    profiles={}, notesSha256=sha(notes), distribution=distribution)
+    if distribution == 'personal-local':
+        manifest.update(sourceVersion=data['sourceVersion'], androidVersionCode=data['androidVersionCode'])
+    for profile in profiles:
+        config = data['profiles'][profile]
         platforms = {}
         for platform in config['platforms']:
             name = f"Account-{profile.title()}-{data['version']}-{platform}.zip"
@@ -217,7 +233,15 @@ def prepare_release(root, directory, commit, notes):
     output = directory/'release-manifest.json'
     output.write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     checksums(directory)
-    return {'ok': True, 'manifest': str(output), 'commit': commit, 'published': False}
+    return {'ok': True, 'manifest': str(output), 'commit': commit, 'published': False,
+            'distribution': distribution, 'assets': sorted(allowed)}
+
+
+def public_assets(root, directory, commit, notes):
+    """Verify the exact public allowlist immediately before uploading; never return personal or notes assets."""
+    directory = Path(directory)
+    result = prepare_release(root, directory, commit, notes)
+    return [str(directory/name) for name in result['assets']]
 
 
 def main():
@@ -230,18 +254,21 @@ def main():
     pack = commands.add_parser('bundle')
     for option in ('platform', 'binaries', 'installer', 'output'): pack.add_argument('--' + option, required=True)
     pack.add_argument('--profile', choices=['preview', 'personal'], default='preview')
+    pack.add_argument('--personal-version-file', type=Path)
     sums = commands.add_parser('checksums'); sums.add_argument('--directory', type=Path, required=True)
     prepare = commands.add_parser('prepare')
     prepare.add_argument('--directory', required=True, type=Path)
     prepare.add_argument('--commit', required=True)
     prepare.add_argument('--notes', required=True, type=Path)
+    prepare.add_argument('--distribution', choices=['public','personal-local'], default='public')
+    prepare.add_argument('--personal-version-file', type=Path)
     args = parser.parse_args()
     if args.command == 'audit': result = audit_sources(ROOT)
     elif args.command == 'source': result = source_archive(ROOT, args.output, commit=args.commit)
     elif args.command == 'version-check':
         mismatches = product_version.check(ROOT); result = {'ok': not mismatches, 'mismatches': mismatches}
-    elif args.command == 'bundle': result = bundle(args.platform, args.binaries, args.installer, args.output, profile=args.profile)
-    elif args.command == 'prepare': result = prepare_release(ROOT, args.directory, args.commit, args.notes)
+    elif args.command == 'bundle': result = bundle(args.platform, args.binaries, args.installer, args.output, profile=args.profile, personal_version_file=args.personal_version_file)
+    elif args.command == 'prepare': result = prepare_release(ROOT, args.directory, args.commit, args.notes, args.distribution, args.personal_version_file)
     else: result = checksums(args.directory)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result['ok'] else 1

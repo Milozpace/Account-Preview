@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class BuildProfileTests(unittest.TestCase):
     def android_fixture(self, root):
+        for name in ['app/package.json','app/package-lock.json','app/src-tauri/Cargo.toml','app/src-tauri/Cargo.lock']:
+            path=root/name;path.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,path)
+        (root/'local').mkdir(exist_ok=True)
+        (root/'local/personal-version.json').write_text('{"version":"0.3.16","androidVersionCode":3016}')
         names = ['release.json', 'app/src-tauri/tauri.conf.json', 'app/src-tauri/src/desktop_bridge.rs',
                  'app/src-tauri/gen/android/app/build.gradle.kts',
                  'app/src-tauri/gen/android/app/src/main/java/com/account/preview/MainActivity.kt']
@@ -69,7 +73,8 @@ class BuildProfileTests(unittest.TestCase):
             manifest = json.loads((root/'release.json').read_text(encoding='utf-8'))
             manifest['androidVersionCode'] += 1
             (root/'release.json').write_text(json.dumps(manifest), encoding='utf-8')
-            module.prepare(root, 'personal', 'android-arm64', apply=True)
+            self.android_fixture(root)
+            module.prepare(root, 'personal', 'android-arm64', apply=True, isolated_build=True)
             target = root/names[-1].replace('/preview/', '/probe/')
             self.assertTrue(target.is_file(), 'personal activity package missing')
             self.assertEqual(target.read_text(encoding='utf-8'), original.replace('package com.account.preview', 'package com.account.probe'))
@@ -78,8 +83,8 @@ class BuildProfileTests(unittest.TestCase):
             self.assertIn('namespace = "com.account.probe"', gradle)
             self.assertIn('applicationId = "com.account.probe"', gradle)
             self.assertIn('targetSdk = 37', gradle)
-            self.assertIn(f"versionCode = {manifest['androidVersionCode']}", gradle)
-            self.assertIn(f"versionName = \"{manifest['nativeVersion']}\"", gradle)
+            self.assertIn('versionCode = 3016', gradle)
+            self.assertIn('versionName = "0.3.16"', gradle)
 
     def module(self):
         path = ROOT/'scripts/build_profile.py'
@@ -94,15 +99,25 @@ class BuildProfileTests(unittest.TestCase):
             root = Path(folder)
             for name in ['release.json', 'app/src-tauri/tauri.conf.json', 'app/src-tauri/src/desktop_bridge.rs']:
                 path = root/name; path.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(ROOT/name, path)
+            self.android_fixture(root)
+            public_manifest=(root/'release.json').read_bytes()
             before = (root/'app/src-tauri/tauri.conf.json').read_bytes()
             module.prepare(root, 'personal', 'windows-x64')
             self.assertEqual((root/'app/src-tauri/tauri.conf.json').read_bytes(), before)
-            module.prepare(root, 'personal', 'windows-x64', apply=True)
+            module.prepare(root, 'personal', 'windows-x64', apply=True, isolated_build=True)
             conf = json.loads((root/'app/src-tauri/tauri.conf.json').read_text())
             self.assertEqual(conf['identifier'], 'com.account.probe')
+            self.assertEqual(conf['version'],'0.3.16')
+            self.assertEqual(json.loads((root/'app/package.json').read_text())['version'],'0.3.16')
+            self.assertIn('version = "0.3.16"',(root/'app/src-tauri/Cargo.toml').read_text())
+            self.assertEqual((root/'release.json').read_bytes(),public_manifest)
             self.assertIn('AccountDesktop/project.json', (root/'app/src-tauri/src/desktop_bridge.rs').read_text(encoding='utf-8'))
             module.prepare(root, 'preview', 'macos-arm64', apply=True)
             self.assertIn('AccountPreview/project.json', (root/'app/src-tauri/src/desktop_bridge.rs').read_text(encoding='utf-8'))
+            self.assertEqual(json.loads((root/'app/package.json').read_text())['version'],
+                             json.loads(public_manifest)['version'])
+            self.assertEqual(json.loads((root/'app/src-tauri/tauri.conf.json').read_text())['version'],
+                             json.loads(public_manifest)['nativeVersion'])
             with self.assertRaises(ValueError): module.prepare(root, 'personal', 'macos-arm64', apply=True)
 
 
