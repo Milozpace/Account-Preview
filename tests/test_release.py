@@ -115,7 +115,10 @@ class ReleaseTests(unittest.TestCase):
     def test_personal_local_package_has_independent_version_and_verifiable_public_source(self):
         from scripts import product_update
         with tempfile.TemporaryDirectory() as folder:
-            parent=Path(folder);root=parent/'repo';commit=self.repository(root)
+            # macOS temporary directories may start at the /var -> /private/var alias.
+            # Exercise the release content with a canonical root; symlink refusal
+            # has separate updater coverage and must stay enabled.
+            parent=Path(folder).resolve();root=parent/'repo';commit=self.repository(root)
             version_file=parent/'personal-version.json'
             version_file.write_text('{"version":"0.3.16","androidVersionCode":3016}')
             assets=parent/'personal-assets';assets.mkdir()

@@ -72,7 +72,7 @@ class OnboardingTests(unittest.TestCase):
         profile = (self.root / 'local/档案.md').read_text(encoding='utf-8')
         memory = (self.root / 'PROJECT_MEMORY.md').read_text(encoding='utf-8')
         rules = (self.root / 'local/个人规则.md').read_text(encoding='utf-8')
-        self.assertIn(str(self.root), profile)
+        self.assertIn(str(self.root.resolve()), profile)
         self.assertIn('2026-10', profile)
         self.assertIn('预算状态：未制定', profile)
         self.assertIn('.agents/skills/account-maintenance/SKILL.md', memory)
