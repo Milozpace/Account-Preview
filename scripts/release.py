@@ -225,6 +225,12 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
     with tempfile.TemporaryDirectory() as folder:
         candidate = Path(folder)/source_name
         source_archive(root, candidate, commit=commit)
+        try:
+            import product_update
+        except ModuleNotFoundError:
+            from scripts import product_update
+        if not product_update.official_skill_source(product_update.zip_contents(candidate, source=True)):
+            raise ValueError('新发布源码必须包含核心记账 Skill 及其完整引用文件。')
         source = directory/source_name
         if source.exists():
             if source.is_symlink() or sha(source) != sha(candidate): raise ValueError('源码包与固定 commit 不符。')

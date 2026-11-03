@@ -285,8 +285,12 @@ class StoreTests(unittest.TestCase):
         old = store.read_state(self.db)
         update = {'记录ID': old['rows'][0]['记录ID'], 'changes': {'资金池': '待归类'},
                   'reason': '测试', 'confirmation_source': '测试确认'}
-        approved = self.approved([row('002')], [update])
-        manifest = [{'path': 'sra/synthetic-source.csv', 'sha256': 'ab' * 32}]
+        source = self.root / 'synthetic-source.csv'
+        source.write_text('交易时间,交易订单号,金额,交易对方\n2026-10-18 12:00:00,002,10.00,合成商户\n', encoding='utf-8-sig')
+        parsed, _ = account.parse_sources([source])
+        parsed[0].update({k: row()[k] for k in ('最终财务事件','统计口径','计入消费金额','主分类','资金池','语义说明')})
+        approved = self.approved(parsed, [update])
+        manifest = [{'path': str(source.resolve()), 'sha256': account.sha(source)}]
         approved['source_files'] = manifest
         original = copy.deepcopy(approved)
         planned = store.import_reviewed(self.db, approved)

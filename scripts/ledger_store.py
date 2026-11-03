@@ -562,10 +562,32 @@ def classification_review(rows):
                         else '本批仍有消费未分池；需说明待确认范围，不将剩余额度称为完整结果。')
     if unclassified:
         warnings.append('本批仍有消费缺少明确主分类；不能把未审核称为分类完成。')
-    return dict(scope='changed-records', consumptionRecords=len(consumption),
+    return dict(scope='changed-records', reviewComplete=not (pending or unclassified), consumptionRecords=len(consumption),
                 assignedPoolRecords=len(consumption)-len(pending), unassignedPoolRecords=len(pending),
                 unassignedPoolCents=sum(calculation.cents(r['计入消费金额']) for r in pending),
                 unclassifiedRecords=len(unclassified), warnings=warnings)
+
+
+def find_records(path, *, month=None, query='', limit=20):
+    """Bounded read-only lookup for a user's correction; never expose order IDs."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('查询 limit 必须为 1 到 100')
+    if month is not None:
+        if not re.fullmatch(r'\d{4}-\d{2}', month):
+            raise ValueError('查询月份必须为 YYYY-MM')
+        calculation.month_key(month)  # Reject invalid calendar months.
+    query = account.text(query).casefold()
+    if not month and not query:
+        raise ValueError('定位记录需要 --month 或 --query，不能无条件输出账本')
+    with _connect(path) as conn:
+        rows = _read(conn)['rows']
+    matches = [row for row in rows if (not month or row['交易时间'].startswith(month))
+               and (not query or any(query in account.text(row.get(key)).casefold()
+                    for key in ('交易对方', '商品/说明', '主分类', '语义说明')))]
+    matches.sort(key=lambda row: (row['交易时间'], row['记录ID']), reverse=True)
+    fields = ('记录ID', '交易时间', '交易对方', '商品/说明', '主分类', '资金池', '统计口径', '计入消费金额')
+    return dict(ok=True, dryRun=True, matchedRecords=len(matches), truncated=len(matches) > limit,
+                records=[{key: row.get(key) for key in fields} for row in matches[:limit]])
 
 
 def import_reviewed(path, approved, apply=False):
@@ -573,6 +595,8 @@ def import_reviewed(path, approved, apply=False):
     if not isinstance(approved, dict):
         raise ValueError('审核JSON结构无效')
     sources = _source_manifest(approved['source_files']) if 'source_files' in approved else None
+    import review_provenance
+    review_provenance.validate(approved, sources)
     legacy_approved = {k: v for k, v in approved.items() if k != 'source_files'}
     def operation(conn):
         before = _read(conn)
@@ -631,6 +655,8 @@ def import_reviewed(path, approved, apply=False):
         result['classificationReview'] = classification_review([r for r in next_rows if r['记录ID'] in affected_ids])
         if not apply or not changed:
             return result
+        if sources is not None:
+            review_provenance.assert_hashes(sources)
         _prewrite_backup(path)
         revision = before['revision'] + 1
         _record_batch(conn, batch, 'import', sources, approved['reviewed_by'], approved['reviewed_at'],

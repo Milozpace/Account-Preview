@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import shutil
 import sqlite3
@@ -24,6 +25,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 import zipfile
 
@@ -38,6 +40,8 @@ FORBIDDEN_PARTS = {'.git','.venv','node_modules','target','dist','build','.gradl
 VERSION = re.compile(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.([1-9]\d*)\Z')
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 STATE = '.runtime/product/state.json'
+SKILL_ROOT = '.agents/skills/account-maintenance'
+SKILL_ENTRY = SKILL_ROOT+'/SKILL.md'
 
 
 def digest(data):
@@ -126,6 +130,94 @@ def managed_name(name):
     return True
 
 
+def official_skill_name(name):
+    safe_name(name)
+    return name==SKILL_ENTRY or name.startswith(SKILL_ROOT+'/references/')
+
+
+def official_skill_source(source):
+    """Select the one official skill and verify every local Markdown dependency.
+
+    Generic documentation may be referenced but remains in releaseDocs. No other
+    skill, owner instructions or local configuration becomes update-managed.
+    """
+    files={name:data for name,data in source.items() if official_skill_name(name)}
+    declared=[name for name in source if name.startswith(SKILL_ROOT+'/')]
+    if not declared: return {}
+    if SKILL_ENTRY not in files or set(declared)!=set(files):
+        raise ValueError('官方 Skill 不完整或包含未支持的资源；须有 SKILL.md 和 references。')
+    for name,data in files.items():
+        if not name.lower().endswith('.md'): continue
+        try: text=data.decode('utf-8-sig')
+        except UnicodeError: raise ValueError('官方 Skill Markdown 必须是 UTF-8。') from None
+        # Inline Markdown links, images and reference-style link definitions.
+        links=re.findall(r'!?\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)',text)
+        links+=re.findall(r'^\s*\[[^\]]+\]:\s*(<[^>]*>|\S+)',text,re.MULTILINE)
+        for link in links:
+            target=urllib.parse.unquote(link.strip('<>')).split('#',1)[0]
+            if not target: continue
+            scheme=urllib.parse.urlsplit(target).scheme
+            if scheme in {'http','https','mailto'}: continue
+            if scheme: raise ValueError('官方 Skill 不支持此本地引用协议。')
+            if target.startswith(('/','\\')) or '\\' in target or '?' in target:
+                raise ValueError('官方 Skill 本地引用路径无效。')
+            resolved=posixpath.normpath(posixpath.join(posixpath.dirname(name),target))
+            safe_name(resolved)
+            if resolved not in source:
+                raise ValueError('官方 Skill 缺少引用文件：'+resolved)
+            if resolved.startswith('.agents/') and resolved not in files:
+                raise ValueError('官方 Skill 不能依赖其他 Skill 或未管理资源。')
+    return files
+
+
+def skill_status(root, state=None):
+    saved=(state or {}).get('officialSkill')
+    report={'path':str(checked_path(root,SKILL_ENTRY)),'version':None,'sourceVersion':None,'state':'untracked'}
+    if saved is None: return report
+    report.update({key:saved.get(key) for key in ('version','sourceVersion','commit')})
+    modified=False
+    for name,expected in saved['files'].items():
+        path=checked_path(root,name)
+        if not path.is_file() or digest(path.read_bytes())!=expected: modified=True
+    report['state']='modified' if modified else ('synchronized' if saved['supported'] else 'unsupported')
+    return report
+
+
+def skill_next(skill):
+    if skill['state'] in {'synchronized','pending'}:
+        return f"记账前必须读取官方 Skill：{skill['path']}；通用说明读取 releaseDocs 的本版本副本，本机所有者确认继续保留。"
+    if skill['state']=='modified': return '官方 Skill 有本地变化；先保留并处理冲突，不将其视为已同步。'
+    return '此状态尚无已同步的官方 Skill；旧版不支持时不得声称新版记账流程已就绪。'
+
+
+def previous_skill_baseline(root, state):
+    """Recover a legacy baseline only from an authenticated, archived source ZIP."""
+    version=state.get('version')
+    if not version or not state.get('manifestSha256'): return {}
+    owner_version_tuple(version,state['profile'])
+    stage=f'.runtime/product/releases/{version}'
+    manifest_path=checked_path(root,stage+'/release-manifest.json')
+    if not manifest_path.is_file(): return {}
+    raw=manifest_path.read_bytes()
+    if digest(raw)!=state['manifestSha256']: raise ValueError('先前 Skill 发布清单哈希冲突。')
+    manifest=json.loads(raw)
+    if manifest.get('version')!=version or manifest.get('commit')!=state.get('commit'):
+        raise ValueError('先前 Skill 来源身份冲突。')
+    asset=manifest.get('source',{})
+    asset_name=asset.get('asset')
+    if not isinstance(asset_name,str) or len(safe_name(asset_name).parts)!=1 or not SHA.fullmatch(asset.get('sha256','')):
+        raise ValueError('先前 Skill 源码索引无效。')
+    archive=checked_path(root,stage+'/'+asset_name)
+    if not archive.is_file(): return {}
+    if digest(archive.read_bytes())!=asset['sha256']: raise ValueError('先前 Skill 源码 ZIP 哈希冲突。')
+    source=zip_contents(archive,source=True)
+    expected=state.get('sourceVersion',version)
+    try: product=json.loads(source['release.json'])
+    except (KeyError,ValueError): raise ValueError('先前 Skill 源码版本缺失。') from None
+    if product.get('version')!=expected: raise ValueError('先前 Skill 源码版本冲突。')
+    return {name:digest(data) for name,data in official_skill_source(source).items()}
+
+
 def baseline(root):
     result={}
     for top in ('scripts','app','dashboard'):
@@ -155,6 +247,14 @@ def load_state(root):
         raise ValueError('更新状态无效或属于另一个项目。')
     for name,sha in value['managed'].items():
         if not managed_name(name) or not isinstance(sha,str) or not SHA.fullmatch(sha): raise ValueError('更新基线无效。')
+    skill=value.get('officialSkill')
+    if skill is not None:
+        if not isinstance(skill,dict) or skill.get('path')!=SKILL_ENTRY or not isinstance(skill.get('supported'),bool) or not isinstance(skill.get('files'),dict):
+            raise ValueError('官方 Skill 更新基线无效。')
+        for name,sha in skill['files'].items():
+            if not official_skill_name(name) or not isinstance(sha,str) or not SHA.fullmatch(sha):
+                raise ValueError('官方 Skill 文件基线无效。')
+        if skill['supported'] and SKILL_ENTRY not in skill['files']: raise ValueError('官方 Skill 入口基线缺失。')
     return value
 
 
@@ -227,15 +327,19 @@ def assert_protected(root, expected):
 
 def status(root):
     root=checked_root(root)
+    skill=skill_status(root)
     if not checked_path(root,STATE).exists(): return {'ok':True,'root':str(root),'adopted':False,'dryRun':True,'releaseDocs':None,
+            'officialSkill':skill,'next':skill_next(skill),
             'pending':checked_path(root,'.runtime/product/pending.json').exists(),
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
     value=load_state(root)
     version=value.get('version')
     if version: owner_version_tuple(version,value['profile'])
     release_docs=root/f'.runtime/product/releases/{version}/source' if version else None
+    skill=skill_status(root,value)
     return {'ok':True,'root':str(root),'adopted':True,'profile':value['profile'],'version':value.get('version'),
             'repository':REPOSITORY,'managedFiles':len(value['managed']),'dryRun':True,
+            'officialSkill':skill,'next':skill_next(skill),
             'releaseDocs':str(release_docs) if release_docs else None,
             'pending':checked_path(root,'.runtime/product/pending.json').exists(),
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
@@ -373,6 +477,7 @@ def validate_release(directory, profile, target):
         if not path.is_file() or digest(path.read_bytes())!=entry['sha256']: raise ValueError('发布资产 SHA256 校验失败。')
         assets.append(path)
     source=zip_contents(assets[0],source=True)
+    official_skill_source(source)
     try: source_version=json.loads(source['release.json'])
     except (KeyError,ValueError): raise ValueError('源码缺少产品版本清单。') from None
     expected_source_version=manifest.get('sourceVersion') if local else version
@@ -551,18 +656,37 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     protected=protected_snapshot(root)
     desired={name:data for name,data in source.items() if managed_name(name)}
     if not desired: raise ValueError('发布源码没有共享程序。')
+    skill_files=official_skill_source(source)
+    saved_skill=state.get('officialSkill')
+    skill_baseline=saved_skill['files'] if saved_skill else {}
+    if skill_files and saved_skill is None:
+        for name,data in skill_files.items():
+            path=checked_path(root,name)
+            if not path.is_file() or path.read_bytes()!=data:
+                # Earlier updaters never managed these files. Authenticate any
+                # existing different bytes; absent files are new installations.
+                skill_baseline={name:sha for name,sha in previous_skill_baseline(root,state).items()
+                                if checked_path(root,name).is_file()}
+                break
+    desired.update(skill_files)
+    removed=sorted(set(skill_baseline)-set(skill_files)) if skill_files else []
     changed=[]; conflicts=[]
     for name,data in desired.items():
         path=checked_path(root,name); current=digest(path.read_bytes()) if path.is_file() else None
-        expected=state['managed'].get(name)
+        expected=skill_baseline.get(name) if official_skill_name(name) else state['managed'].get(name)
         if expected is not None and current!=expected: conflicts.append(name)
-        elif expected is None and current is not None: conflicts.append(name)
+        elif expected is None and current is not None and not (official_skill_name(name) and current==digest(data)): conflicts.append(name)
         elif current!=digest(data): changed.append(name)
     # Detect edits of all adopted code, even files this release retains unchanged.
     for name,expected in state['managed'].items():
         if name in desired: continue
         path=checked_path(root,name)
         if not path.is_file() or digest(path.read_bytes())!=expected: conflicts.append(name)
+    for name,expected in skill_baseline.items():
+        if name in skill_files: continue
+        path=checked_path(root,name)
+        if not path.is_file() or digest(path.read_bytes())!=expected: conflicts.append(name)
+    changed+=removed
     if prepare_environment and Path(sys.executable).absolute().is_relative_to(root/'.venv'):
         raise ValueError('不能修改正在运行的 .venv 解释器；请用项目外部托管 Python 重试 --prepare-python。')
     python=root/('.venv/Scripts/python.exe' if os.name=='nt' else '.venv/bin/python')
@@ -587,14 +711,24 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     if conflicts: raise ValueError('本机程序与采用基线冲突；保留现场：'+', '.join(sorted(set(conflicts))))
     if old_version==version and state.get('manifestSha256')!=manifest_hash: raise ValueError('同版本发布清单发生变化；保留原版本并停止。')
     binding=desktop_plan(root,state['profile'],desktop_config,prepare_environment=prepare_environment)
+    skill_report={'path':str(checked_path(root,SKILL_ENTRY)),
+                  'version':version if skill_files else (saved_skill or {}).get('version'),
+                  'sourceVersion':manifest.get('sourceVersion',version) if skill_files else (saved_skill or {}).get('sourceVersion'),
+                  'commit':manifest['commit'] if skill_files else (saved_skill or {}).get('commit'),
+                  'state':'pending' if skill_files else 'unsupported'}
     report={'ok':True,'dryRun':not apply,'root':str(root),'profile':state['profile'],'version':version,
-            'changed':changed,'retained':sorted(set(state['managed'])-set(desired)),
+            'changed':changed,'removed':removed,'retained':sorted(set(state['managed'])-set(desired)),
+            'officialSkill':skill_report,
             'ledger':ledger,'protectedPreserved':True,'protectedDeltaCount':0,
             'binaryInstall':'not-attempted','requiresEnvironment':requires_environment,
             'environment':'requested' if prepare_environment else ('requires-preparation' if requires_environment else 'preserved'),
-            'next':'使用 releaseDocs 中的本版本通用说明；本机所有者文档保留。'}
-    if old_version==version and not changed and not requires_environment:
-        return {**report,'unchanged':True}
+            'next':skill_next(skill_report)}
+    skill_record={'path':SKILL_ENTRY,'supported':bool(skill_files),
+                  'version':skill_report['version'],'sourceVersion':skill_report['sourceVersion'],'commit':skill_report['commit'],
+                  'files':{name:digest(data) for name,data in skill_files.items()} if skill_files else skill_baseline}
+    install_required=old_version!=version or any(managed_name(name) for name in changed) or requires_environment
+    if old_version==version and not changed and not requires_environment and saved_skill==skill_record:
+        return {**report,'unchanged':True,'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'}}
     if not apply: return report
     if not _lock_held:
         with update_lock(root):
@@ -605,6 +739,10 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     release_parent=checked_path(root,f'.runtime/product/releases/{version}/source/release.json').parent
     recovery=checked_path(root,f'.runtime/product/recovery/{version}-{uuid.uuid4().hex}/journal.json').parent
     stage=release_parent.parent
+    source_asset=manifest['source']['asset']
+    archived_source=checked_path(root,f'.runtime/product/releases/{version}/{source_asset}')
+    if archived_source.exists() and digest(archived_source.read_bytes())!=manifest['source']['sha256']:
+        raise ValueError('已暂存同版本源码 ZIP 哈希冲突。')
     if stage.exists():
         for name,data in source.items():
             path=checked_path(root,(release_parent/name).relative_to(root).as_posix())
@@ -613,9 +751,10 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         for name in source: checked_path(root,(release_parent/name).relative_to(root).as_posix())
     # Freeze verified bytes before the first write, independent of concurrent asset changes.
     bundle_bytes=bundle.read_bytes()
+    source_bytes=checked_path(checked_root(release_dir),source_asset).read_bytes()
     selected=manifest['profiles'][state['profile']]['platforms'][target]
     manifest_bytes=checked_path(checked_root(release_dir),'release-manifest.json').read_bytes()
-    if digest(bundle_bytes)!=selected['sha256'] or digest(manifest_bytes)!=manifest_hash:
+    if digest(source_bytes)!=manifest['source']['sha256'] or digest(bundle_bytes)!=selected['sha256'] or digest(manifest_bytes)!=manifest_hash:
         raise ValueError('发布资产在预检后改变。')
     for name in zip_contents(bundle):
         if name != 'manifest.json':
@@ -640,6 +779,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         if not stage.exists():
             for name,data in source.items(): atomic_bytes(release_parent/name,data)
             atomic_bytes(stage/'release-manifest.json',manifest_bytes)
+        atomic_bytes(archived_source,source_bytes)
         # Keep the verified bundle for recovery/retry; never use a redownload here.
         staged_bundle=stage/bundle.name
         atomic_bytes(staged_bundle,bundle_bytes)
@@ -649,32 +789,41 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         for name in changed:
             path=checked_path(root,name)
             if (path.read_bytes() if path.exists() else None)!=previous[name]: raise ValueError('程序在预检后发生冲突。')
-            atomic_bytes(path,desired[name])
-        native=bootstrap.stage_bundle(root,staged_bundle,target)
-        if prepare_environment:
-            bootstrap.prepare_python(root)
-        if binding: atomic_json(binding[0],binding[1])
-        gate=root/'.runtime/ledger/publish.json'
-        if gate.is_file():
-            settings=read_json(gate)
-            if not isinstance(settings,dict): raise ValueError('本机发布门禁格式无效。')
-            if 'publisher' in settings:
-                settings['publisher']=str(root/native['helpers']['ledger_cli'])
-                atomic_json(gate,settings)
-        assert_protected(root,protected)
-        attempted=True
-        (installer or bootstrap.install_app)(native['installer'])
+            if name in removed: path.unlink()
+            else: atomic_bytes(path,desired[name])
+        if install_required:
+            native=bootstrap.stage_bundle(root,staged_bundle,target)
+            if prepare_environment:
+                bootstrap.prepare_python(root)
+            if binding: atomic_json(binding[0],binding[1])
+            gate=root/'.runtime/ledger/publish.json'
+            if gate.is_file():
+                settings=read_json(gate)
+                if not isinstance(settings,dict): raise ValueError('本机发布门禁格式无效。')
+                if 'publisher' in settings:
+                    settings['publisher']=str(root/native['helpers']['ledger_cli'])
+                    atomic_json(gate,settings)
+            assert_protected(root,protected)
+            attempted=True
+            (installer or bootstrap.install_app)(native['installer'])
         assert_protected(root,protected)
         if ledger_report(root,manifest['ledgerSchema'])!=ledger: raise ValueError('更新后账本业务哈希改变；不自动恢复账本，请核对并发记账。')
         assert_protected(root,protected)
+        for name,data in skill_files.items():
+            path=checked_path(root,name)
+            if not path.is_file() or path.read_bytes()!=data: raise ValueError('更新后官方 Skill 内容冲突；停止并恢复程序。')
+        if any(checked_path(root,name).exists() for name in removed): raise ValueError('更新后官方 Skill 引用文件冲突。')
         new_state={**state,'version':version,'manifestSha256':manifest_hash,'commit':manifest['commit'],
                    'distribution':manifest.get('distribution','public'),'sourceVersion':manifest.get('sourceVersion',version),
-                   'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items()}}}
+                   'officialSkill':skill_record,
+                   'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items() if managed_name(name)}}}
         atomic_json(root/STATE,new_state)
-        journal.update(phase='complete',binaryInstall='installed')
+        outcome='installed' if attempted else 'not-attempted'
+        journal.update(phase='complete',binaryInstall=outcome)
         atomic_json(recovery/'journal.json',journal)
         pending.unlink()
-        return {**report,'unchanged':False,'binaryInstall':'installed','recovery':str(recovery),
+        return {**report,'unchanged':False,'binaryInstall':outcome,'recovery':str(recovery),
+                'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'},
                 'releaseDocs':str(release_parent),'ledgerBackup':str(ledger_backup) if ledger['initialized'] else None}
     except Exception as error:
         # Personal/concurrent edits are observed and reported, never restored blindly.

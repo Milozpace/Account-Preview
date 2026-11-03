@@ -213,9 +213,15 @@ class InboxTests(unittest.TestCase):
                         '主分类': '合成分类', '资金池': account.POOLS[0], '语义说明': '测试审定'})
         approved = dict(records=rows, updates=[], reviewed_by='agent', reviewed_at='2026-10-29',
                         source_files=[{'path': str(source), 'sha256': account.sha(source)}])
+        with self.assertRaisesRegex(ValueError, '来源|原始'):
+            ledger_store.import_reviewed(database, approved, apply=True)
+        # A pre-existing defective legacy batch must be diagnosed, never acknowledged.
+        approved.pop('source_files')
         ledger_store.import_reviewed(database, approved, apply=True)
         with patch.object(self.inbox, '_run', side_effect=AssertionError('conflict not recorded')):
-            self.assertTrue(self.inbox.receipts(database, apply=True)['ok'])
+            result = self.inbox.receipts(database, apply=True)
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['blocked'][0]['reason'], 'source-conflict')
         self.assertEqual(self.inbox.status()['files'][0]['state'], 'received')
 
     def test_stale_manifest_archive_prevents_acknowledgement(self):

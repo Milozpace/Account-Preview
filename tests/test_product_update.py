@@ -49,15 +49,15 @@ class ProductUpdateFixture:
         source = dict(source)
         source.setdefault('release.json', json.dumps({'version':version,'tag':'v'+version,'channel':'private-preview'}).encode())
         with zipfile.ZipFile(self.assets / 'source.zip', 'w') as z:
-            for name, data in source.items(): z.writestr(name, data)
+            for name, data in source.items(): z.writestr(zipfile.ZipInfo(name), data)
         identifier = {'personal':'com.account.probe', 'preview':'com.account.preview'}[profile]
         files = {'bin/ledger_cli.exe':b'helper', 'bin/bill_inbox_cli.exe':b'inbox', 'bin/sync_diagnose.exe':b'diagnose',
                  'install/Account.exe':b'installer'}
         inner = dict(format=1, version=version, nativeVersion=native_version, platform='windows-x64', profile=profile,
                      identifier=identifier, commit='a'*40, files={name:sha(data) for name,data in files.items()})
         with zipfile.ZipFile(self.assets / 'bundle.zip', 'w') as z:
-            z.writestr('manifest.json', json.dumps(inner))
-            for name,data in files.items(): z.writestr(name,data)
+            z.writestr(zipfile.ZipInfo('manifest.json'), json.dumps(inner))
+            for name,data in files.items(): z.writestr(zipfile.ZipInfo(name),data)
         manifest = dict(format=1, version=version, tag='v'+version, channel='private-preview', commit='a'*40,
                         nativeVersion=native_version, ledgerSchema=1, snapshotSchema=2, notesSha256=sha(b'notes'),
                         source={'asset':'source.zip','sha256':sha((self.assets/'source.zip').read_bytes())},
@@ -427,6 +427,206 @@ class ProductUpdateEnvironmentBoundaryTests(ProductUpdateFixture, unittest.TestC
                 with self.assertRaisesRegex(ValueError,'环境|重定向'): self.update(apply=True,prepare_environment=True)
         self.assertEqual(self.installs,[])
         self.assertEqual((self.root/'scripts/shared.py').read_bytes(),b'old code')
+
+
+class ProductUpdateOfficialSkillTests(ProductUpdateFixture, unittest.TestCase):
+    entry='.agents/skills/account-maintenance/SKILL.md'
+    reference='.agents/skills/account-maintenance/references/bookkeeping.md'
+
+    def skill_source(self, text=b'official v1'):
+        return {'scripts/shared.py':b'new code', self.entry:b'# Account\n[Workflow](references/bookkeeping.md)\n'+text,
+                self.reference:b'official reference '+text,
+                '.agents/skills/other/SKILL.md':b'foreign upstream skill',
+                'docs/owner.md':b'upstream generic docs'}
+
+    def write_owner(self, name, data):
+        path=self.root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(data)
+
+    def files(self):
+        return {p.relative_to(self.root).as_posix():p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+
+    def test_syncs_only_official_skill_with_hashes_and_readonly_preflight(self):
+        self.write_owner('.agents/skills/other/SKILL.md',b'owner skill')
+        self.write_owner('docs/owner.md',b'owner docs')
+        self.adopt(); self.release(source=self.skill_source())
+        before=self.files(); preflight=self.update()
+        self.assertEqual(self.files(),before)
+        self.assertEqual(preflight['officialSkill']['state'],'pending')
+        self.assertEqual(preflight['officialSkill']['path'],str(self.root/self.entry))
+        self.assertIn(str(self.root/self.entry),preflight['next'])
+        self.assertIn('必须',preflight['next'])
+        report=self.update(apply=True)
+        self.assertTrue(report['ok'],report)
+        self.assertEqual(report['officialSkill']['state'],'synchronized')
+        self.assertEqual(report['officialSkill']['version'],'0.4.1-preview.1')
+        for name in (self.entry,self.reference): self.assertEqual((self.root/name).read_bytes(),self.skill_source()[name])
+        state=updater.read_json(self.root/updater.STATE)
+        self.assertEqual(state['officialSkill']['files'],{name:sha(self.skill_source()[name]) for name in (self.entry,self.reference)})
+        self.assertNotIn(self.entry,state['managed'])
+        self.assertEqual((self.root/'.agents/skills/other/SKILL.md').read_bytes(),b'owner skill')
+        self.assertEqual((self.root/'docs/owner.md').read_bytes(),b'owner docs')
+        before=self.files(); self.assertTrue(self.update(apply=True)['unchanged']); self.assertEqual(self.files(),before)
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'synchronized')
+        self.assertIn(str(self.root/self.entry),updater.status(self.root)['next'])
+        self.assertEqual(len(self.installs),1)
+
+    def test_modified_or_deleted_tracked_skill_conflicts_and_status_reports_change(self):
+        for name in (self.entry,self.reference):
+            with self.subTest(name=name):
+                self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+                previous=(self.root/name).read_bytes(); (self.root/name).write_bytes(b'owner modification')
+                self.assertEqual(updater.status(self.root)['officialSkill']['state'],'modified')
+                self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+                before=self.files()
+                with self.assertRaisesRegex(ValueError,'conflict|冲突'): self.update(apply=True)
+                self.assertEqual(self.files(),before)
+                (self.root/name).write_bytes(previous)
+
+    def test_legacy_baseline_accepts_identical_new_bytes_but_preserves_unknown_skill(self):
+        source=self.skill_source()
+        self.adopt()
+        for name in (self.entry,self.reference): self.write_owner(name,source[name])
+        self.release(source=source)
+        self.assertTrue(self.update(apply=True)['ok'])
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        self.write_owner(self.entry,b'owner unknown skill')
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        before=self.files()
+        with self.assertRaisesRegex(ValueError,'conflict|冲突'): self.update(apply=True)
+        self.assertEqual(self.files(),before)
+
+    def test_legacy_baseline_can_use_verified_archived_previous_release(self):
+        self.adopt(); self.release(source=self.skill_source())
+        self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        report=self.update(apply=True)
+        self.assertTrue(report['ok'],report)
+        self.assertEqual((self.root/self.entry).read_bytes(),self.skill_source(b'v2')[self.entry])
+
+    def test_unverified_legacy_staged_files_cannot_authorize_overwriting(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        self.write_owner(self.entry,b'owner change')
+        staged=self.root/'.runtime/product/releases/0.4.1-preview.1/source'/self.entry
+        staged.write_bytes(b'owner change')
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        with self.assertRaisesRegex(ValueError,'conflict|冲突'): self.update(apply=True)
+        self.assertEqual((self.root/self.entry).read_bytes(),b'owner change')
+
+    def test_failed_installer_restores_skill_references_and_baseline(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        old_state=(self.root/updater.STATE).read_bytes()
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        def fail(path): raise RuntimeError('installer failed')
+        result=updater.update(self.root,release_dir=self.assets,target='windows-x64',apply=True,installer=fail)
+        self.assertFalse(result['ok'])
+        self.assertEqual((self.root/updater.STATE).read_bytes(),old_state)
+        for name in (self.entry,self.reference): self.assertEqual((self.root/name).read_bytes(),self.skill_source()[name])
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'synchronized')
+
+    def test_old_source_without_skill_is_explicitly_unsupported(self):
+        self.adopt(); self.release()
+        self.assertEqual(self.update()['officialSkill']['state'],'unsupported')
+        self.assertEqual(self.update(apply=True)['officialSkill']['state'],'unsupported')
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'unsupported')
+
+    def test_missing_reference_or_entry_stops_before_mutation(self):
+        self.adopt()
+        for missing in (self.entry,self.reference):
+            with self.subTest(missing=missing):
+                source=self.skill_source(); source.pop(missing); self.release(source=source)
+                before=self.files()
+                with self.assertRaisesRegex(ValueError,'Skill|skill|引用|reference'): self.update(apply=True)
+                self.assertEqual(self.files(),before)
+
+    def test_redirected_official_skill_parent_stops_before_mutation(self):
+        self.adopt(); self.release(source=self.skill_source())
+        original=updater.redirected
+        with patch.object(updater,'redirected',side_effect=lambda path:path==self.root/'.agents' or original(path)):
+            with self.assertRaisesRegex(ValueError,'链接|junction|重定向'): self.update(apply=True)
+        self.assertEqual(self.installs,[])
+
+    def test_same_version_legacy_baseline_migration_does_not_reinstall_app(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        before=self.files(); self.update()
+        self.assertEqual(self.files(),before)
+        report=self.update(apply=True)
+        self.assertTrue(report['ok'],report)
+        self.assertEqual(report['binaryInstall'],'not-attempted')
+        self.assertEqual(len(self.installs),1)
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'synchronized')
+
+    def test_same_version_adds_previously_unmanaged_missing_skill_without_reinstall(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        for name in (self.entry,self.reference): (self.root/name).unlink()
+        report=self.update(apply=True)
+        self.assertTrue(report['ok'],report)
+        self.assertEqual(report['officialSkill']['state'],'synchronized')
+        self.assertEqual(report['binaryInstall'],'not-attempted')
+        self.assertEqual(len(self.installs),1)
+        for name in (self.entry,self.reference): self.assertEqual((self.root/name).read_bytes(),self.skill_source()[name])
+
+    def test_installer_skill_mutation_cannot_report_success(self):
+        self.adopt(); self.release(source=self.skill_source())
+        def mutate(path): (self.root/self.reference).write_bytes(b'changed during install')
+        result=updater.update(self.root,release_dir=self.assets,target='windows-x64',apply=True,installer=mutate)
+        self.assertFalse(result['ok'])
+        self.assertFalse((self.root/self.entry).exists())
+
+    def test_removed_reference_is_deleted_and_restored_if_install_fails(self):
+        self.adopt(); old=self.skill_source(); self.release(source=old); self.update(apply=True)
+        new={'scripts/shared.py':b'new code',self.entry:b'# Account v2; no reference required\n'}
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=new)
+        self.assertIn(self.reference,self.update()['removed'])
+        def fail(path): raise RuntimeError('installer failed')
+        result=updater.update(self.root,release_dir=self.assets,target='windows-x64',apply=True,installer=fail)
+        self.assertFalse(result['ok']); self.assertEqual((self.root/self.reference).read_bytes(),old[self.reference])
+        self.assertTrue(self.update(apply=True)['ok']); self.assertFalse((self.root/self.reference).exists())
+
+    def test_later_source_without_skill_retains_previous_skill_but_reports_unsupported(self):
+        self.adopt(); old=self.skill_source(); self.release(source=old); self.update(apply=True)
+        self.release(version='0.4.2-preview.1',native_version='0.4.2')
+        report=self.update(apply=True)
+        self.assertTrue(report['ok'],report); self.assertEqual(report['officialSkill']['state'],'unsupported')
+        for name in (self.entry,self.reference): self.assertEqual((self.root/name).read_bytes(),old[name])
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'unsupported')
+
+    def test_legacy_migration_without_archive_refuses_unproven_old_bytes(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        (self.root/'.runtime/product/releases/0.4.1-preview.1/source.zip').unlink()
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        before=self.files()
+        with self.assertRaisesRegex(ValueError,'conflict|冲突'): self.update(apply=True)
+        self.assertEqual(self.files(),before)
+
+    def test_identical_new_skill_bytes_do_not_require_a_trusted_previous_archive(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        state=updater.read_json(self.root/updater.STATE); state.pop('officialSkill')
+        (self.root/updater.STATE).write_text(json.dumps(state))
+        (self.root/'.runtime/product/releases/0.4.1-preview.1/source.zip').write_bytes(b'untrusted old archive')
+        source=self.skill_source(b'v2')
+        for name in (self.entry,self.reference): self.write_owner(name,source[name])
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=source)
+        self.assertTrue(self.update(apply=True)['ok'])
+
+    def test_reference_dependency_cannot_escape_to_other_skill_or_missing_generic_doc(self):
+        self.adopt()
+        for target in ('../../other/SKILL.md','../../../../docs/missing.md','file:///secret.md'):
+            with self.subTest(target=target):
+                source=self.skill_source(); source[self.reference]=('[Dependency]('+target+')').encode()
+                self.release(source=source); before=self.files()
+                with self.assertRaisesRegex(ValueError,'Skill|引用'): self.update(apply=True)
+                self.assertEqual(self.files(),before)
 
     def test_status_reports_release_docs_and_recovery_guards_readonly(self):
         self.adopt(); self.release(); report=self.update(apply=True)

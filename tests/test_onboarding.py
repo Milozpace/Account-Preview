@@ -67,6 +67,45 @@ class OnboardingTests(unittest.TestCase):
         self.cli('--root',str(self.root),'init','--effective','2026-10','--apply')
         self.assertEqual(db.read_bytes(),before)
 
+    def test_generated_owner_notes_point_to_skill_and_report_actual_initial_state(self):
+        self.cli('--root', str(self.root), 'init', '--effective', '2026-10', '--apply')
+        profile = (self.root / 'local/档案.md').read_text(encoding='utf-8')
+        memory = (self.root / 'PROJECT_MEMORY.md').read_text(encoding='utf-8')
+        rules = (self.root / 'local/个人规则.md').read_text(encoding='utf-8')
+        self.assertIn(str(self.root), profile)
+        self.assertIn('2026-10', profile)
+        self.assertIn('预算状态：未制定', profile)
+        self.assertIn('.agents/skills/account-maintenance/SKILL.md', memory)
+        self.assertIn('不是用户批准', memory)
+        self.assertIn('尚无已批准', rules)
+        self.assertNotIn('prepare', memory)
+
+    def test_missing_owner_notes_do_not_make_existing_ledger_uninitialized(self):
+        self.init('--apply')
+        before = ledger_store.verify(ledger_source.resolve(self.root))['sourceHash']
+        for name in ['local/档案.md', 'local/个人规则.md', 'PROJECT_MEMORY.md']:
+            (self.root / name).unlink()
+        _, status = self.cli('doctor', '--root', str(self.root))
+        self.assertEqual(status['setup']['state'], 'initialized')
+        self.assertEqual(status['ledger']['sourceHash'], before)
+        self.assertNotIn('初始化后', ' '.join(status['nextSteps']))
+        self.assertIn('不代表未初始化', ' '.join(status['nextSteps']))
+
+    def test_setup_preserves_all_existing_owner_notes(self):
+        notes = ['local/档案.md', 'local/个人规则.md', 'PROJECT_MEMORY.md']
+        for name in notes:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('owner text: ' + name, encoding='utf-8')
+        self.init('--apply')
+        for name in notes:
+            self.assertEqual((self.root / name).read_text(encoding='utf-8'), 'owner text: ' + name)
+
+    def test_explicit_initial_budget_is_not_reported_as_undefined(self):
+        self.init('--apply')
+        profile = (self.root / 'local/档案.md').read_text(encoding='utf-8')
+        self.assertIn('预算状态：已启用', profile)
+
     def test_init_dry_run_then_revision_zero_empty_ledger_and_idempotency(self):
         _, dry = self.init()
         self.assertTrue(dry['dry_run'])

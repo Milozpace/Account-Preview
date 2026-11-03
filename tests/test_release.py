@@ -16,12 +16,16 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 
 
 class ReleaseTests(unittest.TestCase):
-    def repository(self, root):
+    def repository(self, root, skill=True):
         root.mkdir(exist_ok=True)
         shutil.copyfile(ROOT/'release.json', root/'release.json')
         (root/'README.md').write_text('Source at fixed commit.\n', encoding='utf-8')
         (root/'templates').mkdir()
         (root/'templates/notes.md').write_text('Release heading with empty sections.', encoding='utf-8')
+        if skill:
+            entry = root/'.agents/skills/account-maintenance/SKILL.md'
+            entry.parent.mkdir(parents=True)
+            entry.write_text('# Bookkeeping\n' + ('[Contract](references/missing.md)\n' if skill == 'missing-ref' else ''), encoding='utf-8')
         for args in [('init',), ('config', 'user.email', 'fixture@example.invalid'),
                      ('config', 'user.name', 'Fixture'), ('add', '.'), ('commit', '-m', 'fixture')]:
             subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True)
@@ -61,6 +65,15 @@ class ReleaseTests(unittest.TestCase):
             (root/'README.md').write_text('dirty')
             with self.assertRaisesRegex(ValueError, 'clean|干净|改动'):
                 release.prepare_release(root, assets, commit, notes)
+
+    def test_new_release_requires_core_bookkeeping_skill_and_reference_closure(self):
+        for skill in (False, 'missing-ref'):
+            with self.subTest(skill=skill), tempfile.TemporaryDirectory() as folder:
+                parent = Path(folder); root = parent/'repo'; commit = self.repository(root, skill=skill)
+                assets = parent/'assets'; self.assets(root, assets, commit)
+                notes = parent/'notes.md'; notes.write_text('User authored notes', encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'Skill|skill|引用'):
+                    release.prepare_release(root, assets, commit, notes)
 
     def test_prepare_rejects_missing_notes_platform_or_mismatched_bundle(self):
         self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')

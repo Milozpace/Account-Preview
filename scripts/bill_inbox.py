@@ -265,24 +265,38 @@ class Inbox:
             return result
 
     def _proof(self, entry, database, rows, allow_noop):
+        return self._proof_result(entry, database, rows, allow_noop).get('batchId')
+
+    def _proof_result(self, entry, database, rows, allow_noop):
+        """Return sanitized evidence, including why no recorded receipt is possible."""
         source = Path(entry['sourcePath'])
-        if not source.is_file() or source.is_symlink() or account.sha(source) != entry['sha256']:
-            return None
         try:
+            if not source.is_file():
+                return dict(reason='source-missing')
+            if source.is_symlink() or (hasattr(source, 'is_junction') and source.is_junction()):
+                return dict(reason='source-redirected')
+            if account.sha(source) != entry['sha256']:
+                return dict(reason='source-changed')
             parsed, _ = self._parse_source(source)
             new, _, conflicts = account.prepare_records(rows, parsed)
-            if not parsed or new or conflicts or account.sha(source) != entry['sha256']:
-                return None
+            if account.sha(source) != entry['sha256']:
+                return dict(reason='source-changed')
+            if not parsed:
+                return dict(reason='source-empty')
+            if conflicts:
+                return dict(reason='source-conflict', conflictCount=len(conflicts))
+            if new:
+                return dict(reason='unimported-records', newRecords=len(new))
             uri = Path(database).resolve().as_uri() + '?mode=ro'
             with closing(sqlite3.connect(uri, uri=True)) as connection:
                 for batch, sources in connection.execute("SELECT batch_id,source_files_json FROM import_batches WHERE kind='import' ORDER BY revision DESC"):
                     if any(s.get('sha256', '').lower() == entry['sha256'] for s in json.loads(sources or '[]')):
-                        return batch
+                        return dict(batchId=batch)
             if entry['sha256'] in allow_noop or (entry['state'] == 'recorded' and entry.get('batchId') == 'existing-ledger'):
-                return 'existing-ledger'
+                return dict(batchId='existing-ledger')
         except Exception:
-            return None
-        return None
+            return dict(reason='proof-error')
+        return dict(reason='missing-provenance')
 
     def receipts(self, database, apply=False, allow_noop=(), locked=False):
         if not apply:
@@ -292,26 +306,30 @@ class Inbox:
                 return self.receipts(database, apply=True, allow_noop=allow_noop, locked=True)
         payload = self._load()
         if not payload['files']:
-            return dict(ok=True, recorded=0, receiptErrors=0, ledgerVerified=True)
+            return dict(ok=True, recorded=0, receiptErrors=0, ledgerVerified=True, pending=[], blocked=[])
         if not ledger_store.verify(database).get('ok'):
             return dict(ok=False, recorded=0, receiptErrors=0, ledgerVerified=False,
                         error='账本核验失败，未发送已记账回执')
         rows = ledger_store.read_state(database)['rows']
         recorded = errors = 0
+        pending, blocked = [], []
         for entry in payload['files']:
-            batch = self._proof(entry, database, rows, allow_noop)
+            proof = self._proof_result(entry, database, rows, allow_noop)
+            batch = proof.get('batchId')
+            if not batch:
+                detail = dict(uploadId=entry['id'], **proof)
+                (pending if proof.get('reason') == 'unimported-records' else blocked).append(detail)
             if batch and (entry['state'] != 'recorded' or entry['receiptPending']):
                 entry.update(state='recorded', batchId=batch, receiptPending=True)
                 self._save(payload)
                 if not self._ack(entry):
                     errors += 1
                 recorded += 1
-            elif entry['state'] == 'received' and entry['receiptPending']:
+            elif entry['state'] == 'received' and entry['receiptPending'] and proof.get('reason') == 'unimported-records':
                 # Recheck local archive before retrying even the received receipt.
                 source = Path(entry['sourcePath'])
                 if not source.is_file() or source.is_symlink() or account.sha(source) != entry['sha256'] or not self._ack(entry):
                     errors += 1
-            elif entry['state'] == 'recorded' and entry['receiptPending']:
-                errors += 1  # Never trust a local boolean without current proof.
             self._save(payload)
-        return dict(ok=not errors, recorded=recorded, receiptErrors=errors, ledgerVerified=True)
+        return dict(ok=not (errors or blocked), recorded=recorded, receiptErrors=errors,
+                    ledgerVerified=True, pending=pending, blocked=blocked)

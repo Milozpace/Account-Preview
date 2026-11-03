@@ -30,7 +30,7 @@ LIVE = ROOT / '个人财物工作簿.xlsx'
 SHEETS = ['00_Dashboard', '01_账单流水', '02_资金池', '03_统计数据']
 HEADERS = ['平台','交易时间','交易对方','商品/说明','原始类型','原始分类','收支方向','原始金额','支付方式','状态','交易订单号','商家订单号','原始财务事件','退款调整','净支出候选','最终财务事件','统计口径','计入消费金额','主分类','细分类','生活领域','服务对象/事件','标签','语义置信度','语义说明','用户修正规则','复核状态','来源行','资金池','资金池判定','记录ID','原记录ID','关联记录ID','来源文件','导入批次','记录类型','月份','月内支出排名']
 RAW = HEADERS[:12]
-UPDATE_FIELDS = set(HEADERS[12:36]) - {'记录ID'}
+UPDATE_FIELDS = set(HEADERS[12:36]) - {'记录ID', '来源文件', '来源行'}
 MONEY_FIELDS = {'原始金额', '退款调整', '净支出候选', '计入消费金额'}
 POOLS = ['运行账户','随心消费','旅行/体验','成长/项目/耐用品']
 TZ = timezone(timedelta(hours=8))
@@ -486,6 +486,10 @@ def main(argv=None):
     init_cmd.add_argument('--initial', type=Path)
     init_cmd.add_argument('--apply', action='store_true')
     commands.add_parser('inspect'); commands.add_parser('verify')
+    find = commands.add_parser('find-records', help='只读定位待纠正记录，返回有限字段与真实记录ID')
+    find.add_argument('--month')
+    find.add_argument('--query', default='')
+    find.add_argument('--limit', type=int, default=20)
     commands.add_parser('inbox-status', help='只读查看手机账单本机收取状态')
     inbox_fetch = commands.add_parser('inbox-fetch', help='核验并归档手机账单；--apply才收取，不记账')
     inbox_fetch.add_argument('--apply', action='store_true')
@@ -567,7 +571,7 @@ def main(argv=None):
     if 'archive' in [p.lower() for p in args.workbook.resolve().parts]: raise ValueError('拒绝将archive当作当前工作簿')
     if ledger_source.is_database(args.workbook):
         return database_command(args)
-    if args.command in {'backup','budget','export-excel','inbox-status','inbox-fetch','inbox-receipts'}:
+    if args.command in {'backup','budget','export-excel','inbox-status','inbox-fetch','inbox-receipts','find-records'}:
         raise ValueError('该命令需要SQLite账本；请显式传--database或先按验收流程启用SQLite')
     if args.command == 'dashboard':
         from dashboard_server import serve
@@ -628,6 +632,8 @@ def database_command(args):
         serve(source,port=args.port,open_browser=not args.no_browser)
         return 0
     if args.command == 'inspect': result = ledger_store.inspect(source)
+    elif args.command == 'find-records':
+        result = ledger_store.find_records(source, month=args.month, query=args.query, limit=args.limit)
     elif args.command == 'verify': result = ledger_store.verify(source)
     elif args.command == 'prepare':
         sources=[{'path':str(Path(path).resolve()),'sha256':sha(Path(path).resolve())} for path in args.source]
@@ -647,6 +653,10 @@ def database_command(args):
                       conflicts=len(conflicts),skipped=skipped,review_required=True)
     elif args.command == 'import':
         approved = json.loads(args.input.read_text(encoding='utf-8-sig'))
+        if not isinstance(approved, dict):
+            raise ValueError('审核JSON结构无效')
+        if approved.get('records') and not approved.get('source_files'):
+            raise ValueError('新增账单必须保留 prepare 生成的 source_files；历史无来源批次不作新导入模板')
         if not args.apply:
             result = ledger_store.import_reviewed(source, approved, apply=False)
         else:

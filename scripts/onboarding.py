@@ -114,11 +114,12 @@ def _recoverable(database, plan):
         return False
 
 
-def _owner_templates(root):
+def _owner_templates(root, plan):
+    budget_status = '已启用' if any(Decimal(v) != 0 for v in (*plan['amounts'].values(), *plan['initial'].values())) else '未制定（新库零预算观察）'
     templates = {
-        'local/档案.md': '# 我的记账档案\n\n称呼：待填写\n记账起始月份：待填写\n个人背景与账户用途：待本人补充\n\n请勿填写密码、令牌或完整账号。\n',
-        'local/个人规则.md': '# 我的个人记账规则\n\n以下仅记录本人确认的规则；未确认分类保留待归类。\n\n- 用户确认与证据：待补充\n- 四池预算以SQLite中的budget_rates为准。\n- 初始滚存不是实际现金余额。\n',
-        'PROJECT_MEMORY.md': '# Account 本机工作记忆\n\n此文件属于当前使用者，请由使用者和自己的Agent持续维护。\n\n先读 docs/工作说明.md、docs/记账规则.md、local/档案.md、local/个人规则.md。\ndata/account.sqlite3 是唯一当前账本；不得回退到Excel。\n记账、云端发布、安装与Git提交分别按使用者授权执行。\n具体额度及初始滚存只从数据库读取，不复制到此文件。\n'
+        'local/档案.md': f'# 我的记账档案\n\n- 项目绝对根：{root}\n- 记账起始月份：{plan["effective"]}\n- 预算状态：{budget_status}\n- 额度与滚存：以 SQLite 为准，不另抄数字\n- 个人用途与偏好：待本人补充\n- 手机与同步：未核验；以实际配置为准\n\n请勿填写密码、令牌或完整账号。\n',
+        'local/个人规则.md': '# 我的个人记账规则\n\n尚无已批准的个人规则。只记录本人明确批准的条件、例外、范围、日期及确认出处；单笔确认与候选另记，不自动推广。\n',
+        'PROJECT_MEMORY.md': '# Account 本机工作记忆\n\n- 日常记账入口：.agents/skills/account-maintenance/SKILL.md\n- 当前账本：data/account.sqlite3；来源：data/source.json\n- 个人资料：local/档案.md；批准规则：local/个人规则.md\n- 本文件仅记录状态与证据指针；Agent 历史判断不是用户批准的规则。\n'
     }
     for name, contents in templates.items():
         path = root / name
@@ -165,7 +166,7 @@ def initialize(root, effective, amounts, initial=None, apply=False):
             if not _recoverable(database, plan): raise ValueError('未激活账本与本次参数不匹配，拒绝覆盖')
         else:
             _new_ledger(database, plan)
-        _owner_templates(root)
+        _owner_templates(root, plan)
         fd, name = tempfile.mkstemp(prefix='.source-', suffix='.json', dir=database.parent)
         draft = Path(name)
         try:
@@ -179,7 +180,7 @@ def initialize(root, effective, amounts, initial=None, apply=False):
             draft.unlink(missing_ok=True)
     result = store.verify(database)
     return {**result, 'applied':True, 'dry_run':False, 'state':'initialized',
-            'nextSteps':['补充local/档案.md与local/个人规则.md', '运行doctor检查本机环境；云端仍需单独配置与回读验证']}
+            'nextSteps':['按实际需要补充本机档案；首次记账读取.agents/skills/account-maintenance/SKILL.md', '运行doctor检查本机环境；云端仍需单独配置与回读验证']}
 
 
 def doctor(root):
@@ -207,7 +208,7 @@ def doctor(root):
     if any(not item['present'] for item in helpers.values()):
         next_steps.append(f'运行bootstrap.py --bundle 本平台发布包.zip --apply --expected-root "{root}" 准备原生组件，或按发行说明构建；已有账本不重新初始化')
     owner = {name:(root/name).is_file() for name in ['local/档案.md','local/个人规则.md','PROJECT_MEMORY.md']}
-    if not all(owner.values()): next_steps.append('初始化后补全本机档案、个人规则与工作记忆')
+    if not all(owner.values()): next_steps.append('本机档案、规则或记忆缺失不代表未初始化；按当前账本实际状态补充指针，保留已有所有者文件')
     dependencies = dict(pythonSupported=sys.version_info[:2] == (3,12), openpyxlAvailable=account.openpyxl is not None,
                         sqliteStrictSupported=sqlite3.sqlite_version_info >= (3,37,0))
     if not all(dependencies.values()): next_steps.append('运行bootstrap准备项目专用Python 3.12及锁定依赖；SQLite需3.37+')
