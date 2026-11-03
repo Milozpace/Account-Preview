@@ -17,6 +17,6 @@
 - `data/account.sqlite3` 是唯一当前账本，来源由 `data/source.json` 选择。缺库停止，不回退 Excel/演示数据，不重建已有账本。用托管 Python 和正式审计工具，不直接 SQL 改业务；保留原件、ID、来源/哈希、关联及确认，写前 Backup API、事务校验、写后核验。
 - 共享程序只在本仓库开发，使用者不为个人记账、改额度或修显示修改共享源码。各人保留独立数据、规则、预算、配置及身份，不读他人私有目录，不整库复制私人历史，不 reset/clean，不删除原件或清空 `.runtime`。
 - 保持 profile/签名/配对/加密及两道发布门禁；personal `com.account.probe` 与 preview `com.account.preview` 互不替换。Android 不直接写账本。凭据仅在原生界面输入，配对材料、订单/账号全号和私人数据不进聊天、日志、共享仓库、测试或发布包。
-- Release 以 `release.json` 和固定提交为准，personal 版本仅留本机；提交/CI 候选不等于发版。每次新 Release 需维护者针对该版明确确认，说明由本人填写，Agent 不代写、不自动发布、不改旧标签/产物。公开 CI/Release 仅 preview，personal 包留本地。
+- Release 以 `release.json` 和固定提交为准，personal 版本仅留本机；提交/CI 候选不等于发版。每次新 Release 需维护者针对该版明确确认；Agent 先起草发布说明，由维护者润色或确认最终稿后发布，不自动发布未确认文案、不改旧标签/产物。公开 CI/Release 仅 preview，personal 包留本地。
 - 本地基础阶段不要求预算、手机、云端或配对，不因缺预算跳过有依据的分类与四池；已有零值不猜意图、不自动迁移。预算和汇总以 SQLite 与统一 Python 计算为准。
 - 默认私人文件留本机；所选云端模型可能处理 Agent 读取的内容，可选手机上传经坚果云加密中转，不承诺任何情况下仅本人可接触。账本、快照、云端、回执及设备分别如实报告，失败保留有效数据与快照。
