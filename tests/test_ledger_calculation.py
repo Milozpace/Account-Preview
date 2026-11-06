@@ -22,6 +22,12 @@ def record(day, amount, pool='运行账户', scope='PERSONAL', identity=None):
             '计入消费金额': amount, '资金池': pool, '统计口径': scope, '主分类': '合成分类'}
 
 
+def income_record(day, amount, category='工资薪酬', identity=None):
+    """Audited income rows carry the received amount as 原始金额 and no pool."""
+    return {'记录ID': identity or 'tx_income_'+day+'_'+str(amount), '交易时间': day+' 12:00:00',
+            '原始金额': amount, '计入消费金额': '0', '资金池': '', '统计口径': 'INCOME', '主分类': category}
+
+
 class CalculationTests(unittest.TestCase):
     def test_new_observation_mode_keeps_classified_spending_without_budget_debt(self):
         state=fixture([record('2024-01-01','25','旅行/体验'),record('2024-01-02','12','成长/项目/耐用品'),record('2024-01-03','-4')])
@@ -109,6 +115,46 @@ class CalculationTests(unittest.TestCase):
             calculation.calculate_month(fixture([record('2024-02-01','1',scope='UNRESOLVED')]),'2024-02','2024-02')
         with self.assertRaises(ValueError):
             calculation.calculate_month(fixture(),'2024-13','2024-02')
+
+    def test_income_aggregates_monthly_totals_counts_and_categories(self):
+        rows = [record('2024-02-01', '10'),
+                income_record('2024-02-05', '8000'),
+                income_record('2024-02-10', '1000', category='经营收入'),
+                income_record('2024-02-11', '500', category='经营收入'),
+                income_record('2024-02-12', '-200', identity='tx_income_reversal'),
+                income_record('2024-03-01', '300')]
+        incomes = calculation.income_aggregate(rows)
+        self.assertEqual(incomes['2024-02'], {'incomeCents': 930000, 'count': 4,
+                                              'categories': {'工资薪酬': 780000, '经营收入': 150000}})
+        self.assertEqual(incomes['2024-03'], {'incomeCents': 30000, 'count': 1,
+                                              'categories': {'工资薪酬': 30000}})
+        months = calculation.aggregate(rows)
+        self.assertEqual(months['2024-02']['personal'], 1000)
+        self.assertEqual(months['2024-02']['total'], 1000)
+
+    def test_income_ignores_transfers_refunds_and_non_income_scopes(self):
+        rows = [record('2024-02-01', '50', pool='运行账户', scope='EXCLUDED'),
+                record('2024-02-02', '-30'),
+                record('2024-02-03', '20', pool='运行账户', scope='STRUCTURAL'),
+                income_record('2024-02-20', '400')]
+        incomes = calculation.income_aggregate(rows)
+        self.assertEqual(incomes['2024-02'], {'incomeCents': 40000, 'count': 1,
+                                              'categories': {'工资薪酬': 40000}})
+
+    def test_calculate_month_reports_income_without_touching_consumption(self):
+        state = fixture([record('2024-02-01', '10'), income_record('2024-02-05', '8000')])
+        result = calculation.calculate_month(state, '2024-02', '2024-02')
+        self.assertEqual(result['income'], {'incomeCents': 800000, 'count': 1,
+                                            'categories': {'工资薪酬': 800000}})
+        self.assertEqual(result['summary']['personalCents'], 1000)
+        self.assertEqual(result['summary']['totalCents'], 1000)
+
+    def test_income_only_month_still_calculates_with_zero_consumption(self):
+        state = fixture([income_record('2024-02-05', '8000')])
+        result = calculation.calculate_month(state, '2024-02', '2024-02')
+        self.assertEqual(result['income']['incomeCents'], 800000)
+        self.assertEqual(result['summary']['personalCents'], 0)
+        self.assertEqual(result['summary']['totalCents'], 0)
 
 
 if __name__ == '__main__':

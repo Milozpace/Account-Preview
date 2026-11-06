@@ -291,6 +291,17 @@ def _validate_state(state):
             raise ValueError('流水缺少平台')
         if account.text(row.get('资金池')) not in ('', *account.POOLS, '待归类'):
             raise ValueError('资金池值不在四池或待归类范围')
+        if account.text(row.get('统计口径')).upper() == 'INCOME':
+            # Income stays outside consumption, pools and refund netting;
+            # reversals are separate negative rows linked to the original.
+            if calculation.cents(row.get('计入消费金额')) != 0:
+                raise ValueError('收入记录不得携带非零计入消费金额')
+            if account.text(row.get('资金池')):
+                raise ValueError('收入记录不分配资金池')
+            if calculation.cents(row.get('退款调整')) != 0:
+                raise ValueError('收入冲回应使用关联的负向收入记录，不使用退款调整字段')
+            if not account.text(row.get('主分类')):
+                raise ValueError('收入记录缺少主分类')
         derived = account.text(row.get('记录类型')) in ALLOCATIONS
         if derived != identity.startswith('alloc_'):
             raise ValueError('流水类型和ID前缀不一致')
@@ -475,10 +486,15 @@ def migrate_excel(workbook, database):
 def _describe(path, state):
     dates = [r['交易时间'] for r in state['rows']]
     amounts = calculation.aggregate(state['rows'])
+    incomes = calculation.income_aggregate(state['rows'])
     def as_money(value):
         return str(account.money(Decimal(value) / 100))
     aggregates = {m: {k: {p: as_money(v) for p, v in val.items()} if isinstance(val, dict) else as_money(val)
                        for k, val in item.items()} for m, item in sorted(amounts.items())}
+    for month, entry in aggregates.items():
+        income = incomes.get(month, {'incomeCents': 0, 'count': 0})
+        entry['incomeCents'] = as_money(income['incomeCents'])
+        entry['incomeCount'] = income['count']
     return dict(database=str(Path(path).resolve()), sourceHash=state['sourceHash'], sha256=state['sourceHash'],
                 revision=state['revision'], rows=len(state['rows']), date_min=min(dates, default=None),
                 date_max=max(dates, default=None), duplicate_original_keys=0, aggregates=aggregates,

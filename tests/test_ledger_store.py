@@ -70,6 +70,13 @@ class StoreTests(unittest.TestCase):
                 'reviewed_at': '2026-10-18T10:00:00+08:00', 'reason': '合成验证',
                 'confirmation_source': '测试指令'}
 
+    def income(self, order, amount='8000.00', **changes):
+        """Audited income: received amount is 原始金额, zero counted amount, no pool."""
+        return row(order, amount, **{'收支方向': '收入', '统计口径': 'INCOME',
+                                     '计入消费金额': '0.00', '净支出候选': '0.00',
+                                     '资金池': '', '主分类': '工资薪酬',
+                                     '最终财务事件': 'income', **changes})
+
     def test_import_preflight_exposes_classification_coverage_without_forcing_a_pool(self):
         pending=row('pool-pending',**{'资金池':'待归类','主分类':'餐饮'})
         known=row('pool-known',**{'资金池':'运行账户','主分类':'餐饮'})
@@ -378,6 +385,45 @@ class StoreTests(unittest.TestCase):
                   'reason': '明确核实为零', 'confirmation_source': '测试确认'}
         store.import_reviewed(self.db, self.approved(updates=[update]), apply=True)
         self.assertEqual(store.read_state(self.db)['rows'][0]['计入消费金额'], '0.00')
+
+    def test_income_import_audit_inspect_and_history_stability(self):
+        report = store.inspect(self.db)
+        self.assertEqual(report['aggregates']['2026-09']['incomeCents'], '0.00')
+        self.assertEqual(report['aggregates']['2026-09']['incomeCount'], 0)
+        before = store.read_state(self.db)
+        result = store.import_reviewed(self.db, self.approved([self.income('inc-001')]), apply=True)
+        self.assertTrue(result['applied'])
+        self.assertEqual(result['classificationReview']['consumptionRecords'], 0)
+        state = store.read_state(self.db)
+        self.assertEqual(len(state['rows']), 2)
+        self.assertEqual(state['rows'][:1], before['rows'])
+        month = store.inspect(self.db)['aggregates']['2026-09']
+        self.assertEqual(month['incomeCents'], '8000.00')
+        self.assertEqual(month['incomeCount'], 1)
+        self.assertEqual(month['personal'], '10.00')
+        self.assertEqual(month['total'], '10.00')
+        self.assertTrue(store.verify(self.db)['ok'])
+
+    def test_income_validation_rejects_consumption_amount_pool_refund_and_blank_category(self):
+        before = store.read_state(self.db)
+        cases = [{'计入消费金额': '5.00'}, {'资金池': account.POOLS[0]},
+                 {'退款调整': '100.00'}, {'主分类': ''}]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    store.import_reviewed(self.db, self.approved([self.income('inc-bad', **changes)]), apply=True)
+                self.assertEqual(store.read_state(self.db), before)
+
+    def test_negative_income_reversal_nets_with_linked_original(self):
+        store.import_reviewed(self.db, self.approved([self.income('inc-001')]), apply=True)
+        original = next(r for r in store.read_state(self.db)['rows'] if r['交易订单号'] == 'inc-001')
+        reversal = self.income('inc-002', '-300.00', **{'最终财务事件': 'income_reversal',
+                    '关联记录ID': original['记录ID'], '语义说明': '工资更正，关联原收入行'})
+        store.import_reviewed(self.db, self.approved([reversal]), apply=True)
+        month = store.inspect(self.db)['aggregates']['2026-09']
+        self.assertEqual(month['incomeCents'], '7700.00')
+        self.assertEqual(month['incomeCount'], 2)
+        self.assertTrue(store.verify(self.db)['ok'])
 
     def test_fresh_reapproval_after_reversal_gets_new_revision_and_batch(self):
         identity = store.read_state(self.db)['rows'][0]['记录ID']

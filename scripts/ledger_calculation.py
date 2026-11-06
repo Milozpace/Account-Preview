@@ -65,6 +65,30 @@ def aggregate(rows):
     return months
 
 
+def income_aggregate(rows):
+    """Independent monthly income totals from audited INCOME rows.
+
+    The received amount is exactly 原始金额: no consumption column, no
+    refund-adjustment netting (store validation rejects 退款调整 on income
+    rows). Reversals are negative income rows and net naturally in the sum.
+    Income never enters consumption, pools or the four-pool budget math.
+    """
+    months = {}
+    for row in rows:
+        if account.text(row.get('统计口径')).upper() != 'INCOME':
+            continue
+        month = month_key(account.timestamp(row['交易时间']))
+        item = months.setdefault(month, {'incomeCents': 0, 'count': 0,
+                                         'categories': defaultdict(int)})
+        amount = cents(row.get('原始金额'))
+        item['incomeCents'] += amount
+        item['count'] += 1
+        item['categories'][account.text(row.get('主分类')) or '未填写分类'] += amount
+    for item in months.values():
+        item['categories'] = dict(item['categories'])
+    return months
+
+
 def calculate_month(state, month, calendar_month):
     """Return the native-shaped calculation contract consumed by build_month."""
     month, calendar_month = month_key(month), month_key(calendar_month)
@@ -136,4 +160,7 @@ def calculate_month(state, month, calendar_month):
     summary.update(safetyCents=safety, monthlyBudgetCents=sum(budget.values()),
                    openingBudgetCents=sum(opening.values()), availableCents=sum(p['availableCents'] for p in pools),
                    overrunCents=sum(p['overrunCents'] for p in pools))
-    return dict(summary=summary, pools=pools, daily=daily, categories=dict(categories), mechanismActive=active)
+    income = income_aggregate(state['rows']).get(
+        month, {'incomeCents': 0, 'count': 0, 'categories': {}})
+    return dict(summary=summary, pools=pools, daily=daily, categories=dict(categories),
+                mechanismActive=active, income=income)
