@@ -20,6 +20,8 @@ class ReleaseTests(unittest.TestCase):
         root.mkdir(exist_ok=True)
         shutil.copyfile(ROOT/'release.json', root/'release.json')
         (root/'README.md').write_text('Source at fixed commit.\n', encoding='utf-8')
+        (root/'scripts').mkdir()
+        (root/'scripts/app_export.py').write_text('SCHEMA_VERSION = 3\n',encoding='utf-8')
         (root/'templates').mkdir()
         (root/'templates/notes.md').write_text('Release heading with empty sections.', encoding='utf-8')
         if skill:
@@ -57,6 +59,7 @@ class ReleaseTests(unittest.TestCase):
             result = release.prepare_release(root, assets, commit, notes)
             manifest = json.loads((assets/'release-manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['commit'], commit)
+            self.assertEqual(manifest['snapshotSchema'],3)
             self.assertEqual(set(manifest['profiles']), {'preview'})
             self.assertEqual(len(result['assets']), 7)
             self.assertEqual(manifest['source']['sha256'], release.sha(assets/manifest['source']['asset']))
@@ -112,7 +115,7 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'公开|附件|个人'):
                     release.prepare_release(root,assets,commit,notes)
 
-    def test_personal_local_package_has_independent_version_and_verifiable_public_source(self):
+    def test_personal_local_package_shares_product_version_and_verifiable_source(self):
         from scripts import product_update
         with tempfile.TemporaryDirectory() as folder:
             # macOS temporary directories may start at the /var -> /private/var alias.
@@ -121,22 +124,25 @@ class ReleaseTests(unittest.TestCase):
             parent=Path(folder).resolve();root=parent/'repo';commit=self.repository(root)
             version_file=parent/'personal-version.json'
             version_file.write_text('{"version":"0.3.16","androidVersionCode":3016}')
+            source=json.loads((root/'release.json').read_text())
             assets=parent/'personal-assets';assets.mkdir()
             binary=parent/'bin';binary.mkdir()
             for name in ['ledger_cli','bill_inbox_cli','sync_diagnose']:(binary/(name+'.exe')).write_bytes(b'fixture')
             for platform,suffix in [('windows-x64','.exe'),('android-arm64','.apk')]:
                 installer=parent/('fixture'+suffix);installer.write_bytes(b'fixture')
-                release.bundle(platform,binary,installer,assets/f'Account-Personal-0.3.16-{platform}.zip',
+                release.bundle(platform,binary,installer,assets/f"Account-Personal-{source['version']}-{platform}.zip",
                                profile='personal',root=root,commit=commit,personal_version_file=version_file)
             notes=parent/'notes.md';notes.write_text('User local update notes')
             result=release.prepare_release(root,assets,commit,notes,'personal-local',version_file)
             manifest=json.loads((assets/'release-manifest.json').read_text())
-            self.assertEqual(manifest['version'],'0.3.16');self.assertEqual(manifest['nativeVersion'],'0.3.16')
+            for key in ('version','nativeVersion','androidVersionCode'):
+                self.assertEqual(manifest[key],source[key])
+            self.assertEqual(manifest['versionPolicy'],'unified')
             self.assertEqual(manifest['sourceVersion'],json.loads((root/'release.json').read_text())['version'])
             self.assertEqual(set(manifest['profiles']),{'personal'});self.assertEqual(len(result['assets']),5)
             self.assertIsNone(manifest['tag'])
             validated=product_update.validate_release(assets,'personal','windows-x64')
-            self.assertEqual(validated[0]['version'],'0.3.16')
+            self.assertEqual(validated[0]['version'],source['version'])
             with self.assertRaises(ValueError):product_update.validate_release(assets,'preview','windows-x64')
             with self.assertRaises(ValueError):release.public_assets(root,assets,commit,notes)
 
@@ -153,6 +159,18 @@ class ReleaseTests(unittest.TestCase):
             with zipfile.ZipFile(path, 'w') as archive:
                 for name, content in members.items(): archive.writestr(name, content)
             with self.assertRaisesRegex(ValueError, '哈希'): release.verify_bundle(path, data, 'preview', 'windows-x64', commit)
+
+    def test_bundle_rejects_unprepared_generated_product_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder);root=parent/'repo';commit=self.repository(root)
+            for name in release.product_version.VERSION_FILES:
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,path)
+            release.product_version.sync(root)
+            package=root/'app/package.json'
+            value=json.loads(package.read_text());value['version']='0.3.18';package.write_text(json.dumps(value))
+            installer=parent/'fixture.apk';installer.write_bytes(b'fixture')
+            with self.assertRaisesRegex(ValueError,'版本|生成'):
+                release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit=commit)
 
     def test_prepare_rejects_source_archive_from_another_commit(self):
         self.assertTrue(hasattr(release, 'prepare_release'), 'release preparation missing')

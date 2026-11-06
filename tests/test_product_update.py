@@ -207,6 +207,214 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
 
 
 
+class UnifiedProductVersionTests(ProductUpdateFixture, unittest.TestCase):
+    def archive_old_preview(self):
+        self.adopt()
+        stage=self.root/'.runtime/product/releases/0.4.0-preview.4';stage.mkdir(parents=True)
+        old=dict(version='0.4.0-preview.4',tag='v0.4.0-preview.4',channel='private-preview',
+                 nativeVersion='0.4.4',androidVersionCode=4004)
+        source=stage/'source.zip'
+        with zipfile.ZipFile(source,'w') as archive:archive.writestr('release.json',json.dumps(old))
+        manifest=dict(version=old['version'],nativeVersion=old['nativeVersion'],commit='b'*40,
+                      source={'asset':'source.zip','sha256':sha(source.read_bytes())})
+        raw=json.dumps(manifest).encode();(stage/'release-manifest.json').write_bytes(raw)
+        state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state.update(version=old['version'],commit=manifest['commit'],manifestSha256=sha(raw))
+        state_path.write_text(json.dumps(state))
+        return source
+
+    def unified_release(self, version='0.4.0-preview.5', native='0.4.5', code=4005):
+        product=dict(version=version,tag='v'+version,channel='private-preview',
+                     nativeVersion=native,androidVersionCode=code)
+        manifest=self.release(version=version,native_version=native,
+                              source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode(),
+                                      'scripts/app_export.py':b'SCHEMA_VERSION = 3\n'},
+                              versionPolicy='unified',distribution='personal-local',sourceVersion=version,
+                              tag=None,channel='personal-local',androidVersionCode=code,snapshotSchema=3)
+        bundle=self.assets/'bundle.zip'
+        with zipfile.ZipFile(bundle) as archive:contents={n:archive.read(n) for n in archive.namelist()}
+        inner=json.loads(contents['manifest.json'])
+        inner.update(versionPolicy='unified',distribution='personal-local',sourceVersion=version,androidVersionCode=code)
+        contents['manifest.json']=json.dumps(inner).encode()
+        with zipfile.ZipFile(bundle,'w') as archive:
+            for name,data in contents.items():archive.writestr(name,data)
+        manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+        (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+        return manifest
+
+    def test_personal_0318_upgrades_to_unified_product_and_records_install_numbers(self):
+        self.adopt()
+        state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state['version']='0.3.18';state['sourceVersion']='0.4.0-preview.4';state['androidVersionCode']=3018
+        state_path.write_text(json.dumps(state))
+        self.unified_release()
+        self.assertTrue(self.update(apply=True)['ok'])
+        saved=json.loads(state_path.read_text())
+        self.assertEqual(saved['version'],'0.4.0-preview.5')
+        self.assertEqual(saved['nativeVersion'],'0.4.5');self.assertEqual(saved['androidVersionCode'],4005)
+
+    def test_manual_local_stable_or_rc_does_not_expand_remote_subscription(self):
+        for version in ('0.4.0-rc.1','0.4.0'):
+            with self.subTest(version=version):
+                self.unified_release(version)
+                self.assertEqual(updater.validate_release(self.assets,'personal','windows-x64')[0]['version'],version)
+        choices=[{'tag_name':'v0.4.0-preview.5','draft':False},
+                 {'tag_name':'v9.0.0-rc.1','draft':False},{'tag_name':'v9.0.0','draft':False}]
+        self.assertEqual(updater.select_release(choices)['tag_name'],'v0.4.0-preview.5')
+
+    def test_unified_index_cannot_lie_about_source_native_or_android_code(self):
+        for field,value in (('nativeVersion','0.4.6'),('androidVersionCode',4006),('sourceVersion','0.4.0-preview.4')):
+            with self.subTest(field=field):
+                manifest=self.unified_release();manifest[field]=value
+                (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):updater.validate_release(self.assets,'personal','windows-x64')
+
+    def test_unified_stable_cannot_be_disguised_as_legacy_by_removing_markers(self):
+        for keep_inner in (True,False):
+            with self.subTest(keep_inner=keep_inner):
+                manifest=self.unified_release(version='0.4.0')
+                manifest.pop('versionPolicy');manifest.update(nativeVersion='0.4.0',androidVersionCode=1)
+                bundle=self.assets/'bundle.zip'
+                with zipfile.ZipFile(bundle) as archive:contents={name:archive.read(name) for name in archive.namelist()}
+                inner=json.loads(contents['manifest.json']);inner['nativeVersion']='0.4.0'
+                if not keep_inner:inner.pop('versionPolicy')
+                contents['manifest.json']=json.dumps(inner).encode()
+                with zipfile.ZipFile(bundle,'w') as archive:
+                    for name,data in contents.items():archive.writestr(name,data)
+                manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+                (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):updater.validate_release(self.assets,'personal','windows-x64')
+
+    def test_first_adoption_cannot_ignore_known_personal_installation_floor(self):
+        self.adopt()
+        (self.root/'local/personal-version.json').write_text('{"version":"0.3.18","androidVersionCode":5000}')
+        self.unified_release()
+        for apply in (False,True):
+            with self.subTest(apply=apply), self.assertRaisesRegex(ValueError,'安装|递增|降级'):
+                self.update(apply=apply)
+        self.assertEqual(self.installs,[])
+
+    def test_first_adoption_cannot_downgrade_known_personal_product_version(self):
+        self.adopt()
+        (self.root/'local/personal-version.json').write_text('{"version":"0.3.18","androidVersionCode":3018}')
+        self.unified_release(version='0.3.17',native='0.4.5',code=4005)
+        for apply in (False,True):
+            with self.subTest(apply=apply), self.assertRaisesRegex(ValueError,'产品版本.*降级|降级.*产品版本'):
+                self.update(apply=apply)
+        self.assertEqual(self.installs,[])
+
+    def test_old_preview_android_floor_comes_from_authenticated_old_source(self):
+        self.archive_old_preview()
+        self.unified_release(code=4001)
+        with self.assertRaisesRegex(ValueError,'安装|递增|降级'):self.update()
+        self.assertEqual(self.installs,[])
+
+    def test_unknown_old_android_floor_is_not_taken_from_current_root_source(self):
+        old_source=self.archive_old_preview();old_source.unlink()
+        (self.root/'release.json').write_text('{"nativeVersion":"0.4.4","androidVersionCode":4004}')
+        state_path=self.root/updater.STATE;state=json.loads(state_path.read_text())
+        state['managed']['release.json']=sha((self.root/'release.json').read_bytes());state_path.write_text(json.dumps(state))
+        self.unified_release()
+        with self.assertRaisesRegex(ValueError,'Android.*基线|先前.*源码|归档'):self.update()
+
+    def test_authenticated_old_source_android_floor_allows_actual_upgrade(self):
+        self.archive_old_preview();self.unified_release()
+        self.assertTrue(self.update()['ok'])
+
+    def test_legacy_public_index_without_code_uses_its_bound_source_install_number(self):
+        self.archive_old_preview()
+        product=dict(version='0.4.0-preview.5',tag='v0.4.0-preview.5',channel='private-preview',
+                     nativeVersion='0.4.5',androidVersionCode=4005)
+        self.release(version=product['version'],native_version=product['nativeVersion'],
+                     source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode()})
+        result=self.update(apply=True)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(json.loads((self.root/updater.STATE).read_text())['androidVersionCode'],4005)
+
+    def test_first_adoption_allows_a_build_above_known_personal_installation_floor(self):
+        self.adopt()
+        (self.root/'local/personal-version.json').write_text('{"version":"0.3.18","androidVersionCode":4004}')
+        self.unified_release()
+        self.assertTrue(self.update()['ok'])
+
+    def test_public_legacy_index_cannot_disagree_with_source_installation_numbers(self):
+        product=dict(version='0.4.0-preview.5',tag='v0.4.0-preview.5',channel='private-preview',
+                     nativeVersion='0.4.5',androidVersionCode=4005)
+        self.release(version=product['version'],native_version=product['nativeVersion'],androidVersionCode=1,
+                     source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode()})
+        with self.assertRaisesRegex(ValueError,'安装版本|序号'):updater.validate_release(self.assets,'personal','windows-x64')
+
+    def test_tampered_old_source_cannot_supply_android_floor(self):
+        old_source=self.archive_old_preview();old_source.write_bytes(b'fake')
+        self.unified_release()
+        with self.assertRaisesRegex(ValueError,'哈希|源码'):self.update()
+
+    def test_product_upgrade_cannot_lower_or_reuse_installer_numbers(self):
+        self.adopt();state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text())
+        state.update(version='0.4.0-preview.4',nativeVersion='0.4.4',androidVersionCode=4004)
+        state_path.write_text(json.dumps(state))
+        for native,code in (('0.4.3',4005),('0.4.4',4005),('0.4.5',4004)):
+            with self.subTest(native=native,code=code):
+                self.unified_release(native=native,code=code)
+                with self.assertRaisesRegex(ValueError,'安装|递增|降级'):self.update(apply=True)
+        self.assertEqual(self.installs,[])
+
+    def test_legacy_personal_config_also_protects_android_installation_order(self):
+        self.adopt();state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state['version']='0.3.18';state_path.write_text(json.dumps(state))
+        (self.root/'local/personal-version.json').write_text('{"version":"0.3.18","androidVersionCode":4006}')
+        self.unified_release()
+        with self.assertRaisesRegex(ValueError,'安装|递增|降级'):self.update(apply=True)
+        self.assertEqual(self.installs,[])
+
+    def test_schema_three_index_matches_actual_source_contract(self):
+        manifest=self.unified_release()
+        self.assertEqual(updater.validate_release(self.assets,'personal','windows-x64')[0]['snapshotSchema'],3)
+        manifest['snapshotSchema']=2
+        (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError,'schema|快照'):updater.validate_release(self.assets,'personal','windows-x64')
+
+    def test_unmarked_legacy_index_cannot_bypass_known_installer_baseline(self):
+        self.adopt();state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state.update(version='0.4.0-preview.4',nativeVersion='0.4.4',androidVersionCode=4004)
+        state_path.write_text(json.dumps(state))
+        self.release(version='0.4.0-preview.5',native_version='0.4.3',androidVersionCode=4005)
+        with self.assertRaisesRegex(ValueError,'安装|递增|降级'):self.update(apply=True)
+        self.assertEqual(self.installs,[])
+
+    def test_old_preview_installer_baseline_is_recovered_from_authenticated_index(self):
+        self.adopt();state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text())
+        old=dict(version='0.4.0-preview.4',nativeVersion='0.4.4',androidVersionCode=4004,commit='b'*40)
+        raw=json.dumps(old).encode()
+        index=self.root/'.runtime/product/releases/0.4.0-preview.4/release-manifest.json'
+        index.parent.mkdir(parents=True);index.write_bytes(raw)
+        state.update(version=old['version'],commit=old['commit'],manifestSha256=sha(raw))
+        state_path.write_text(json.dumps(state))
+        self.unified_release()
+        self.assertTrue(self.update()['ok'])
+        index.write_text('{}')
+        with self.assertRaisesRegex(ValueError,'哈希'):self.update(apply=True)
+        self.assertEqual(self.installs,[])
+
+    def test_missing_old_preview_installer_baseline_is_not_guessed(self):
+        self.adopt();state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text());state['version']='0.4.0-preview.4';state_path.write_text(json.dumps(state))
+        self.unified_release()
+        with self.assertRaisesRegex(ValueError,'基线'):self.update(apply=True)
+
+    def test_literal_schema_inspection_does_not_execute_source(self):
+        source={'scripts/app_export.py':b'import unavailable_release_dependency\nSCHEMA_VERSION = 3\n'}
+        self.assertEqual(updater.source_snapshot_schema(source,required=True),3)
+        for content in (b'SCHEMA_VERSION = 4\n',b'SCHEMA_VERSION = 3\nSCHEMA_VERSION = 2\n',
+                        b'SCHEMA_VERSION = run_code()\n',b'SCHEMA_VERSION = True\n'):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                updater.source_snapshot_schema({'scripts/app_export.py':content},required=True)
+        self.release(source={'scripts/shared.py':b'new','scripts/app_export.py':b'SCHEMA_VERSION = 2\n'})
+        self.assertEqual(updater.validate_release(self.assets,'personal','windows-x64')[0]['snapshotSchema'],2)
+
+
 class ProductUpdateHardeningTests(ProductUpdateFixture, unittest.TestCase):
     def test_bundle_inner_identity_and_commit_must_match_outer(self):
         self.adopt(); self.release()

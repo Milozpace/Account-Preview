@@ -388,7 +388,7 @@ class StoreTests(unittest.TestCase):
 
     def test_income_import_audit_inspect_and_history_stability(self):
         report = store.inspect(self.db)
-        self.assertEqual(report['aggregates']['2026-09']['incomeCents'], '0.00')
+        self.assertEqual(report['aggregates']['2026-09']['incomeCents'], 0)
         self.assertEqual(report['aggregates']['2026-09']['incomeCount'], 0)
         before = store.read_state(self.db)
         result = store.import_reviewed(self.db, self.approved([self.income('inc-001')]), apply=True)
@@ -398,7 +398,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(state['rows']), 2)
         self.assertEqual(state['rows'][:1], before['rows'])
         month = store.inspect(self.db)['aggregates']['2026-09']
-        self.assertEqual(month['incomeCents'], '8000.00')
+        self.assertEqual(month['incomeCents'], 800000)
         self.assertEqual(month['incomeCount'], 1)
         self.assertEqual(month['personal'], '10.00')
         self.assertEqual(month['total'], '10.00')
@@ -421,8 +421,44 @@ class StoreTests(unittest.TestCase):
                     '关联记录ID': original['记录ID'], '语义说明': '工资更正，关联原收入行'})
         store.import_reviewed(self.db, self.approved([reversal]), apply=True)
         month = store.inspect(self.db)['aggregates']['2026-09']
-        self.assertEqual(month['incomeCents'], '7700.00')
+        self.assertEqual(month['incomeCents'], 770000)
         self.assertEqual(month['incomeCount'], 2)
+
+    def test_income_reversal_requires_negative_amount_and_original_income_link(self):
+        store.import_reviewed(self.db, self.approved([self.income('original', '100.00')]), apply=True)
+        rows = store.read_state(self.db)['rows']
+        original = rows[-1]['记录ID']
+        purchase = rows[0]['记录ID']
+        cases = [('-20.00', {'最终财务事件': 'income_reversal'}),
+                 ('-20.00', {'最终财务事件': 'income_reversal', '关联记录ID': purchase}),
+                 ('20.00', {'最终财务事件': 'income_reversal', '关联记录ID': original}),
+                 ('0.00', {'最终财务事件': 'income_reversal', '关联记录ID': original}),
+                 ('-20.00', {'最终财务事件': 'income', '关联记录ID': original})]
+        before = store.source_hash(self.db)
+        for index, (amount, changes) in enumerate(cases):
+            with self.subTest(index=index), self.assertRaisesRegex(ValueError, '收入'):
+                store.import_reviewed(self.db, self.approved([
+                    self.income('invalid-'+str(index), amount, **changes)]), apply=True)
+            self.assertEqual(store.source_hash(self.db), before)
+        reversal = self.income('valid-reversal', '-20.00', **{
+            '最终财务事件': 'income_reversal', '关联记录ID': original})
+        store.import_reviewed(self.db, self.approved([reversal]), apply=True)
+        with self.assertRaisesRegex(ValueError, '收入'):
+            store.import_reviewed(self.db, self.approved([self.income('chained', '-10.00', **{
+                '最终财务事件': 'income_reversal', '关联记录ID': reversal['记录ID']})]), apply=True)
+
+    def test_income_reversal_updates_cannot_remove_required_link(self):
+        original = self.income('original-update', '100.00')
+        reversal = self.income('reversal-update', '-20.00', **{
+            '最终财务事件': 'income_reversal', '关联记录ID': original['记录ID']})
+        store.import_reviewed(self.db, self.approved([original, reversal]), apply=True)
+        before = store.source_hash(self.db)
+        update = {'记录ID': reversal['记录ID'], 'changes': {'关联记录ID': ''},
+                  'reason': '合成检查关联约束', 'confirmation_source': '合成测试'}
+        with self.assertRaisesRegex(ValueError, '收入'):
+            store.import_reviewed(self.db, self.approved(updates=[update]), apply=True)
+        self.assertEqual(store.source_hash(self.db), before)
+        self.assertTrue(store.verify(self.db)['ok'])
         self.assertTrue(store.verify(self.db)['ok'])
 
     def test_fresh_reapproval_after_reversal_gets_new_revision_and_batch(self):

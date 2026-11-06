@@ -6,14 +6,14 @@ import { describe, expect, it } from 'vitest';
 import {
   availableMonths, beijingMonth, categoryOptions, coverageNote, emptyFilters, filterRecords,
   homeCards, monthLabel, poolRow, previousOfMonth, recordDetail, recordRow, resolveMonth,
-  type AppV2Snapshot,
+  type AppSnapshot,
 } from './bills';
 import { sampleSnapshot } from './sample';
 import sharedFixtureJson from '../../tests/fixtures/app-v2-snapshot.json';
 import historyFixtureJson from '../../tests/fixtures/app-v2-history-snapshot.json';
 
 /** The exact file the Python and Rust suites load (three-end shared fixture). */
-const sharedFixture = sharedFixtureJson as unknown as AppV2Snapshot;
+const sharedFixture = sharedFixtureJson as unknown as AppSnapshot;
 
 const october = sampleSnapshot.months[0];
 
@@ -27,7 +27,7 @@ function makeRecord(overrides: Partial<Parameters<typeof recordRow>[0]> = {}) {
 
 describe('month coverage', () => {
   it('retains September selection in the November tracked snapshot', () => {
-    const history=historyFixtureJson as unknown as AppV2Snapshot;
+    const history=historyFixtureJson as unknown as AppSnapshot;
     expect(availableMonths(history)).toEqual(['2026-11','2026-10','2026-09']);
     expect(resolveMonth(history,'2026-09')).toBe('2026-09');
     expect(monthLabel('2026-09',new Date('2026-11-01T12:00:00+08:00'))).toBe('2026 年 9 月');

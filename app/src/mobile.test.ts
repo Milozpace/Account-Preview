@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { homeHtml, analysisHtml, billsHtml, poolHtml, myHtml, onboardingHtml, dateInspectionHtml, recordInspectionHtml } from './mobile';
 import { emptyQuery } from './navigation';
 import fixture from '../../tests/fixtures/app-v2-snapshot.json';
-import type { AppV2Month } from './bills';
+import type { AppMonth } from './bills';
 
-const month = fixture.months[0] as unknown as AppV2Month;
+const month = fixture.months[0] as unknown as AppMonth;
 describe('mobile presentation', () => {
   it('keeps export in My and preserves the overview layout',()=>{
     expect(myHtml(fixture as never,'已同步')).toContain('data-open="export"');

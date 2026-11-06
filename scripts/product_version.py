@@ -7,7 +7,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILES = ['app/package.json', 'app/package-lock.json', 'app/src-tauri/Cargo.toml',
-                 'app/src-tauri/Cargo.lock', 'app/src-tauri/tauri.conf.json']
+                 'app/src-tauri/Cargo.lock', 'app/src-tauri/tauri.conf.json',
+                 'dashboard/package.json', 'dashboard/package-lock.json', 'pyproject.toml']
 PROFILES = {
     'preview': {'identifier': 'com.account.preview', 'desktopConfig': 'AccountPreview',
                 'productName': 'Account Preview',
@@ -19,9 +20,12 @@ PROFILES = {
 
 def version_key(value):
     if not isinstance(value, str): raise ValueError('版本须为字符串。')
-    match = re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.([1-9]\d*)', value or '')
-    if not match: raise ValueError('版本须为 X.Y.Z-preview.N。')
-    return tuple(map(int, match.groups()))
+    match = re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|preview|rc)\.(0|[1-9]\d*))?', value)
+    if not match or (match[4] == 'preview' and match[5] == '0'):
+        raise ValueError('版本须为 X.Y.Z 或 X.Y.Z-{alpha,beta,rc,preview}.N；preview 序号从 1 开始。')
+    # This supported SemVer subset orders legacy preview lexically between beta and rc.
+    return (*map(int, match.group(1, 2, 3)),
+            {'alpha':0, 'beta':1, 'preview':2, 'rc':3, None:4}[match[4]], int(match[5] or 0))
 
 
 def native_key(value):
@@ -61,7 +65,8 @@ def load(root=ROOT):
 
 def generated(root, data):
     root = Path(root); result = {}
-    for name in ['app/package.json', 'app/package-lock.json', 'app/src-tauri/tauri.conf.json']:
+    for name in ['app/package.json', 'app/package-lock.json', 'app/src-tauri/tauri.conf.json',
+                 'dashboard/package.json', 'dashboard/package-lock.json']:
         obj = json.loads((root/name).read_text(encoding='utf-8'))
         obj['version'] = data['nativeVersion'] if name.endswith('tauri.conf.json') else data['version']
         if name.endswith('package-lock.json'): obj['packages']['']['version'] = data['version']
@@ -72,6 +77,15 @@ def generated(root, data):
         changed, count = re.subn(pattern, lambda m: m[1] + data['version'] + m[2], content)
         if count != 1: raise ValueError('无法唯一定位 app Cargo 版本：' + name)
         result[name] = changed
+    content = (root/'pyproject.toml').read_text(encoding='utf-8')
+    version = data['version']
+    for label, suffix in [('preview', '.dev'), ('alpha', 'a'), ('beta', 'b'), ('rc', 'rc')]:
+        version = version.replace('-'+label+'.', suffix)
+    # package=false: this is a PEP 440 syntax adapter, never a product ordering key.
+    changed, count = re.subn(r'(?m)(^\[project\]\n(?:(?!\[)[^\n]*\n)*?version = ")[^"]+("$)',
+                             lambda match: match[1]+version+match[2], content)
+    if count != 1: raise ValueError('无法唯一定位 Python 项目版本。')
+    result['pyproject.toml'] = changed
     properties = root/'app/src-tauri/gen/android/app/tauri.properties'
     if properties.exists():
         result[properties.relative_to(root).as_posix()] = (

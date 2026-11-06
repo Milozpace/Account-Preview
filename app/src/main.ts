@@ -7,7 +7,7 @@ import { PairingQrController } from './pairing-qr';
 import { PairingScanSession } from './pairing-scan';
 import './pairing-scan.css';
 import { RefreshController } from './refresh';
-import { availableMonths, coverageNote, getMonth, monthLabel, resolveMonth, type AppV2Snapshot } from './bills';
+import { availableMonths, coverageNote, getMonth, monthLabel, resolveMonth, type AppSnapshot } from './bills';
 import { sampleSnapshot } from './sample';
 import { dateTitle, escapeHtml, money, shanghaiToday } from '../../dashboard/src/helpers';
 import { dashboardHtml } from '../../dashboard/src/view';
@@ -37,18 +37,18 @@ import './bill-upload.css';
 import {BillUploadRefresh} from './bill-upload-refresh';
 
 interface LedgerStatusSummary { initialized:boolean;publishEnabled:boolean;cachedRevision:number|null;pendingRevision:number|null;lastPublishedRevision:number|null }
-interface LedgerCacheOutcome { revision:number;snapshot:AppV2Snapshot }
-type LedgerFetchOutcome = {kind:'updated'|'latest';revision:number;snapshot:AppV2Snapshot;warning?:string}|{kind:'cloud-empty';hasCache:boolean};
+interface LedgerCacheOutcome { revision:number;snapshot:AppSnapshot }
+type LedgerFetchOutcome = {kind:'updated'|'latest';revision:number;snapshot:AppSnapshot;warning?:string}|{kind:'cloud-empty';hasCache:boolean};
 interface ProbeSyncSummary {configured:boolean;paired:boolean;pendingRevision:number|null}
 interface ProbeStatus {platform:string;cached:boolean;revision:number|null;syntheticRecords:number;storage:string;records:{id:string;label:string;amountMinor:number}[]|null}
 type SnapshotSource='none'|'cache'|'cloud'|'sample'|'file'|'local';
 interface DesktopConfig {projectRoot:string;pythonExecutable:string}
-interface DesktopSnapshot {snapshot:AppV2Snapshot|null;sourceChanged:boolean;monthChanged:boolean}
-interface DesktopRefresh {snapshot:AppV2Snapshot;sourceChanged:boolean;monthChanged:boolean;warning?:string;appPublish:{ok:boolean|null;published:boolean;skipped?:boolean;error?:string;reason?:string}}
+interface DesktopSnapshot {snapshot:AppSnapshot|null;sourceChanged:boolean;monthChanged:boolean}
+interface DesktopRefresh {snapshot:AppSnapshot;sourceChanged:boolean;monthChanged:boolean;warning?:string;appPublish:{ok:boolean|null;published:boolean;skipped?:boolean;error?:string;reason?:string}}
 
 const nav=new Navigation();
 const state={
-  view:'home' as Screen['view'],snapshot:null as AppV2Snapshot|null,source:'none' as SnapshotSource,revision:null as number|null,
+  view:'home' as Screen['view'],snapshot:null as AppSnapshot|null,source:'none' as SnapshotSource,revision:null as number|null,
   selectedMonth:null as string|null,detailId:null as string|null,message:'',messageTone:'' as ''|'tone-warn'|'tone-error',
   ledger:null as LedgerStatusSummary|null,probeConfigured:false,probePaired:false,
   android:typeof navigator!=='undefined'&&/Android/i.test(navigator.userAgent),busy:false,version:'',
@@ -486,7 +486,7 @@ function syncHtml(): string {
 function diagnosticsHtml(): string {
   return `<section class="view settings">
     <div class="card-block"><h3 style="margin:0 0 8px">本地快照核验（开发）</h3>
-      <p>读取一个 App V2 快照导出文件，经与加密通道相同的契约校验后在本机显示。不使用账本身份、不写入缓存、不连接云端。</p>
+      <p>读取一个 App V3 快照导出文件，经与加密通道相同的契约校验后在本机显示。不使用账本身份、不写入缓存、不连接云端。</p>
       <form id="inspect-form">
         <label for="inspect-path">快照导出文件路径</label>
         <input id="inspect-path" name="inspect-path" autocomplete="off" spellcheck="false" placeholder="…\\snapshot-v2.json">
@@ -508,7 +508,7 @@ function diagnosticsHtml(): string {
 }
 
 
-function applySnapshot(snapshot: AppV2Snapshot, source: SnapshotSource, revision: number | null): void {
+function applySnapshot(snapshot: AppSnapshot, source: SnapshotSource, revision: number | null): void {
   const previousMonth=state.selectedMonth;
   state.snapshot = snapshot;
   state.source = source;
@@ -787,7 +787,7 @@ async function onInspectSubmit(event: Event): Promise<void> {
   }
   let inspected = false;
   await withBusy(async () => {
-    const snapshot = await invoke<AppV2Snapshot>('ledger_inspect_snapshot', { path });
+    const snapshot = await invoke<AppSnapshot>('ledger_inspect_snapshot', { path });
     applySnapshot(snapshot, 'file', null);
     state.message = '本地快照核验通过：契约校验完成，按未上云数据显示。';
     state.messageTone = '';

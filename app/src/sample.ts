@@ -8,7 +8,7 @@
  * full daily calendars, integer pool/summary cents, usageRatio null exactly
  * when opening <= 0 — the Rust parser would reject anything looser.
  */
-import type { AppV2Snapshot } from './bills';
+import type { AppSnapshot } from './bills';
 
 function record(
   id: string, date: string, time: string, title: string, category: string,
@@ -142,7 +142,7 @@ const septemberCategories = Object.entries(
 const octoberSummary = summaryFor(octoberRecords, octoberStructural, octoberIncome, octoberPools);
 const septemberSummary = summaryFor(septemberRecords, septemberStructural, septemberIncome, septemberPools);
 
-export const sampleSnapshot: AppV2Snapshot = {
+export const sampleSnapshot: AppSnapshot = {
   schemaVersion: 3,
   snapshotKind: 'account-ledger-view',
   sourceHash: '0000000000000000000000000000000000000000000000000000000000000000',

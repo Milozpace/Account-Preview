@@ -1,10 +1,10 @@
-//! Business ledger identity and the App V2 snapshot contract.
+//! Business ledger identity and the App V3 snapshot contract.
 //!
 //! The live business identity is independent from the synthetic probe: its
 //! own secure-storage slots, cache files, and cloud directory. This module
 //! validates the exported `account-ledger-view` payload (schemaVersion 3);
 //! it never re-derives budget, rollover, or classification. Contract:
-//! `docs/App真实快照契约V2.md`.
+//! `docs/快照与月份.md`.
 #![forbid(unsafe_code)]
 
 use account_app_core::{
@@ -510,7 +510,16 @@ fn check_categories(
         {
             return Err(format!("{month} {label}与明细对账失败，已拒绝。"));
         }
-        total = checked_sum(total, category.amount_cents, &format!("{month} {label}合计"))?;
+        total = checked_sum(
+            total,
+            category.amount_cents,
+            &format!("{month} {label}合计"),
+        )?;
+    }
+    if seen.len() != by_category_count.len()
+        || by_category_count.keys().any(|name| !seen.contains(name))
+    {
+        return Err(format!("{month} {label}名称集合与明细不一致，已拒绝。"));
     }
     if total != expected_total {
         return Err(format!("{month} {label}合计与对应净额对账失败，已拒绝。"));
@@ -526,6 +535,13 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
     }
     let snapshot: LedgerSnapshot = serde_json::from_slice(plaintext)
         .map_err(|_| "账单快照不是受支持的 App V3 契约，已拒绝。".to_string())?;
+    validate_snapshot(snapshot)
+}
+
+// Shared typed reconciliation, independent of serialized wire size. Only the
+// public intake checks wire size; publication-only adapters do not add bytes to
+// the original payload and cannot expose their temporary snapshot to the UI.
+fn validate_snapshot(snapshot: LedgerSnapshot) -> Result<LedgerSnapshot, String> {
     if snapshot.schema_version != 3 || snapshot.snapshot_kind != SNAPSHOT_KIND {
         return Err("账单快照不是受支持的 App V3 契约，已拒绝。".into());
     }
@@ -692,10 +708,86 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
     Ok(snapshot)
 }
 
+// The old contract is accepted only as authenticated publication history. These
+// private DTOs enforce its exact field set (including duplicate-field rejection)
+// before sharing the reconciliation checks with V3. No upgraded value escapes.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct LegacySnapshot {
+    schema_version: u32,
+    snapshot_kind: String,
+    source_hash: String,
+    calendar_month: String,
+    generated_at: String,
+    source_last_recorded_at: Option<String>,
+    ledger_count: u64,
+    coverage: Coverage,
+    months: Vec<LegacyMonth>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct LegacyMonth {
+    month: String,
+    last_recorded_at: Option<String>,
+    mechanism_active: bool,
+    summary: LegacySummary,
+    pools: Vec<Pool>,
+    daily: Vec<DailyEntry>,
+    categories: Vec<Category>,
+    records: Vec<LedgerRecord>,
+    structural_records: Vec<LedgerRecord>,
+    top_ids: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct LegacySummary {
+    personal_cents: i64,
+    structural_cents: i64,
+    total_cents: i64,
+    unknown_cents: i64,
+    monthly_budget_cents: i64,
+    opening_budget_cents: i64,
+    available_cents: i64,
+    overrun_cents: i64,
+    safety_cents: i64,
+}
+
+/// Publication ownership/comparison only: consumer intake remains V3-only.
+/// A V2 payload proves old content is safe to supersede, never that its
+/// income is zero. This function deliberately cannot return a display value.
+pub(crate) fn validate_publication_payload(plaintext: &[u8]) -> Result<(), String> {
+    if plaintext.len() > account_app_core::MAX_SNAPSHOT_BYTES {
+        return Err("账单快照超过大小上限，已拒绝。".into());
+    }
+    let mut value: serde_json::Value = serde_json::from_slice(plaintext)
+        .map_err(|_| "账单快照不是有效 JSON，已拒绝。".to_string())?;
+    if value["schemaVersion"] != 2 {
+        return parse_payload(plaintext).map(|_| ());
+    }
+    serde_json::from_slice::<LegacySnapshot>(plaintext)
+        .map_err(|_| "旧账单快照不是受支持的 App V2 契约，已拒绝。".to_string())?;
+    // Internal reconciliation adapter only, discarded immediately after checks.
+    value["schemaVersion"] = serde_json::json!(3);
+    for month in value["months"].as_array_mut().ok_or("旧快照月份无效。")? {
+        month["incomeRecords"] = serde_json::json!([]);
+        month["incomeCategories"] = serde_json::json!([]);
+        month["summary"]["incomeCents"] = serde_json::json!(0);
+    }
+    let adapted: LedgerSnapshot =
+        serde_json::from_value(value).map_err(|_| "无法核验旧账单快照。".to_string())?;
+    validate_snapshot(adapted).map(|_| ())
+}
+
 /// Content signature: canonical JSON without `generatedAt`. Retries and
 /// re-exports of the same business content must never manufacture a new
 /// publish version; only this signature decides "same content".
 pub fn content_signature(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    validate_publication_payload(plaintext)?;
     let mut value: serde_json::Value = serde_json::from_slice(plaintext)
         .map_err(|_| "账单快照不是有效 JSON，已拒绝。".to_string())?;
     value
@@ -896,6 +988,24 @@ pub mod tests {
     }
 
     #[test]
+    fn zero_net_income_category_cannot_be_omitted() {
+        let mut value: serde_json::Value = serde_json::from_str(SHARED_FIXTURE).unwrap();
+        let original = value["months"][0]["incomeRecords"][0].clone();
+        let mut reversal = original.clone();
+        reversal["id"] = serde_json::json!("tx_income_reverse");
+        reversal["amountCents"] = serde_json::json!(-original["amountCents"].as_i64().unwrap());
+        value["months"][0]["incomeRecords"] = serde_json::json!([original.clone(), reversal]);
+        value["months"][0]["summary"]["incomeCents"] = serde_json::json!(0);
+        value["months"][0]["incomeCategories"] = serde_json::json!([
+            {"name": original["category"], "amountCents": 0, "count": 2}
+        ]);
+        value["ledgerCount"] = serde_json::json!(value["ledgerCount"].as_u64().unwrap() + 1);
+        assert!(parse_payload(value.to_string().as_bytes()).is_ok());
+        value["months"][0]["incomeCategories"] = serde_json::json!([]);
+        assert!(parse_payload(value.to_string().as_bytes()).is_err());
+    }
+
+    #[test]
     fn income_contract_rejects() {
         assert!(
             parse_payload(&mutate_payload(
@@ -922,9 +1032,9 @@ pub mod tests {
             .is_err()
         );
         assert!(
-            parse_payload(&mutate_payload(
-                |v| v["months"][0]["incomeCategories"][0]["amountCents"] = serde_json::json!(1)
-            ))
+            parse_payload(&mutate_payload(|v| v["months"][0]["incomeCategories"][0]
+                ["amountCents"] =
+                serde_json::json!(1)))
             .is_err()
         );
     }
@@ -1228,6 +1338,46 @@ pub mod tests {
     }
 
     #[test]
+    fn legacy_publication_validates_original_wire_size_at_limit() {
+        let mut value: serde_json::Value = serde_json::from_slice(&valid_payload()).unwrap();
+        value["schemaVersion"] = serde_json::json!(2);
+        for month in value["months"].as_array_mut().unwrap() {
+            month.as_object_mut().unwrap().remove("incomeRecords");
+            month.as_object_mut().unwrap().remove("incomeCategories");
+            month["summary"]
+                .as_object_mut()
+                .unwrap()
+                .remove("incomeCents");
+        }
+        value["sourceHash"] = serde_json::json!("");
+        let base_len = serde_json::to_vec(&value).unwrap().len();
+        for size in [
+            account_app_core::MAX_SNAPSHOT_BYTES - 1,
+            account_app_core::MAX_SNAPSHOT_BYTES,
+        ] {
+            value["sourceHash"] = serde_json::json!("a".repeat(size - base_len));
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert_eq!(bytes.len(), size);
+            assert!(
+                validate_publication_payload(&bytes).is_ok(),
+                "legal V2 wire size {size}"
+            );
+            // Publication history never becomes a consumer V3 snapshot.
+            assert!(parse_payload(&bytes).is_err());
+        }
+        value["sourceHash"] =
+            serde_json::json!("a".repeat(account_app_core::MAX_SNAPSHOT_BYTES + 1 - base_len));
+        let oversized = serde_json::to_vec(&value).unwrap();
+        assert_eq!(oversized.len(), account_app_core::MAX_SNAPSHOT_BYTES + 1);
+        assert!(
+            validate_publication_payload(&oversized)
+                .unwrap_err()
+                .contains("大小上限")
+        );
+        assert!(parse_payload(&oversized).unwrap_err().contains("大小上限"));
+    }
+
+    #[test]
     fn content_signature_ignores_generated_at_only() {
         let first = content_signature(&valid_payload()).unwrap();
         let second = content_signature(&mutate_payload(|v| {
@@ -1236,7 +1386,7 @@ pub mod tests {
         .unwrap();
         assert_eq!(first, second);
         let changed = content_signature(&mutate_payload(|v| {
-            v["months"][0]["records"][0]["amountCents"] = serde_json::json!(2000)
+            v["months"][0]["records"][0]["title"] = serde_json::json!("合成商户 · changed")
         }))
         .unwrap();
         assert_ne!(first, changed);

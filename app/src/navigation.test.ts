@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Navigation, emptyQuery, selectBills, groupDays } from './navigation';
 import fixture from '../../tests/fixtures/app-v2-snapshot.json';
-import type { AppV2Month } from './bills';
+import type { AppMonth } from './bills';
 
 describe('mobile navigation and return context', () => {
   it('returns from a category bill and record to the analysis context with scroll and filters', () => {
@@ -52,7 +52,7 @@ describe('mobile navigation and return context', () => {
     expect(nav.current.query?.date).toBe('');expect(nav.current.query?.category).toBe('餐饮');
   });
   it('clears unavailable category and date in every tab stack, preserving useful search and pool',()=>{
-    const nav=new Navigation(),month=fixture.months[0] as unknown as AppV2Month;
+    const nav=new Navigation(),month=fixture.months[0] as unknown as AppMonth;
     nav.open({view:'bills',query:{...emptyQuery(),category:'不存在的分类',date:'1900-01-01',query:'午餐',pool:'operation'}});
     nav.selectRoot('my');nav.open({view:'bills',query:{...emptyQuery(),category:month.records[0].category}});
     nav.reconcile(month,new Set(month.records.map(r=>r.id)));
@@ -61,7 +61,7 @@ describe('mobile navigation and return context', () => {
     expect(nav.current.query).toEqual({...emptyQuery(),query:'午餐',pool:'operation'});
   });
   it('retains a covered detail across months and prunes it when the record leaves coverage',()=>{
-    const nav=new Navigation(),month=fixture.months[0] as unknown as AppV2Month;
+    const nav=new Navigation(),month=fixture.months[0] as unknown as AppMonth;
     nav.open({view:'bills',query:emptyQuery()},20);nav.open({view:'detail',recordId:'covered-record'},180);
     nav.reconcile(month,new Set(['covered-record']));expect(nav.current.view).toBe('detail');
     nav.reconcile(month,new Set());expect(nav.current.view).toBe('bills');expect(nav.current.scroll).toBe(180);
@@ -69,7 +69,7 @@ describe('mobile navigation and return context', () => {
 });
 
 describe('bill query uses one consistent result set', () => {
-  const month = fixture.months[0] as unknown as AppV2Month;
+  const month = fixture.months[0] as unknown as AppMonth;
   it('combines date, category, pool and search without mutating the snapshot', () => {
     const record = month.records[0];
     const before = JSON.stringify(month);

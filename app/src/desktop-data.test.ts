@@ -1,9 +1,9 @@
 import {describe,it,expect,vi,afterEach} from 'vitest';
 import fixture from '../../tests/fixtures/app-v2-snapshot.json';
 import {createDesktopData} from './desktop-data';
-import type {AppV2Snapshot} from './bills';
+import type {AppSnapshot} from './bills';
 
-const fresh=()=>structuredClone(fixture) as AppV2Snapshot;
+const fresh=()=>structuredClone(fixture) as AppSnapshot;
 const deferred=<T>()=>{let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>resolve=r);return{promise,resolve};};
 afterEach(()=>vi.useRealTimers());
 describe('native data behind the unchanged web presentation',()=>{

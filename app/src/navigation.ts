@@ -1,4 +1,4 @@
-import { filterRecords, type AppV2Month } from './bills';
+import { filterRecords, type AppMonth } from './bills';
 import type { LedgerRecord } from '../../dashboard/src/types';
 
 export type RootView = 'home' | 'analysis' | 'my';
@@ -26,7 +26,7 @@ export class Navigation {
   resetDates(): void { for (const stack of Object.values(this.stacks)) for (const screen of stack) { if(screen.query) screen.query.date=''; } }
   restrictMonth(month:string|null):void {for(const stack of Object.values(this.stacks))for(const screen of stack)if(screen.query?.date&&!screen.query.date.startsWith(`${month}-`))screen.query.date='';}
   /** Reconcile every saved tab against the shared month, including history restores. */
-  reconcile(month:AppV2Month|null, coveredIds:ReadonlySet<string>):void {
+  reconcile(month:AppMonth|null, coveredIds:ReadonlySet<string>):void {
     for(const root of ['home','analysis','my'] as const){
       this.stacks[root]=this.stacks[root].filter(screen=>screen.view!=='detail'||Boolean(screen.recordId&&coveredIds.has(screen.recordId)));
       for(const screen of this.stacks[root]){
@@ -50,7 +50,7 @@ export class Navigation {
   }
 }
 
-export function selectBills(month: AppV2Month, query: BillQuery): LedgerRecord[] {
+export function selectBills(month: AppMonth, query: BillQuery): LedgerRecord[] {
   const records = query.scope === 'structural' ? month.structuralRecords : month.records;
   return filterRecords(records, query).filter(record => !query.date || record.date === query.date);
 }

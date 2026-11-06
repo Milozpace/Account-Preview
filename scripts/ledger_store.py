@@ -324,6 +324,19 @@ def _validate_state(state):
             raise ValueError('分摊缺少父记录')
         if linked and (linked not in ids or linked == identity):
             raise ValueError('关联记录不存在或自关联')
+        if account.text(row.get('统计口径')).upper() == 'INCOME':
+            amount = calculation.cents(row['原始金额'])
+            reversal = account.text(row.get('最终财务事件')) == 'income_reversal'
+            if amount < 0 and not reversal:
+                raise ValueError('负向收入必须标明 income_reversal 并关联原收入')
+            if reversal:
+                original = ids.get(linked)
+                if (amount >= 0 or original is None
+                        or account.text(original.get('统计口径')).upper() != 'INCOME'
+                        or calculation.cents(original['原始金额']) <= 0
+                        or account.text(original.get('最终财务事件')) == 'income_reversal'
+                        or original['记录ID'].startswith('alloc_')):
+                    raise ValueError('收入冲回必须是负向金额，并关联原始正向收入记录')
     for parent, allocated in children.items():
         source = ids[parent]
         expected = calculation.cents(source['原始金额']) - calculation.cents(source.get('退款调整'))
@@ -493,7 +506,7 @@ def _describe(path, state):
                        for k, val in item.items()} for m, item in sorted(amounts.items())}
     for month, entry in aggregates.items():
         income = incomes.get(month, {'incomeCents': 0, 'count': 0})
-        entry['incomeCents'] = as_money(income['incomeCents'])
+        entry['incomeCents'] = income['incomeCents']
         entry['incomeCount'] = income['count']
     return dict(database=str(Path(path).resolve()), sourceHash=state['sourceHash'], sha256=state['sourceHash'],
                 revision=state['revision'], rows=len(state['rows']), date_min=min(dates, default=None),

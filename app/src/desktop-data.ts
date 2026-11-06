@@ -1,24 +1,24 @@
 import type {DashboardApi} from '../../dashboard/src/presentation';
 import type {DashboardStatus,DashboardSnapshot} from '../../dashboard/src/types';
-import type {AppV2Snapshot} from './bills';
+import type {AppSnapshot} from './bills';
 import {shanghaiToday} from '../../dashboard/src/helpers';
 import {sameSnapshotContent} from './snapshot-state';
 
-interface LocalRead {snapshot:AppV2Snapshot|null;sourceChanged:boolean;monthChanged:boolean}
+interface LocalRead {snapshot:AppSnapshot|null;sourceChanged:boolean;monthChanged:boolean}
 interface Refresh extends Omit<LocalRead,'snapshot'> {
-  snapshot:AppV2Snapshot;warning?:string;
+  snapshot:AppSnapshot;warning?:string;
   appPublish:{ok:boolean|null;published:boolean;skipped?:boolean;error?:string;reason?:string};
 }
 interface Options {
   invoke:(command:string)=>Promise<unknown>;
-  previewSnapshot?:AppV2Snapshot;
+  previewSnapshot?:AppSnapshot;
   today?:()=>string;
 }
 const errorText=(error:unknown,fallback:string)=>typeof error==='string'&&error.length<200?error:fallback;
 
 /** Native validates V3; only the presentation-facing envelope is V2-shaped. */
 export function createDesktopData(options:Options){
-  let current:AppV2Snapshot|null=options.previewSnapshot??null;
+  let current:AppSnapshot|null=options.previewSnapshot??null;
   let source=options.previewSnapshot?'preview':'none';
   let detail=options.previewSnapshot?'合成预览 · 不读取账本、不连接云端':'';
   let error:string|null=options.previewSnapshot?detail:null;
@@ -57,7 +57,7 @@ export function createDesktopData(options:Options){
     initialization=(async()=>{
       if(options.previewSnapshot)return;
       try{
-        const cache=await options.invoke('ledger_cache') as {snapshot:AppV2Snapshot;revision:number}|null;
+        const cache=await options.invoke('ledger_cache') as {snapshot:AppSnapshot;revision:number}|null;
         if(cache){current=cache.snapshot;source='cache';detail=`本地缓存 · 第 ${cache.revision} 版（未连接云端确认）`;}
       }catch{ /* Optional encrypted cache is independent of the authoritative local source. */ }
       // Paint a valid cache immediately; otherwise keep startup pending until the local read finishes.

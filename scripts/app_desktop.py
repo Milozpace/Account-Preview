@@ -43,6 +43,7 @@ def project_paths(project_root):
     expected_parent = root / 'data' if ledger_source.is_database(workbook) else root
     if not workbook.is_file() or workbook.resolve().parent != expected_parent:
         raise ValueError('主项目SQLite账本不存在或路径无效。')
+    # Stable legacy path; the payload's schemaVersion defines the contract (now 3).
     snapshot = root / '.runtime' / 'ledger' / 'snapshot-v2.json'
     if snapshot.resolve() != snapshot:
         raise ValueError('App快照路径不能重定向到其他位置。')

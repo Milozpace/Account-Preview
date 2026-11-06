@@ -192,6 +192,8 @@ def _check_categories(view, month, total, by_category, by_category_count, label=
         sum_total += amount
     if sum_total != total:
         raise ValueError(f'{month}{label}合计与对应净额对账失败')
+    if seen_names != set(by_category_count):
+        raise ValueError(f'{month}{label}名称集合与明细不一致')
 
 
 def validate_app_snapshot(snapshot):
@@ -202,7 +204,7 @@ def validate_app_snapshot(snapshot):
     if set(snapshot) != TOP_FIELDS:
         raise ValueError('快照字段不符合白名单')
     if snapshot.get('schemaVersion') != SCHEMA_VERSION:
-        raise ValueError('快照不是App V3契约；已拒绝')
+        raise ValueError('快照不是App V3契约；已拒绝。请先升级同版App和辅助组件，再从SQLite刷新展示，保留旧缓存。')
     if snapshot.get('snapshotKind') != SNAPSHOT_KIND:
         raise ValueError('快照类型不是account-ledger-view；已拒绝')
     if not isinstance(snapshot['sourceHash'], str) or not snapshot['sourceHash']:
@@ -386,7 +388,7 @@ def _verify_current_source(workbook, snapshot):
 
 
 def export_snapshot(workbook, output=None, write=True):
-    """Validated App V2 snapshot; atomic write unless dry-run. Failures and
+    """Validated App V3 snapshot; atomic write unless dry-run. Failures and
     stale sources never touch the previous snapshot file."""
     snapshot, reuse = build_app_snapshot(workbook)
     path = Path(output) if output else ledger_source.project_root(workbook) / DEFAULT_OUTPUT

@@ -42,6 +42,20 @@ def mutate(base=None, change=None):
 class SharedFixtureContractTests(unittest.TestCase):
     """The three language suites all load this exact file."""
 
+    def test_zero_net_income_category_must_still_account_for_records(self):
+        value = load_fixture()
+        month = value['months'][0]
+        original = copy.deepcopy(month['incomeRecords'][0])
+        month['incomeRecords'] = [original, {**original, 'id': 'tx_income_reverse',
+            'amountCents': -original['amountCents']}]
+        month['summary']['incomeCents'] = 0
+        month['incomeCategories'] = [{'name': original['category'], 'amountCents': 0, 'count': 2}]
+        value['ledgerCount'] += 1
+        app_export.validate_app_snapshot(value)
+        month['incomeCategories'] = []
+        with self.assertRaisesRegex(ValueError, '分类'):
+            app_export.validate_app_snapshot(value)
+
     def test_shared_fixture_passes_validation(self):
         result = app_export.validate_app_snapshot(load_fixture())
         self.assertEqual(result['schemaVersion'], 3)

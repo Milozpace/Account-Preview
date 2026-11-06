@@ -390,15 +390,80 @@ def adopt(root, *, profile=None, apply=False):
 
 
 def version_tuple(version):
-    match=VERSION.fullmatch(version or '')
-    if not match: raise ValueError('只接受 X.Y.Z-preview.N 已发布试用版本。')
-    return tuple(map(int,match.groups()))
+    # Keep this parser local: updater protection must not execute downloaded modules.
+    match=re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|preview|rc)\.(0|[1-9]\d*))?',version or '') if isinstance(version,str) else None
+    if not match or (match[4]=='preview' and match[5]=='0'):
+        raise ValueError('产品版本须为 X.Y.Z 或 X.Y.Z-{alpha,beta,rc,preview}.N。')
+    return (*map(int,match.group(1,2,3)),
+            {'alpha':0,'beta':1,'preview':2,'rc':3,None:4}[match[4]],int(match[5] or 0))
 
 
 def owner_version_tuple(version, profile):
-    if profile == 'personal' and isinstance(version,str) and re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version):
-        return (*map(int,version.split('.')),0)
     return version_tuple(version)
+
+
+def installation_baseline(root, state, *, require_android=True):
+    """Recover installer ordering from the receipt and its authenticated old index."""
+    previous=dict(state)
+    version=state.get('version')
+    if version and state.get('manifestSha256'):
+        path=checked_path(root,f'.runtime/product/releases/{version}/release-manifest.json')
+        if path.is_file():
+            raw=path.read_bytes()
+            if len(raw)>1024*1024 or digest(raw)!=state['manifestSha256']:
+                raise ValueError('先前安装版本索引哈希冲突。')
+            archived=json.loads(raw)
+            if archived.get('version')!=version or archived.get('commit')!=state.get('commit'):
+                raise ValueError('先前安装版本索引来源冲突。')
+            for key in ('nativeVersion','androidVersionCode'):
+                if key in archived:
+                    if key in previous and previous[key]!=archived[key]:
+                        raise ValueError('先前安装版本回执与索引冲突。')
+                    previous[key]=archived[key]
+            # Old public preview indexes omitted Android code. Only their archived,
+            # hash-bound source can supply it; the mutable project source cannot.
+            # Legacy personal-local source has a different installation sequence.
+            if require_android and previous.get('androidVersionCode') is None and archived.get('distribution')!='personal-local':
+                entry=archived.get('source',{})
+                name=entry.get('asset') if isinstance(entry,dict) else None
+                expected=entry.get('sha256') if isinstance(entry,dict) else None
+                if isinstance(name,str) and len(safe_name(name).parts)==1 and isinstance(expected,str) and SHA.fullmatch(expected):
+                    source_path=checked_path(root,f'.runtime/product/releases/{version}/'+name)
+                    if source_path.is_file():
+                        if digest(source_path.read_bytes())!=expected: raise ValueError('先前安装源码 ZIP 哈希冲突。')
+                        source=zip_contents(source_path,source=True)
+                        try: product=json.loads(source['release.json'])
+                        except (KeyError,ValueError): raise ValueError('先前安装源码缺少产品版本清单。') from None
+                        expected_version=archived.get('sourceVersion',version)
+                        if (not isinstance(product,dict) or product.get('version')!=expected_version
+                                or product.get('tag')!='v'+expected_version or product.get('channel')!='private-preview'):
+                            raise ValueError('先前安装源码产品身份冲突。')
+                        if 'nativeVersion' in product:
+                            if previous.get('nativeVersion') is not None and previous['nativeVersion']!=product['nativeVersion']:
+                                raise ValueError('先前安装源码与索引的原生版本冲突。')
+                            previous['nativeVersion']=product['nativeVersion']
+                        if 'androidVersionCode' in product: previous['androidVersionCode']=product['androidVersionCode']
+    native=previous.get('nativeVersion')
+    if native is None and version and re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version):
+        native=version  # Legacy personal-local used the same product/native version.
+    if native is not None and (not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native)):
+        raise ValueError('先前原生安装版本无效。')
+    code=previous.get('androidVersionCode')
+    if code is not None and (type(code) is not int or not 0<code<=2_100_000_000):
+        raise ValueError('先前 Android 安装序号无效。')
+    if state.get('profile')=='personal':
+        file=checked_path(root,'local/personal-version.json')
+        if file.is_file():
+            legacy=read_json(file)
+            if (not isinstance(legacy,dict) or set(legacy)!={'version','androidVersionCode'}
+                    or not isinstance(legacy.get('version'),str)
+                    or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',legacy['version'])
+                    or type(legacy.get('androidVersionCode')) is not int
+                    or not 0<legacy['androidVersionCode']<=2_100_000_000):
+                raise ValueError('旧个人安装版本基线无效。')
+            native=max(filter(None,[native,legacy['version']]),key=lambda value:tuple(map(int,value.split('.'))))
+            code=max(code or 0,legacy['androidVersionCode'])
+    return native,code
 
 
 def select_release(releases):
@@ -406,11 +471,36 @@ def select_release(releases):
     for item in releases:
         tag=item.get('tag_name','')
         if item.get('draft') is not False or not tag.startswith('v'): continue
+        # Existing subscribers stay on legacy preview; accepting local SemVer does
+        # not subscribe them to stable, alpha, beta, or rc remote deliveries.
+        if not VERSION.fullmatch(tag[1:]): continue
         try: key=version_tuple(tag[1:])
         except ValueError: continue
         candidates.append((key,item))
     if not candidates: raise ValueError('没有已发布的 private-preview 版本；draft/candidate 不可更新。')
     return max(candidates,key=lambda item:item[0])[1]
+
+
+def source_snapshot_schema(source, *, required=False):
+    """Read a literal producer contract without importing release code or dependencies."""
+    content=source.get('scripts/app_export.py')
+    if content is None:
+        if required: raise ValueError('新发布源码缺少 App 快照 schema 声明。')
+        return 2  # Historical updater indexes before explicit producer inspection.
+    try:
+        syntax=ast.parse(content)
+    except (SyntaxError,UnicodeError,ValueError):
+        raise ValueError('无法读取源码 App 快照 schema 声明。') from None
+    values=[]
+    for node in syntax.body:
+        targets=node.targets if isinstance(node,ast.Assign) else [node.target] if isinstance(node,ast.AnnAssign) else []
+        if any(isinstance(target,ast.Name) and target.id=='SCHEMA_VERSION' for target in targets):
+            value=node.value
+            if not isinstance(value,ast.Constant) or type(value.value) is not int:
+                raise ValueError('源码 App 快照 schema 须为唯一整数常量。')
+            values.append(value.value)
+    if len(values)!=1 or values[0] not in {2,3}: raise ValueError('源码 App 快照 schema 不兼容或声明不唯一。')
+    return values[0]
 
 
 def zip_contents(path, *, source=False):
@@ -448,23 +538,37 @@ def validate_release(directory, profile, target):
     manifest=json.loads(raw)
     version=manifest.get('version')
     local=manifest.get('distribution')=='personal-local'
+    if manifest.get('versionPolicy') not in {None,'unified'}: raise ValueError('未知产品版本策略。')
+    unified=manifest.get('versionPolicy')=='unified'
     if manifest.get('distribution') not in {None,'public','personal-local'}: raise ValueError('未知发布范围。')
     if local:
-        if profile!='personal' or not isinstance(version,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version):
-            raise ValueError('个人本地包须使用独立的个人版本及 personal 身份。')
+        if profile!='personal' or (not unified and (not isinstance(version,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version))):
+            raise ValueError('个人本地包须使用 personal 身份及受支持的版本策略。')
+        version_tuple(version)
         source_version=manifest.get('sourceVersion');version_tuple(source_version)
+        if not unified and not VERSION.fullmatch(source_version):
+            raise ValueError('旧个人索引的共享源码须为历史 preview 版本；新包须声明统一版本策略。')
+        if unified and source_version!=version: raise ValueError('统一产品版本须与源码版本一致。')
         if manifest.get('tag') is not None or manifest.get('channel')!='personal-local':
             raise ValueError('个人本地索引不创建公开标签或使用公开频道。')
     else:
         version_tuple(version);source_version=version
+        if not unified and not VERSION.fullmatch(version):
+            raise ValueError('旧公共索引仅支持历史 preview；新包须声明统一版本策略。')
     if manifest.get('format')!=1 or (not local and (manifest.get('tag')!='v'+version or manifest.get('channel')!='private-preview')) or manifest.get('draft') is True:
         raise ValueError('不是已发布 private-preview 格式；旧版无兼容清单时不可更新。')
-    if manifest.get('ledgerSchema')!=1 or manifest.get('snapshotSchema')!=2: raise ValueError('发布 schema 不兼容；不自动迁移。')
+    if manifest.get('ledgerSchema')!=1 or type(manifest.get('snapshotSchema')) is not int or manifest['snapshotSchema'] not in {2,3}: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')
     native=manifest.get('nativeVersion')
-    if not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native) or tuple(map(int,native.split('.')))<owner_version_tuple(version,profile)[:3] or (local and native!=version):
+    if not isinstance(native,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',native) or tuple(map(int,native.split('.')))<owner_version_tuple(version,profile)[:3] or (local and not unified and native!=version):
         raise ValueError('原生安装版本无效或早于产品系列。')
+    if unified:
+        code=manifest.get('androidVersionCode');major,minor,patch=version_tuple(version)[:3]
+        if type(code) is not int or not max(1,major*1_000_000+minor*1_000+patch)<=code<=2_100_000_000:
+            raise ValueError('统一 Android 安装序号无效。')
+    elif 'androidVersionCode' in manifest and (type(manifest['androidVersionCode']) is not int or not 0<manifest['androidVersionCode']<=2_100_000_000):
+        raise ValueError('旧索引 Android 安装序号无效。')
     selected=manifest.get('profiles',{}).get(profile)
     if not isinstance(selected,dict) or any(selected.get(k)!=v for k,v in PROFILES[profile].items()): raise ValueError('发布安装身份与本机 profile 不匹配。')
     platform_asset=selected.get('platforms',{}).get(target)
@@ -478,11 +582,23 @@ def validate_release(directory, profile, target):
         assets.append(path)
     source=zip_contents(assets[0],source=True)
     official_skill_source(source)
+    if source_snapshot_schema(source,required=unified)!=manifest['snapshotSchema']:
+        raise ValueError('发布快照 schema 与固定源码生产端不一致。')
     try: source_version=json.loads(source['release.json'])
     except (KeyError,ValueError): raise ValueError('源码缺少产品版本清单。') from None
     expected_source_version=manifest.get('sourceVersion') if local else version
     if any(source_version.get(key)!=value for key,value in {'version':expected_source_version,'tag':'v'+expected_source_version,'channel':'private-preview'}.items()):
         raise ValueError('源码产品版本与发布清单不一致。')
+    if unified and any(source_version.get(key)!=manifest[key] for key in ('nativeVersion','androidVersionCode')):
+        raise ValueError('源码原生安装版本或 Android 安装序号与发布清单不一致。')
+    if not local:
+        for key in ('nativeVersion','androidVersionCode'):
+            if key in source_version:
+                if key in manifest and manifest[key]!=source_version[key]:
+                    raise ValueError('公共源码安装版本与索引不一致。')
+                manifest[key]=source_version[key]
+        if 'androidVersionCode' in manifest and (type(manifest['androidVersionCode']) is not int or not 0<manifest['androidVersionCode']<=2_100_000_000):
+            raise ValueError('公共源码 Android 安装序号无效。')
     bundle=zip_contents(assets[1])
     try: inner=json.loads(bundle['manifest.json'])
     except (KeyError,ValueError): raise ValueError('安装包缺少清单。') from None
@@ -490,8 +606,14 @@ def validate_release(directory, profile, target):
                       'profile':profile,'identifier':PROFILES[profile]['identifier']}.items():
         if inner.get(key)!=value: raise ValueError('内外安装包版本或安装身份不匹配。')
     if inner.get('commit')!=manifest['commit']: raise ValueError('安装包提交与源码不匹配。')
+    if inner.get('versionPolicy')!=manifest.get('versionPolicy'):
+        raise ValueError('组件与索引的产品版本策略不一致；不能将统一版本包伪装成旧格式。')
     if local and (inner.get('distribution')!='personal-local' or inner.get('sourceVersion')!=manifest['sourceVersion']):
         raise ValueError('个人安装包的共享源码版本或本地范围与索引不匹配。')
+    if unified and (inner.get('versionPolicy')!='unified' or inner.get('androidVersionCode')!=manifest['androidVersionCode']):
+        raise ValueError('组件产品版本策略或 Android 安装序号与索引不匹配。')
+    if 'androidVersionCode' in inner and (type(inner['androidVersionCode']) is not int or inner['androidVersionCode']!=manifest.get('androidVersionCode')):
+        raise ValueError('组件与索引的 Android 安装序号不一致。')
     files=inner.get('files')
     if not isinstance(files,dict) or set(bundle)!={'manifest.json',*files}: raise ValueError('安装包文件不匹配清单。')
     suffix='.exe' if target=='windows-x64' else ''
@@ -652,6 +774,24 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         if manifest.get('distribution')=='personal-local' and '-preview.' in old_version:
             raise ValueError('拒绝降级：本机已采用旧个人 preview 安装系列；须先核对已安装原生版本及 Android versionCode，再设置递增的个人版本。')
         raise ValueError('拒绝降级已采用的产品版本。')
+    if old_version!=version:
+        if old_version and state.get('sourceVersion') and version_tuple(manifest.get('sourceVersion',version))<version_tuple(state['sourceVersion']):
+            raise ValueError('拒绝降级已采用的共享源码产品版本。')
+        old_native,old_code=installation_baseline(root,state,require_android=manifest.get('versionPolicy')=='unified' or 'androidVersionCode' in manifest)
+        legacy_path=checked_path(root,'local/personal-version.json')
+        if state['profile']=='personal' and legacy_path.is_file():
+            # installation_baseline validates this legacy record; its product
+            # version remains an independent floor even before a receipt exists.
+            if version_tuple(version)<version_tuple(read_json(legacy_path)['version']):
+                raise ValueError('拒绝降级旧个人基线记录的产品版本。')
+        if old_version and old_native is None:
+            raise ValueError('缺少先前原生安装版本基线；请恢复已校验的旧索引或安装回执。')
+        if old_version and old_code is None and manifest.get('versionPolicy')=='unified':
+            raise ValueError('缺少先前 Android 安装序号基线；请恢复可信归档索引及其源码 ZIP。')
+        if ((old_native is not None and tuple(map(int,manifest['nativeVersion'].split('.')))<=tuple(map(int,old_native.split('.'))))
+                or (old_code is not None and (type(manifest.get('androidVersionCode')) is not int
+                                             or manifest['androidVersionCode']<=old_code))):
+            raise ValueError('新产品的原生安装版本和 Android 安装序号必须严格递增；拒绝降级。')
     ledger=ledger_report(root,manifest['ledgerSchema'])
     protected=protected_snapshot(root)
     desired={name:data for name,data in source.items() if managed_name(name)}
@@ -817,6 +957,9 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                    'distribution':manifest.get('distribution','public'),'sourceVersion':manifest.get('sourceVersion',version),
                    'officialSkill':skill_record,
                    'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items() if managed_name(name)}}}
+        new_state['nativeVersion']=manifest['nativeVersion']
+        if 'androidVersionCode' in manifest: new_state['androidVersionCode']=manifest['androidVersionCode']
+        else: new_state.pop('androidVersionCode',None)
         atomic_json(root/STATE,new_state)
         outcome='installed' if attempted else 'not-attempted'
         journal.update(phase='complete',binaryInstall=outcome)

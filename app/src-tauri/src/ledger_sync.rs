@@ -363,7 +363,7 @@ fn read_slot(
             };
         }
     };
-    if ledger::parse_payload(&plaintext).is_err() {
+    if ledger::validate_publication_payload(&plaintext).is_err() {
         return Read::Invalid {
             malformed: false,
             message: "云端文件不属于正式账单契约，已保留本地缓存。".into(),
@@ -470,7 +470,7 @@ fn build_client<V: SecretVault>(vault: &V) -> Result<crate::webdav::WebDavClient
         .map_err(|e| step_err(STEP_CONFIG, e))
 }
 
-/// Validate and stage (or dry-run) one App V2 snapshot without publishing.
+/// Validate and stage (or dry-run) one App V3 snapshot without publishing.
 pub fn stage_pending<V: SecretVault + Sync, T: Transaction>(
     vault: &V,
     dir: &Path,
@@ -502,7 +502,7 @@ pub fn stage_pending<V: SecretVault + Sync, T: Transaction>(
         exported_records: snapshot
             .months
             .iter()
-            .map(|m| m.records.len() + m.structural_records.len())
+            .map(|m| m.records.len() + m.structural_records.len() + m.income_records.len())
             .sum(),
         payload_bytes: payload.len(),
         dry_run,
@@ -534,6 +534,13 @@ pub fn publish_staged<V: SecretVault + Sync, T: Transaction>(
             .map_err(|e| step_err(STEP_PENDING, e))?
             .filter(|pending| pending.metadata.revision > state_revision.max(cache_revision))
             .ok_or("没有待发内容。请先用准备命令暂存账单快照。".to_string())?;
+        // Staged V2 history must be replaced by a validated V3 export before
+        // publishing. Reject without network writes or changing recovery files.
+        let plaintext = ZeroizingVec(
+            decrypt(&envelope, &key, identity.expected())
+                .map_err(|_| step_err(STEP_PENDING, "待发内容无法认证。".into()))?,
+        );
+        ledger::parse_payload(&plaintext).map_err(|e| step_err(STEP_PENDING, e))?;
         let intent = load_intent(dir, &envelope).map_err(|e| step_err(STEP_PENDING, e))?;
         client
             .ensure_collection()
@@ -659,7 +666,7 @@ pub fn publish_staged<V: SecretVault + Sync, T: Transaction>(
     })
 }
 
-/// Validate, stage, then publish one App V2 snapshot in a single call.
+/// Validate, stage, then publish one App V3 snapshot in a single call.
 /// The publish gate is checked before any local staging write.
 pub fn prepare_and_publish<V: SecretVault + Sync, T: Transaction>(
     vault: &V,
@@ -1092,7 +1099,7 @@ pub async fn ledger_cache(app: tauri::AppHandle) -> Result<Option<LedgerCacheOut
     .map_err(crate::probe_sync::sync_join_failure)?
 }
 
-/// Inspect one exported App V2 snapshot file through the native entry point:
+/// Inspect one exported App V3 snapshot file through the native entry point:
 /// full contract validation (same rules as the encrypted channel) without
 /// touching the ledger identity, durable state, or the cloud. Used for the
 /// Windows local real-data check before official configuration migration.
@@ -1112,7 +1119,7 @@ fn inspect_snapshot_file(path: &str) -> Result<serde_json::Value, String> {
     }
     let plaintext = fs::read(file).map_err(|_| "无法读取快照导出文件。".to_string())?;
     ledger::parse_payload(&plaintext)
-        .map_err(|error| format!("快照未通过 App V2 契约校验：{error}"))?;
+        .map_err(|error| format!("快照未通过 App V3 契约校验：{error}"))?;
     serde_json::from_slice(&plaintext).map_err(|_| "快照内容解析失败。".to_string())
 }
 
@@ -1346,6 +1353,243 @@ mod tests {
         value["months"][0]["records"][0]["title"] =
             serde_json::json!(format!("合成商户 · {marker}"));
         value.to_string().into_bytes()
+    }
+
+    fn legacy_payload() -> Vec<u8> {
+        let mut value: serde_json::Value = serde_json::from_slice(&valid_payload()).unwrap();
+        value["schemaVersion"] = serde_json::json!(2);
+        for month in value["months"].as_array_mut().unwrap() {
+            month.as_object_mut().unwrap().remove("incomeRecords");
+            month.as_object_mut().unwrap().remove("incomeCategories");
+            month["summary"]
+                .as_object_mut()
+                .unwrap()
+                .remove("incomeCents");
+        }
+        value.to_string().into_bytes()
+    }
+
+    fn seal(vault: &MemorySlots, payload: &[u8], revision: u64) -> EncryptedEnvelope {
+        let identity = ledger::load_identity(vault).unwrap().unwrap();
+        encrypt(
+            payload,
+            &ledger::load_key(vault).unwrap().unwrap(),
+            SnapshotMetadata {
+                format_version: 1,
+                ledger_id: identity.ledger_id,
+                account_id: identity.account_id,
+                key_generation: identity.key_generation,
+                revision,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn schema_upgrade_direct_legacy_pending_is_preserved_without_upload() {
+        let (_, seen, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let pending = seal(&vault, &legacy_payload(), 1);
+        ledger::persist_cache(&dir.path().join(LEDGER_PENDING_FILE), &pending).unwrap();
+        let before = fs::read(dir.path().join(LEDGER_PENDING_FILE)).unwrap();
+        assert!(publish_staged(&vault, dir.path(), &InlineTx).is_err());
+        assert_eq!(
+            fs::read(dir.path().join(LEDGER_PENDING_FILE)).unwrap(),
+            before
+        );
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn schema_upgrade_signature_rejects_invalid_legacy_contracts() {
+        let old = legacy_payload();
+        assert_ne!(
+            ledger::content_signature(&old).unwrap(),
+            ledger::content_signature(&valid_payload()).unwrap()
+        );
+        for change in ["schema", "summary", "unknown", "income", "purpose"] {
+            let mut v: serde_json::Value = serde_json::from_slice(&old).unwrap();
+            match change {
+                "schema" => v["schemaVersion"] = serde_json::json!(99),
+                "summary" => v["months"][0]["summary"]["personalCents"] = serde_json::json!(999),
+                "unknown" => v["months"][0]["secret"] = serde_json::json!("forbidden"),
+                "income" => v["months"][0]["incomeRecords"] = serde_json::json!([]),
+                _ => v["snapshotKind"] = serde_json::json!("another-purpose"),
+            }
+            assert!(
+                ledger::content_signature(v.to_string().as_bytes()).is_err(),
+                "{change}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_invalid_or_foreign_legacy_slot_is_never_overwritten() {
+        for defect in [
+            "schema", "purpose", "summary", "unknown", "income", "identity",
+        ] {
+            let (files, seen, base) = slot_server(Arc::default());
+            let vault = seeded_vault(&base);
+            let dir = tempfile::tempdir().unwrap();
+            let mut value: serde_json::Value = serde_json::from_slice(&legacy_payload()).unwrap();
+            match defect {
+                "schema" => value["schemaVersion"] = serde_json::json!(99),
+                "purpose" => value["snapshotKind"] = serde_json::json!("another-purpose"),
+                "summary" => {
+                    value["months"][0]["summary"]["personalCents"] = serde_json::json!(999)
+                }
+                "unknown" => value["months"][0]["unexpected"] = serde_json::json!(true),
+                "income" => value["months"][0]["summary"]["incomeCents"] = serde_json::json!(0),
+                _ => (),
+            }
+            let envelope = if defect == "identity" {
+                let foreign = seeded_vault(&base);
+                seal(&foreign, &value.to_string().into_bytes(), 1)
+            } else {
+                seal(&vault, &value.to_string().into_bytes(), 1)
+            };
+            let remote = format!("/{}/{}", ledger::LEDGER_REMOTE_DIRECTORY, LEDGER_FILES[0]);
+            files
+                .lock()
+                .unwrap()
+                .insert(remote, envelope.to_json().unwrap());
+            let before = files.lock().unwrap().clone();
+            let path = write_payload(dir.path(), "new.json", &valid_payload());
+            assert!(
+                prepare_and_publish(&vault, dir.path(), &InlineTx, &path, false).is_err(),
+                "{defect}"
+            );
+            assert_eq!(*files.lock().unwrap(), before, "{defect}");
+            assert!(
+                !seen.lock().unwrap().iter().any(|r| r.method == "PUT"),
+                "{defect}"
+            );
+            assert_eq!(cached_revision(&vault, dir.path()), 0);
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_legacy_duplicate_fields_are_rejected() {
+        let text = String::from_utf8(legacy_payload()).unwrap();
+        let duplicate = text.replace(
+            "\"schemaVersion\":2",
+            "\"schemaVersion\":2,\"schemaVersion\":2",
+        );
+        assert_ne!(duplicate, text);
+        assert!(ledger::content_signature(duplicate.as_bytes()).is_err());
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let amount = format!(
+            "\"personalCents\":{}",
+            value["months"][0]["summary"]["personalCents"]
+        );
+        let duplicate = text.replacen(&amount, &format!("{amount},{amount}"), 1);
+        assert_ne!(duplicate, text);
+        assert!(ledger::content_signature(duplicate.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn schema_upgrade_confirmed_and_pending_legacy_slots_publish_v3() {
+        for pending in [false, true] {
+            let (files, seen, base) = slot_server(Arc::default());
+            let vault = seeded_vault(&base);
+            let dir = tempfile::tempdir().unwrap();
+            let secrets = vault.slots.lock().unwrap().clone();
+            let old = legacy_payload();
+            let previous = seal(&vault, &old, 4);
+            let confirmed = seal(&vault, &old, 5);
+            let slot_path = |file: &str| format!("/{}/{}", ledger::LEDGER_REMOTE_DIRECTORY, file);
+            files
+                .lock()
+                .unwrap()
+                .insert(slot_path(LEDGER_FILES[0]), confirmed.to_json().unwrap());
+            files
+                .lock()
+                .unwrap()
+                .insert(slot_path(LEDGER_FILES[1]), previous.to_json().unwrap());
+            ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &confirmed).unwrap();
+            save_publish_state(dir.path(), 5).unwrap();
+            if pending {
+                let pending = seal(&vault, &old, 6);
+                ledger::persist_cache(&dir.path().join(LEDGER_PENDING_FILE), &pending).unwrap();
+                save_intent(dir.path(), 1, &pending, false).unwrap();
+                let before = fs::read(dir.path().join(LEDGER_PENDING_FILE)).unwrap();
+                assert!(publish_staged(&vault, dir.path(), &InlineTx).is_err());
+                assert_eq!(
+                    fs::read(dir.path().join(LEDGER_PENDING_FILE)).unwrap(),
+                    before
+                );
+                assert!(!seen.lock().unwrap().iter().any(|r| r.method == "PUT"));
+            }
+            let path = write_payload(dir.path(), "new.json", &valid_payload());
+            let outcome = prepare_and_publish(&vault, dir.path(), &InlineTx, &path, false).unwrap();
+            assert_eq!(outcome.revision, if pending { 7 } else { 6 });
+            assert!(!outcome.already_published);
+            assert_eq!(cached_revision(&vault, dir.path()), outcome.revision);
+            assert_eq!(cloud_revision(&files, &slot_path(LEDGER_FILES[0])), 5);
+            assert_eq!(
+                cloud_revision(&files, &slot_path(LEDGER_FILES[1])),
+                outcome.revision
+            );
+            assert_eq!(*vault.slots.lock().unwrap(), secrets);
+            assert!(
+                seen.lock()
+                    .unwrap()
+                    .iter()
+                    .all(|r| r.path.starts_with(&format!(
+                        "/{}",
+                        ledger::LEDGER_REMOTE_DIRECTORY.split('/').next().unwrap()
+                    )))
+            );
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_old_cloud_and_offline_preserve_v3_cache() {
+        let fault = Arc::new(StdMutex::new(Fault::default()));
+        let (files, _, base) = slot_server(fault.clone());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let current = seal(&vault, &valid_payload(), 4);
+        ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &current).unwrap();
+        let bytes = fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap();
+        let old = seal(&vault, &legacy_payload(), 5);
+        files.lock().unwrap().insert(
+            format!("/{}/{}", ledger::LEDGER_REMOTE_DIRECTORY, LEDGER_FILES[0]),
+            old.to_json().unwrap(),
+        );
+        for offline in [false, true] {
+            if offline {
+                fault.lock().unwrap().get_failure_file = Some(LEDGER_FILES[0]);
+            }
+            assert!(fetch_flow(&vault, dir.path(), &InlineTx).is_err());
+            assert_eq!(fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap(), bytes);
+            let identity = ledger::load_identity(&vault).unwrap().unwrap();
+            let key = ledger::load_key(&vault).unwrap().unwrap();
+            assert_eq!(
+                snapshot_value(&current, &key, &identity).unwrap()["schemaVersion"],
+                3
+            );
+            assert!(snapshot_value(&old, &key, &identity).is_err());
+        }
+        let path = write_payload(dir.path(), "old.json", &legacy_payload());
+        let original = fs::read(&path).unwrap();
+        assert!(stage_pending(&vault, dir.path(), &InlineTx, &path, false).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn preparation_receipt_counts_income_records() {
+        let (_, seen, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let payload = include_bytes!("../../../tests/fixtures/app-v2-snapshot.json");
+        let path = write_payload(dir.path(), "snapshot.json", payload);
+        let prepared = stage_pending(&vault, dir.path(), &InlineTx, &path, false).unwrap();
+        // Shared fixture: 9 consumption + 2 structural + 2 income records.
+        assert_eq!(prepared.exported_records, 13);
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[test]

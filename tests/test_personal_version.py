@@ -15,7 +15,7 @@ class PersonalVersionTests(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         return module
 
-    def test_personal_versions_are_local_independent_and_monotonic(self):
+    def test_legacy_personal_versions_remain_readable_without_overriding_product(self):
         module=self.module()
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);shutil.copyfile(ROOT/'release.json',root/'release.json')
@@ -31,15 +31,40 @@ class PersonalVersionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):module.validate(bad,old)
             path=root/'local/personal-version.json';path.parent.mkdir();path.write_text(json.dumps(fresh))
             data=module.build_data(root)
-            self.assertEqual(data['version'],'0.3.16');self.assertEqual(data['nativeVersion'],'0.3.16')
-            self.assertEqual(data['androidVersionCode'],3016)
+            source=json.loads(before)
+            for key in ('version','nativeVersion','androidVersionCode'):
+                self.assertEqual(data[key],source[key])
+            self.assertEqual(data['versionPolicy'],'unified')
             self.assertEqual(data['sourceVersion'],json.loads(before)['version'])
             self.assertEqual((root/'release.json').read_bytes(),before)
 
-    def test_missing_personal_version_does_not_inherit_public_version(self):
+    def test_new_personal_build_defaults_to_shared_product_version(self):
         module=self.module()
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);shutil.copyfile(ROOT/'release.json',root/'release.json')
-            with self.assertRaisesRegex(ValueError,'个人|personal'):module.build_data(root)
+            source=json.loads((root/'release.json').read_text())
+            data=module.build_data(root)
+            for key in ('version','nativeVersion','androidVersionCode'):
+                self.assertEqual(data[key],source[key])
+            self.assertIsNone(data['tag'])
+            self.assertEqual(data['distribution'],'personal-local')
+
+    def test_shared_product_must_exceed_legacy_personal_installation_numbers(self):
+        module=self.module()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);shutil.copyfile(ROOT/'release.json',root/'release.json')
+            source=json.loads((root/'release.json').read_text())
+            path=root/'legacy.json'
+            for value in ({'version':'9.0.0','androidVersionCode':1},
+                          {'version':'0.3.18','androidVersionCode':source['androidVersionCode']+1}):
+                path.write_text(json.dumps(value))
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError,'递增|降级'):
+                    module.build_data(root,path)
+
+    def test_explicit_missing_legacy_baseline_is_rejected(self):
+        module=self.module()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);shutil.copyfile(ROOT/'release.json',root/'release.json')
+            with self.assertRaises(ValueError):module.build_data(root,root/'missing.json')
 
 if __name__=='__main__':unittest.main()

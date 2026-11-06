@@ -8,7 +8,7 @@ on:
         default: all
         options: [all, windows-x64, macos-arm64, macos-x64, android-arm64, python-only]
   push:
-    branches: [main, 'codex/**']
+    branches: [main, dev, 'feature/**', 'fix/**', 'hotfix/**', 'release/**', 'docs/**', 'codex/**']
     paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
   pull_request:
     paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']

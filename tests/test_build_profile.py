@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class BuildProfileTests(unittest.TestCase):
     def android_fixture(self, root):
-        for name in ['app/package.json','app/package-lock.json','app/src-tauri/Cargo.toml','app/src-tauri/Cargo.lock']:
+        for name in ['app/package.json','app/package-lock.json','app/src-tauri/Cargo.toml','app/src-tauri/Cargo.lock',
+                     'dashboard/package.json','dashboard/package-lock.json','pyproject.toml']:
             path=root/name;path.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,path)
         (root/'local').mkdir(exist_ok=True)
         (root/'local/personal-version.json').write_text('{"version":"0.3.16","androidVersionCode":3016}')
@@ -83,8 +84,9 @@ class BuildProfileTests(unittest.TestCase):
             self.assertIn('namespace = "com.account.probe"', gradle)
             self.assertIn('applicationId = "com.account.probe"', gradle)
             self.assertIn('targetSdk = 37', gradle)
-            self.assertIn('versionCode = 3016', gradle)
-            self.assertIn('versionName = "0.3.16"', gradle)
+            release=json.loads((root/'release.json').read_text())
+            self.assertIn(f"versionCode = {release['androidVersionCode']}", gradle)
+            self.assertIn(f'versionName = "{release["nativeVersion"]}"', gradle)
 
     def module(self):
         path = ROOT/'scripts/build_profile.py'
@@ -107,9 +109,10 @@ class BuildProfileTests(unittest.TestCase):
             module.prepare(root, 'personal', 'windows-x64', apply=True, isolated_build=True)
             conf = json.loads((root/'app/src-tauri/tauri.conf.json').read_text())
             self.assertEqual(conf['identifier'], 'com.account.probe')
-            self.assertEqual(conf['version'],'0.3.16')
-            self.assertEqual(json.loads((root/'app/package.json').read_text())['version'],'0.3.16')
-            self.assertIn('version = "0.3.16"',(root/'app/src-tauri/Cargo.toml').read_text())
+            source=json.loads(public_manifest)
+            self.assertEqual(conf['version'],source['nativeVersion'])
+            self.assertEqual(json.loads((root/'app/package.json').read_text())['version'],source['version'])
+            self.assertIn(f'version = "{source["version"]}"',(root/'app/src-tauri/Cargo.toml').read_text())
             self.assertEqual((root/'release.json').read_bytes(),public_manifest)
             self.assertIn('AccountDesktop/project.json', (root/'app/src-tauri/src/desktop_bridge.rs').read_text(encoding='utf-8'))
             module.prepare(root, 'preview', 'macos-arm64', apply=True)

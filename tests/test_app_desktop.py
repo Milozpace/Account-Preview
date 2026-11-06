@@ -35,6 +35,28 @@ class DesktopDisplayPolicyTests(unittest.TestCase):
     def export(self):
         return Path(app_export.export_snapshot(self.database)['output'])
 
+    def test_old_app_schema_is_preserved_until_local_refresh_without_ledger_changes(self):
+        path = self.export()
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['schemaVersion'] = 2
+        for month in value['months']:
+            month.pop('incomeRecords')
+            month.pop('incomeCategories')
+            month['summary'].pop('incomeCents')
+        path.write_text(json.dumps(value), encoding='utf-8')
+        old = path.read_bytes()
+        before = app_desktop.ledger_store.source_hash(self.database)
+        with self.assertRaisesRegex(ValueError, 'App V3'):
+            app_desktop.load_snapshot(self.root)
+        self.assertEqual(path.read_bytes(), old)
+        with patch.object(app_desktop, '_publish', return_value={
+                'ok': None, 'published': False, 'skipped': True, 'reason': '合成本地刷新'}) as publish:
+            refreshed = app_desktop.refresh_snapshot(self.root)
+        self.assertEqual(refreshed['snapshot']['schemaVersion'], 3)
+        self.assertTrue(refreshed['appPublish']['skipped'])
+        self.assertEqual(app_desktop.ledger_store.source_hash(self.database), before)
+        self.assertEqual(publish.call_count, 1)
+
     def test_changed_display_range_hides_cached_snapshot_with_same_hash_and_calendar(self):
         self.start('2026-09')
         self.export()

@@ -16,34 +16,34 @@ import type { LedgerRecord, Pool, PoolId } from '../../dashboard/src/types';
 // Income records ride in the snapshot (scope INCOME, pool unknown) but the
 // mobile UI does not render them yet.
 // ---------------------------------------------------------------------------
-export interface AppV2Daily {
+export interface AppDaily {
   date: string; amountCents: number; operationCumulativeCents: number;
   referenceCents: number; count: number;
 }
-export interface AppV2Pool {
+export interface AppPool {
   id: PoolId; name: string; budgetCents: number; carryCents: number;
   openingCents: number; spentCents: number; endingCents: number;
   availableCents: number; overrunCents: number; usageRatio: number | null;
 }
-export interface AppV2Summary {
+export interface AppSummary {
   personalCents: number; structuralCents: number; totalCents: number; unknownCents: number;
   monthlyBudgetCents: number; openingBudgetCents: number;
   availableCents: number; overrunCents: number; safetyCents: number;
   incomeCents: number;
 }
-export interface AppV2Month {
+export interface AppMonth {
   month: string; lastRecordedAt: string | null; mechanismActive: boolean;
-  summary: AppV2Summary; pools: AppV2Pool[]; daily: AppV2Daily[];
+  summary: AppSummary; pools: AppPool[]; daily: AppDaily[];
   categories: Array<{ name: string; amountCents: number; count: number }>;
   records: LedgerRecord[]; structuralRecords: LedgerRecord[];
   incomeRecords: LedgerRecord[]; incomeCategories: Array<{ name: string; amountCents: number; count: number }>;
   topIds: string[];
 }
-export interface AppV2Snapshot {
+export interface AppSnapshot {
   schemaVersion: 3; snapshotKind: string; sourceHash: string;
   calendarMonth: string; generatedAt: string; sourceLastRecordedAt: string | null;
   ledgerCount: number; coverage: { kind: string; months: string[] };
-  months: AppV2Month[];
+  months: AppMonth[];
 }
 
 // Same palette as the web dashboard (dashboard/src/charts.ts), duplicated as
@@ -64,17 +64,17 @@ export interface BillFilters {
 export const emptyFilters = (): BillFilters => ({ query: '', category: '', pool: '' });
 
 /** Only months inside the snapshot coverage can ever be selected. */
-export function availableMonths(snapshot: AppV2Snapshot | null): string[] {
+export function availableMonths(snapshot: AppSnapshot | null): string[] {
   return snapshot ? snapshot.months.map((month) => month.month) : [];
 }
 
-export function resolveMonth(snapshot: AppV2Snapshot | null, wanted: string | null): string | null {
+export function resolveMonth(snapshot: AppSnapshot | null, wanted: string | null): string | null {
   const months = availableMonths(snapshot);
   if (!months.length) return null;
   return wanted != null && months.includes(wanted) ? wanted : months[0];
 }
 
-export function getMonth(snapshot: AppV2Snapshot | null, month: string | null): AppV2Month | null {
+export function getMonth(snapshot: AppSnapshot | null, month: string | null): AppMonth | null {
   return snapshot?.months.find((entry) => entry.month === month) ?? null;
 }
 
@@ -102,7 +102,7 @@ export function monthLabel(month: string, now: Date = new Date()): string {
 }
 
 /** Honest notice when the snapshot no longer covers the current month. */
-export function coverageNote(snapshot: AppV2Snapshot | null, now: Date = new Date()): string | null {
+export function coverageNote(snapshot: AppSnapshot | null, now: Date = new Date()): string | null {
   if (!snapshot) return null;
   const current = beijingMonth(now);
   if (snapshot.months.some((month) => month.month === current)) return null;
@@ -126,7 +126,7 @@ export function filterRecords(records: LedgerRecord[], filters: BillFilters): Le
 }
 
 /** Category choices for the filter dropdown, taken from the month data. */
-export function categoryOptions(month: AppV2Month | null): string[] {
+export function categoryOptions(month: AppMonth | null): string[] {
   return month ? month.categories.map((category) => category.name).sort((a, b) => a.localeCompare(b, 'zh-CN')) : [];
 }
 
@@ -165,7 +165,7 @@ export interface HomeCards {
 }
 
 /** Four headline numbers; budget-derived values are only meaningful while the mechanism is active. */
-export function homeCards(month: AppV2Month): HomeCards {
+export function homeCards(month: AppMonth): HomeCards {
   const active = month.mechanismActive;
   return {
     personal: money(month.summary.personalCents),
@@ -176,7 +176,7 @@ export function homeCards(month: AppV2Month): HomeCards {
 }
 
 /** One pool line for the home overview; `interactive` renders it as a button that filters bills. */
-export function poolRow(pool: AppV2Pool, interactive = false): string {
+export function poolRow(pool: AppPool, interactive = false): string {
   const overspent = (pool.overrunCents ?? 0) > 0;
   const ratio = pool.usageRatio;
   const open = interactive
