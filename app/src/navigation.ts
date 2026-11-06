@@ -3,7 +3,7 @@ import type { LedgerRecord } from '../../dashboard/src/types';
 
 export type RootView = 'home' | 'analysis' | 'my';
 export type AnalysisTab = 'trend' | 'composition' | 'calendar';
-export interface BillQuery { query: string; category: string; pool: string; date: string; scope: 'personal' | 'structural' }
+export interface BillQuery { query: string; category: string; pool: string; date: string; scope: 'personal' | 'structural' | 'income' }
 export const emptyQuery = (): BillQuery => ({ query: '', category: '', pool: '', date: '', scope: 'personal' });
 export type View = RootView | 'bills' | 'pool' | 'detail' | 'sync' | 'settings' | 'about' | 'diagnostics' | 'export' | 'upload';
 export interface Screen { view: View; query?: BillQuery; recordId?: string; poolId?: string; scroll?: number; historyKey?:number }
@@ -31,10 +31,10 @@ export class Navigation {
       this.stacks[root]=this.stacks[root].filter(screen=>screen.view!=='detail'||Boolean(screen.recordId&&coveredIds.has(screen.recordId)));
       for(const screen of this.stacks[root]){
         const query=screen.query;if(!query)continue;
-        const records=query.scope==='structural'?month?.structuralRecords:month?.records;
+        const records=query.scope==='structural'?month?.structuralRecords:query.scope==='income'?month?.incomeRecords:month?.records;
         if(query.category&&!records?.some(record=>record.category===query.category))query.category='';
         if(query.date&&!month?.daily.some(day=>day.date===query.date))query.date='';
-        if(query.scope==='structural')query.pool='';
+        if(query.scope!=='personal')query.pool='';
       }
     }
   }
@@ -51,7 +51,9 @@ export class Navigation {
 }
 
 export function selectBills(month: AppMonth, query: BillQuery): LedgerRecord[] {
-  const records = query.scope === 'structural' ? month.structuralRecords : month.records;
+  const records = query.scope === 'structural' ? month.structuralRecords
+    : query.scope === 'income' ? month.incomeRecords
+    : month.records;
   return filterRecords(records, query).filter(record => !query.date || record.date === query.date);
 }
 export function groupDays(records: LedgerRecord[]): Array<{date:string;cents:number;records:LedgerRecord[]}> {

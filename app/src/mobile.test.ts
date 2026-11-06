@@ -58,6 +58,16 @@ describe('mobile presentation', () => {
     expect(html).toContain(month.structuralRecords[0].title);
     expect(html).toContain('结构性支出');
   });
+  it('lists income as a third bill scope without a pool chip or pool filter', () => {
+    const income = month.incomeRecords[0];
+    expect(income).toBeDefined();
+    const html = billsHtml(month,{...emptyQuery(), scope:'income'});
+    expect(html).toContain('<option value="income" selected>收入</option>');
+    expect(html).toContain(income.title);
+    expect(html).toContain('id="bill-pool" disabled');
+    expect(html).toContain('· 合计 ¥');
+    expect(html).not.toContain('record-pool');
+  });
   it('never treats inactive budget as zero or masks overrun and negative adjustment', () => {
     const inactive = structuredClone(month);
     inactive.mechanismActive = false;

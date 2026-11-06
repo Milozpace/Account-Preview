@@ -92,4 +92,18 @@ describe('bill query uses one consistent result set', () => {
     expect(groups.flatMap(g => g.records)).toEqual(records);
     expect(groups.reduce((sum,g) => sum + g.cents,0)).toBe(records.reduce((sum,r) => sum + r.amountCents,0));
   });
+  it('lists only income records when the income scope is selected', () => {
+    const first = month.incomeRecords[0];
+    expect(first).toBeDefined();
+    const result = selectBills(month, {...emptyQuery(), scope: 'income'});
+    expect(result.map(r => r.id)).toEqual(month.incomeRecords.map(r => r.id));
+    expect(result.every(r => r.scope === 'INCOME')).toBe(true);
+    expect(selectBills(month, {...emptyQuery(), scope: 'income', query: first.title}).map(r => r.id)).toContain(first.id);
+  });
+  it('drops a pool filter that cannot apply to income or structural lists', () => {
+    const nav = new Navigation();
+    nav.open({view: 'bills', query: {...emptyQuery(), scope: 'income', pool: 'operation'}});
+    nav.reconcile(month, new Set(month.incomeRecords.map(r => r.id)));
+    expect(nav.current.query?.pool).toBe('');
+  });
 });

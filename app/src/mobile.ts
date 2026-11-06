@@ -70,13 +70,15 @@ export function analysisHtml(month: AppMonth, tab: AnalysisTab, date: string|nul
 
 export function billsHtml(month: AppMonth, query: BillQuery): string {
   const records=selectBills(month,query);
-  const source=query.scope==='structural'?month.structuralRecords:month.records;
+  const source=query.scope==='structural'?month.structuralRecords:query.scope==='income'?month.incomeRecords:month.records;
   const categories=[...new Set(source.map(r=>r.category))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  const pooled=query.scope==='personal';
+  const totalLabel=pooled?'净消费':'合计';
   return `<section class="bills"><div class="bill-toolbar"><label class="search-field"><span aria-hidden="true">${uiIcon('search')}</span><input id="bill-search" type="search" placeholder="搜索账单标题" value="${e(query.query)}" aria-label="搜索账单标题"><button class="search-clear" type="button" data-action="clear-search" aria-label="清除搜索" ${query.query?'':'hidden'}>${uiIcon('close')}</button></label>
-    <div class="bill-filter-row"><label><span class="sr-only">记录类型</span><select id="bill-scope"><option value="personal" ${query.scope==='personal'?'selected':''}>个人消费</option><option value="structural" ${query.scope==='structural'?'selected':''}>结构性支出</option></select></label><label><span class="sr-only">分类</span><select id="bill-category"><option value="">全部分类</option>${categories.map(c=>`<option value="${e(c)}" ${query.category===c?'selected':''}>${e(c)}</option>`).join('')}</select></label><label><span class="sr-only">资金池</span><select id="bill-pool" ${query.scope==='structural'?'disabled':''}><option value="">全部资金池</option>${Object.entries(poolNames).map(([id,name])=>`<option value="${id}" ${query.pool===id?'selected':''}>${name}</option>`).join('')}</select></label></div>
+    <div class="bill-filter-row"><label><span class="sr-only">记录类型</span><select id="bill-scope"><option value="personal" ${query.scope==='personal'?'selected':''}>个人消费</option><option value="structural" ${query.scope==='structural'?'selected':''}>结构性支出</option><option value="income" ${query.scope==='income'?'selected':''}>收入</option></select></label><label><span class="sr-only">分类</span><select id="bill-category"><option value="">全部分类</option>${categories.map(c=>`<option value="${e(c)}" ${query.category===c?'selected':''}>${e(c)}</option>`).join('')}</select></label><label><span class="sr-only">资金池</span><select id="bill-pool" ${pooled?'':'disabled'}><option value="">全部资金池</option>${Object.entries(poolNames).map(([id,name])=>`<option value="${id}" ${query.pool===id?'selected':''}>${name}</option>`).join('')}</select></label></div>
     ${query.date?`<div class="active-filters"><span>${e(dateTitle(query.date))}</span><button type="button" class="quiet-button" data-action="clear-date">取消日期 ×</button></div>`:''}
-    <div class="bill-result-heading"><p class="bill-count">${records.length} 笔 · ${query.scope==='structural'?'合计':'净消费'} ¥ ${money(records.reduce((s,r)=>s+r.amountCents,0))}</p><button type="button" class="quiet-button" data-action="clear-filters">重置筛选</button></div></div>
-    <div class="record-list">${records.length?groupedRecords(records,query.scope==='structural'):empty('没有符合条件的记录','试试其他关键词，或重置筛选。')}</div></section>`;
+    <div class="bill-result-heading"><p class="bill-count">${records.length} 笔 · ${totalLabel} ¥ ${money(records.reduce((s,r)=>s+r.amountCents,0))}</p><button type="button" class="quiet-button" data-action="clear-filters">重置筛选</button></div></div>
+    <div class="record-list">${records.length?groupedRecords(records,!pooled):empty('没有符合条件的记录','试试其他关键词，或重置筛选。')}</div></section>`;
 }
 
 export function poolHtml(month: AppMonth, id: string): string {

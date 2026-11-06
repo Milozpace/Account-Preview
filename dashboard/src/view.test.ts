@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dashboardHtml, calendarHtml, poolHtml } from './view';
+import { dashboardHtml, calendarHtml, poolHtml, dashboardRecordRow } from './view';
 import fixture from '../../tests/fixtures/app-v2-snapshot.json';
 import type { DashboardMonth } from './types';
 
@@ -8,7 +8,7 @@ describe('shared dashboard presentation without HTTP or native dependencies', ()
   it('renders the existing desktop dashboard sections and exact cents without changing data', () => {
     const before = JSON.stringify(month);
     const html = dashboardHtml(month, '2026-10-16');
-    for (const label of ['个人净消费','本月新增额度','各池可用','安全积累','累计净消费','消费日历','类别分布','Top 10']) expect(html).toContain(label);
+    for (const label of ['个人净消费','本月收入','各池可用','安全积累','累计净消费','消费日历','类别分布','Top 10']) expect(html).toContain(label);
     expect(html).toContain((month.summary.personalCents / 100).toFixed(2));
     expect(JSON.stringify(month)).toBe(before);
   });
@@ -45,7 +45,7 @@ describe('shared dashboard presentation without HTTP or native dependencies', ()
     expect(html).toContain('暂无额度');
     expect(html).not.toContain('超支 ¥');
     expect(html).not.toContain('overrun-text');
-    expect(html).not.toMatch(/本月新增额度<\/span><strong[^>]*><small>¥<\/small> 0\.00/);
+    expect(html).not.toContain('本月新增额度');
     expect(JSON.stringify(first)).toBe(before);
   });
   it('offers optional desktop budget settings and warns about pending pools even when they net to zero',()=>{
@@ -58,13 +58,44 @@ describe('shared dashboard presentation without HTTP or native dependencies', ()
     expect(html).toContain('各池可用（未含待分池）');
     expect(dashboardHtml(first,'2026-11-01')).not.toContain('data-action="edit-budget"');
   });
-  it('retains legitimate zero monthly additions and balances when an opening allowance exists', () => {
+  it('shows this month income in the second headline card instead of the added allowance', () => {
+    const html = dashboardHtml(month, '2026-11-01');
+    expect(html).toContain('本月收入</span><strong class="overview-amount"><small>¥</small> 8,000.00');
+    expect(html).not.toContain('本月新增额度');
+  });
+  it('hides zero-valued scope leads and keeps the non-zero ones', () => {
+    const zeroed = structuredClone(month);
+    Object.assign(zeroed.summary, {structuralCents: 0, incomeCents: 0, unknownCents: 500});
+    const html = dashboardHtml(zeroed, '2026-11-01');
+    expect(html).toContain('data-scope="unknown"');
+    expect(html).toContain('待归类消费');
+    expect(html).not.toContain('data-scope="structural"');
+    expect(html).not.toContain('data-scope="income"');
+  });
+  it('omits the scope row entirely when every lead is zero', () => {
+    const zeroed = structuredClone(month);
+    Object.assign(zeroed.summary, {structuralCents: 0, incomeCents: 0, unknownCents: 0});
+    const html = dashboardHtml(zeroed, '2026-11-01');
+    expect(html).not.toContain('overview-secondary');
+  });
+  it('keeps the income lead clickable while the headline card is not a control', () => {
+    const html = dashboardHtml(month, '2026-11-01');
+    expect(html).toContain('<button class="scope-item" data-scope="income" type="button">');
+    expect(html).toContain('<div class="overview-card"><span>本月收入</span>');
+  });
+  it('renders income rows without a pool chip', () => {
+    const record = {id: 'tx_income', date: '2026-11-05', time: '10:00', title: '工资', category: '工资薪酬', pool: 'unknown', scope: 'INCOME', amountCents: 200000} as const;
+    const html = dashboardRecordRow(record);
+    expect(html).toContain('工资薪酬');
+    expect(html).not.toContain('record-pool');
+  });
+  it('keeps income visible when an opening allowance exists and the mechanism is active', () => {
     const funded = structuredClone(month);
     funded.mechanismActive = true;
     Object.assign(funded.summary, {monthlyBudgetCents: 0, openingBudgetCents: 10000, availableCents: 0, safetyCents: 0});
     const html = dashboardHtml(funded, '2026-11-01');
     expect(html).not.toContain('当前没有可比较额度');
-    expect(html).toContain('本月新增额度</span><strong class="overview-amount"><small>¥</small> 0.00');
+    expect(html).toContain('本月收入</span><strong class="overview-amount"><small>¥</small> 8,000.00');
   });
   it('shows real spending without an overrun for a pool with no allowance', () => {
     const pool = {...month.pools[0], openingCents: 0, budgetCents: 0, carryCents: 0, spentCents: 2345, availableCents: -2345, overrunCents: 2345, usageRatio: null};

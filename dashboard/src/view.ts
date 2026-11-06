@@ -38,7 +38,10 @@ export function calendarHtml(month: DashboardMonth, today: string, selectedDate?
 }
 
 export function dashboardRecordRow(record: LedgerRecord, rank?: number): string {
-  return `<button class="record-row" type="button" data-record="${escape(record.id)}">${rank != null ? `<span class="record-rank">${String(rank).padStart(2, '0')}</span>` : ''}<span class="record-main"><strong>${escape(record.title)}</strong><small>${escape(record.date.slice(5).replace('-', '.'))} <span class="record-pool" style="--pool-color:${poolColors[record.pool] || '#9b9891'}">${escape(poolNames[record.pool] ?? '结构性')}</span> · ${escape(record.category)}${record.amountCents < 0 ? ' · 负调整' : ''}</small></span><span class="record-money ${record.amountCents < 0 ? 'negative-money' : ''}">¥ ${money(record.amountCents)}</span><span class="record-arrow" aria-hidden="true">↗</span></button>`;
+  const meta = record.scope === 'INCOME'
+    ? escape(record.date.slice(5).replace('-', '.'))
+    : `${escape(record.date.slice(5).replace('-', '.'))} <span class="record-pool" style="--pool-color:${poolColors[record.pool] || '#9b9891'}">${escape(poolNames[record.pool] ?? '结构性')}</span>`;
+  return `<button class="record-row" type="button" data-record="${escape(record.id)}">${rank != null ? `<span class="record-rank">${String(rank).padStart(2, '0')}</span>` : ''}<span class="record-main"><strong>${escape(record.title)}</strong><small>${meta} · ${escape(record.category)}${record.amountCents < 0 ? ' · 负调整' : ''}</small></span><span class="record-money ${record.amountCents < 0 ? 'negative-money' : ''}">¥ ${money(record.amountCents)}</span><span class="record-arrow" aria-hidden="true">↗</span></button>`;
 }
 
 export function categoriesHtml(month: DashboardMonth, expanded = false): string {
@@ -56,16 +59,22 @@ export function dashboardHtml(month: DashboardMonth, today: string, expanded = f
   const progress = monthProgress(month.month, today);
   const budgetRatio = active ? ratio(summary.personalCents, (summary.monthlyBudgetCents ?? 0) > 0 ? summary.monthlyBudgetCents! : summary.openingBudgetCents ?? 0) : null;
   const pendingCount = month.records.filter(record => record.pool === 'unknown').length;
+  // Zero-valued scope leads carry no information; hide them instead of showing ¥ 0.00.
+  const scopes = [
+    { id: 'structural', label: '结构性支出', cents: summary.structuralCents },
+    { id: 'income', label: '本月收入', cents: summary.incomeCents },
+    { id: 'unknown', label: '待归类消费', cents: summary.unknownCents },
+  ].filter(scope => scope.cents !== 0);
   const top = month.topIds.slice(0, 10).map((id) => month.records.find((record) => record.id === id)).filter((record): record is LedgerRecord => Boolean(record));
   return `
     <section class="overview" aria-label="月度概览">
       <div class="overview-grid">
         <div class="overview-card"><span>个人净消费</span><strong class="overview-amount"><small>¥</small> ${money(summary.personalCents)}</strong></div>
-        <div class="overview-card"><span>本月新增额度</span><strong class="overview-amount">${overviewBudgetValue(summary.monthlyBudgetCents, active)}</strong></div>
+        <div class="overview-card"><span>本月收入</span><strong class="overview-amount"><small>¥</small> ${money(summary.incomeCents)}</strong></div>
         <div class="overview-card"><span>${pendingCount?'各池可用（未含待分池）':'各池可用合计'}</span><strong class="overview-amount">${overviewBudgetValue(summary.availableCents, active)}</strong></div>
         <div class="overview-card"><span>安全积累</span><strong class="overview-amount">${overviewBudgetValue(summary.safetyCents, active)}</strong></div>
       </div>
-      <div class="overview-secondary"><button class="scope-item" data-scope="structural" type="button"><span>结构性支出</span><strong>¥ ${money(summary.structuralCents)}</strong>${arrow}</button><button class="scope-item" data-scope="income" type="button"><span>本月收入</span><strong>¥ ${money(summary.incomeCents)}</strong>${arrow}</button><button class="scope-item" data-scope="unknown" type="button"><span>待归类消费</span><strong>¥ ${money(summary.unknownCents)}</strong>${arrow}</button></div>
+      ${scopes.length ? `<div class="overview-secondary">${scopes.map((scope) => `<button class="scope-item" data-scope="${scope.id}" type="button"><span>${scope.label}</span><strong>¥ ${money(scope.cents)}</strong>${arrow}</button>`).join('')}</div>` : ''}
     </section>
     ${!active ? `<div class="mechanism-note" role="note">${month.mechanismActive?'当前没有可比较额度':'未设预算，默认额度为0，仍按用途统计消费。'} ${canEditBudget?'<button type="button" class="back-button" data-action="edit-budget">设置四池预算</button>':'可在电脑版“设置 → 四池预算”修改。'}</div>` : ''}
     <section class="rhythm-row" aria-labelledby="rhythm-title"><div class="rhythm-summary"><p class="eyebrow">01 / 月度节奏</p><h2 id="rhythm-title">时间走到了哪里</h2><div class="progress-block"><div class="progress-label"><span>月度时间</span><strong>${percent(progress.ratio)} <small>${progress.elapsed} / ${progress.total} 天</small></strong></div><div class="progress-track" aria-hidden="true"><i style="width:${boundedWidth(progress.ratio)}%"></i></div></div><div class="progress-block budget-progress"><div class="progress-label"><span>额度参考进度 </span><strong class="${(budgetRatio ?? 0) > 1 ? 'overrun-text' : ''}">${active ? percent(budgetRatio) : '暂无额度'}</strong></div><div class="progress-track ${(budgetRatio ?? 0) > 1 ? 'is-overrun' : ''}" aria-hidden="true"><i style="width:${boundedWidth(budgetRatio)}%"></i></div></div></div><div class="operation-panel"><div class="panel-header"><div><h3>累计净消费</h3></div><div class="line-legend"><span><i></i>实际</span>${active && (summary.monthlyBudgetCents ?? 0) > 0 ? '<span><i></i>总额度参考</span>' : ''}</div></div><div id="operation-chart" class="chart line-chart" role="img" aria-label="个人与项目每日累计净消费图，可在下方日历查看对应日期明细"></div></div></section>

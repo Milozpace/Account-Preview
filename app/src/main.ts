@@ -275,8 +275,9 @@ function searchBills(input:HTMLInputElement):void {
   const records=selectBills(month,query);
   const list=document.querySelector<HTMLElement>('.record-list');
   const caption=document.querySelector<HTMLElement>('.bill-count');
-  if(list)list.innerHTML=records.length?groupedRecords(records,query.scope==='structural'):empty('没有符合条件的记录','试试其他关键词，或重置筛选。');
-  if(caption)caption.textContent=`${records.length} 笔 · ${query.scope==='structural'?'合计':'净消费'} ¥ ${money(records.reduce((sum,record)=>sum+record.amountCents,0))}`;
+  const pooled=query.scope==='personal';
+  if(list)list.innerHTML=records.length?groupedRecords(records,!pooled):empty('没有符合条件的记录','试试其他关键词，或重置筛选。');
+  if(caption)caption.textContent=`${records.length} 笔 · ${pooled?'净消费':'合计'} ¥ ${money(records.reduce((sum,record)=>sum+record.amountCents,0))}`;
   const clear=document.querySelector<HTMLButtonElement>('[data-action="clear-search"]');if(clear)clear.hidden=!query.query;
 }
 function selectSettingsSection(section:SettingsSection):void {
@@ -399,7 +400,8 @@ main.addEventListener('click',event=>{
   if(data.pool){open({view:'pool',poolId:data.pool});return;}
   if(data.category){openBills({category:data.category});return;}
   if(data.date){if(state.view==='analysis'&&state.analysisTab==='calendar'){state.analysisDate=data.date;render();}else openBills({date:data.date});return;}
-  if(data.scope){openBills(data.scope==='structural'?{scope:'structural'}:{pool:'unknown'});return;}
+  if(data.scope==='structural'||data.scope==='income'){openBills({scope:data.scope});return;}
+  if(data.scope){openBills({pool:'unknown'});return;}
   if(data.open==='sync'&&!mobile()){state.settingsSection='sync';if(state.view==='settings')render();else open({view:'settings'});void refreshDesktopSettings();return;}
   if(data.open){open(data.open==='bills'?{view:'bills',query:emptyQuery()}:{view:data.open as Screen['view']});if(data.open==='sync')void refreshLedgerStatus().then(()=>{if(state.view==='sync')render();});return;}
   if(data.analysis){state.analysisTab=data.analysis as AnalysisTab;state.expanded=false;render('tab');return;}
