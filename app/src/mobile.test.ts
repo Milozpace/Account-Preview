@@ -41,6 +41,22 @@ describe('mobile presentation', () => {
     expect((html.match(/data-record=/g) ?? []).length).toBe(Math.min(5, month.records.length));
     expect(html).toContain('安全积累');
   });
+  it('shows this month income in the second hero slot instead of the added allowance', () => {
+    const html = homeHtml(month);
+    expect(html).toContain('<span>本月收入</span><strong>¥ 8,000.00</strong>');
+    expect(html).not.toContain('本月新增额度');
+  });
+  it('hides zero-valued mobile leads and omits the row when none remain', () => {
+    const zeroed = structuredClone(month);
+    Object.assign(zeroed.summary, {structuralCents: 0, incomeCents: 0, unknownCents: 500});
+    const some = homeHtml(zeroed);
+    expect(some).toContain('data-scope="unknown"');
+    expect(some).not.toContain('data-scope="structural"');
+    expect(some).not.toContain('data-scope="income"');
+    const none = structuredClone(month);
+    Object.assign(none.summary, {structuralCents: 0, incomeCents: 0, unknownCents: 0});
+    expect(homeHtml(none)).not.toContain('overview-secondary');
+  });
   it('has three analysis themes and only mounts charts on the trend theme', () => {
     const trend = analysisHtml(month, 'trend', null, '2026-10-16');
     expect(trend).toContain('id="operation-chart"');

@@ -155,9 +155,9 @@ describe('home cards and pool rows', () => {
   it('shows budget-derived values only while the mechanism is active', () => {
     const active = homeCards(october);
     expect(active.personal).toContain('256.50');
-    expect(active.budget).not.toBe('—');
+    expect(active.income).not.toBe('—');
     const inactive = homeCards({ ...sampleSnapshot.months[1], mechanismActive: false });
-    expect(inactive.budget).toBe('—');
+    expect(inactive.income).not.toBe('—');
     expect(inactive.available).toBe('—');
     expect(inactive.safety).toBe('—');
   });
@@ -178,7 +178,7 @@ describe('shared three-end fixture', () => {
     const fixtureOctober = sharedFixture.months[0];
     const cards = homeCards(fixtureOctober);
     expect(cards.personal).toBe('130.00');
-    expect(cards.budget).toBe('1,500.00');
+    expect(cards.income).toBe('8,000.00');
     expect(filterRecords(fixtureOctober.records, { ...emptyFilters(), query: '地铁' }).length).toBe(1);
     expect(categoryOptions(fixtureOctober)).toContain('餐饮与日常食品');
     expect(poolRow(fixtureOctober.pools[0])).toContain('运行账户');

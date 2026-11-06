@@ -159,7 +159,7 @@ export function recordDetail(record: LedgerRecord): Array<[string, string]> {
 
 export interface HomeCards {
   personal: string;
-  budget: string;
+  income: string;
   available: string;
   safety: string;
 }
@@ -169,7 +169,7 @@ export function homeCards(month: AppMonth): HomeCards {
   const active = month.mechanismActive;
   return {
     personal: money(month.summary.personalCents),
-    budget: money(active ? month.summary.monthlyBudgetCents : null),
+    income: money(month.summary.incomeCents),
     available: money(active ? month.summary.availableCents : null),
     safety: money(active ? month.summary.safetyCents : null),
   };
