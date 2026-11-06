@@ -57,6 +57,48 @@ class DesktopDisplayPolicyTests(unittest.TestCase):
         self.assertEqual(app_desktop.ledger_store.source_hash(self.database), before)
         self.assertEqual(publish.call_count, 1)
 
+    def test_restore_local_rebuilds_old_schema_without_publish_or_business_change(self):
+        path = self.export()
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['schemaVersion'] = 2
+        for month in value['months']:
+            month.pop('incomeRecords')
+            month.pop('incomeCategories')
+            month['summary'].pop('incomeCents')
+        path.write_text(json.dumps(value), encoding='utf-8')
+        before = app_desktop.ledger_store.source_hash(self.database)
+        with self.assertRaises(ValueError): app_desktop.load_snapshot(self.root)
+        with patch.object(app_desktop, '_publish', side_effect=AssertionError('restoration must not publish')) as publish:
+            result = app_desktop.refresh_snapshot(self.root, publish=False)
+        publish.assert_not_called()
+        self.assertEqual(result['snapshot']['schemaVersion'], 3)
+        self.assertEqual(result['appPublish'], {'ok':None, 'published':False, 'skipped':True,
+                                              'reason':'仅恢复本地账本目录，未执行App发布。'})
+        self.assertFalse(result['sourceChanged'])
+        self.assertFalse(result['monthChanged'])
+        self.assertEqual(before, app_desktop.ledger_store.source_hash(self.database))
+
+    def test_failed_local_restore_preserves_old_snapshot_and_never_publishes(self):
+        path = self.export()
+        old = b'{"schemaVersion":2,"syntheticOldCache":true}'
+        path.write_bytes(old)
+        before = self.database.read_bytes()
+        with patch.object(app_export, '_verify_current_source', side_effect=RuntimeError('synthetic source changed')), \
+             patch.object(app_desktop, '_publish', side_effect=AssertionError('must not publish')) as publish:
+            with self.assertRaisesRegex(RuntimeError, 'synthetic source changed'):
+                app_desktop.refresh_snapshot(self.root, publish=False)
+        publish.assert_not_called()
+        self.assertEqual(path.read_bytes(), old)
+        self.assertEqual(before, self.database.read_bytes())
+
+    def test_restore_local_cli_dispatches_without_publication(self):
+        with patch.object(sys, 'argv', ['app_desktop.py', 'restore-local', '--project-root', str(self.root)]), \
+             patch.object(app_desktop, 'refresh_snapshot', return_value={'synthetic': True}) as refresh, \
+             patch.object(app_desktop, 'load_snapshot', side_effect=AssertionError('old cache must not be loaded first')), \
+             patch.object(sys, 'stdout'):
+            self.assertEqual(app_desktop.main(), 0)
+        refresh.assert_called_once_with(self.root, publish=False)
+
     def test_changed_display_range_hides_cached_snapshot_with_same_hash_and_calendar(self):
         self.start('2026-09')
         self.export()

@@ -3,6 +3,7 @@
 The native host invokes this script with exact argv. Load and budget preview
 are read-only. Refresh uses the established optional publisher gate; explicit
 reviewed budget save updates SQLite and exports locally without publishing.
+Folder restoration rebuilds the current snapshot from SQLite without publication.
 Payloads go only to the caller's pipe.
 """
 import argparse
@@ -98,7 +99,7 @@ def _publish(root, snapshot_path):
         return dict(ok=False, published=False, error='本机展示已更新；App发布未完成，请稍后重试。')
 
 
-def refresh_snapshot(project_root):
+def refresh_snapshot(project_root, *, publish=True):
     root, workbook, path = project_paths(project_root)
     # Reuse the same OS advisory-lock implementation in a separate namespace:
     # sync_snapshot still obtains dashboard.lock internally. This outer lock
@@ -110,7 +111,8 @@ def refresh_snapshot(project_root):
         if loaded['snapshot'] is None:
             raise RuntimeError('同步后来源或月份已变化；请重新同步展示。')
         snapshot = loaded['snapshot']
-        publication = _publish(root, path)
+        publication = (_publish(root, path) if publish else
+                       dict(ok=None, published=False, skipped=True, reason='仅恢复本地账本目录，未执行App发布。'))
         # Preserve the independently validated, exact prepublication snapshot
         # and the publisher's known outcome. A late save/month rollover or a
         # failed final read cannot undo that outcome. Flags/warning describe
@@ -140,7 +142,7 @@ def refresh_snapshot(project_root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('load', 'refresh', 'budget-status', 'budget-preview', 'budget-save'))
+    parser.add_argument('command', choices=('load', 'refresh', 'restore-local', 'budget-status', 'budget-preview', 'budget-save'))
     parser.add_argument('--project-root', type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -152,6 +154,8 @@ def main():
                 payload = budget_settings.read_payload(sys.stdin.buffer)
                 operation = budget_settings.preview if args.command == 'budget-preview' else budget_settings.save
                 result = operation(args.project_root, payload)
+        elif args.command == 'restore-local':
+            result = refresh_snapshot(args.project_root, publish=False)
         else:
             operation = load_snapshot if args.command == 'load' else refresh_snapshot
             result = operation(args.project_root)

@@ -1,4 +1,4 @@
-//! Explicitly configured Windows/macOS project bridge. No ledger/cache/identity mutation here.
+//! Explicitly configured desktop bridge. Folder restoration rebuilds local snapshots only; no ledger or identity mutation.
 
 use crate::ledger;
 use serde::Deserialize;
@@ -130,8 +130,7 @@ pub(super) fn read_configuration() -> Result<ProjectConfig, String> {
     read_config_at(&path)
 }
 
-fn save_config_at(path: &Path, config: ProjectConfig) -> Result<ProjectConfig, String> {
-    let config = validate_config(config)?;
+fn validate_binding_at(path: &Path, config: &ProjectConfig) -> Result<(), String> {
     if path.exists() {
         let previous = read_config_at(path)?;
         let previous_root = PathBuf::from(&previous.project_root)
@@ -141,6 +140,12 @@ fn save_config_at(path: &Path, config: ProjectConfig) -> Result<ProjectConfig, S
             return Err("此试用环境已绑定其他项目，请为其他账本使用独立账户环境。".into());
         }
     }
+    Ok(())
+}
+
+fn save_config_at(path: &Path, config: ProjectConfig) -> Result<ProjectConfig, String> {
+    let config = validate_config(config)?;
+    validate_binding_at(path, &config)?;
     let parent = path.parent().ok_or("本地项目配置路径无效。")?;
     fs::create_dir_all(parent).map_err(|_| "无法建立本地项目配置目录。")?;
     let mut draft =
@@ -273,8 +278,35 @@ fn bridge_with(
     match operation {
         "load" => validate_load(value),
         "refresh" => validate_refresh(value),
+        "restore-local" => {
+            let value = validate_refresh(value)?;
+            if value["sourceChanged"] != false
+                || value["monthChanged"] != false
+                || !value["warning"].is_null()
+                || value["appPublish"]["skipped"] != true
+                || value["appPublish"]["published"] != false
+                || !value["appPublish"]["ok"].is_null()
+            {
+                return Err("本地恢复未能确认当前快照或无发布状态，请检查后重试。".into());
+            }
+            Ok(value)
+        }
+
         _ => Err("不支持的本地快照操作。".into()),
     }
+}
+
+fn restore_project_at(
+    path: &Path,
+    config: ProjectConfig,
+    execute: impl FnOnce(Command) -> Result<Output, String>,
+) -> Result<ProjectConfig, String> {
+    let config = validate_config(config)?;
+    // Reject a different existing binding before rebuilding anything in the
+    // chosen project, then recheck it again at the final atomic config save.
+    validate_binding_at(path, &config)?;
+    bridge_with(config.clone(), "restore-local", execute)?;
+    save_config_at(path, config)
 }
 
 async fn run_bridge(operation: &'static str) -> Result<Value, String> {
@@ -333,7 +365,7 @@ fn selected_config(root: &Path) -> Result<ProjectConfig, String> {
     })
 }
 
-/// Pick a ledger folder, prove it answers a real snapshot load, then bind it.
+/// Pick a ledger folder, rebuild a current local-only snapshot, then bind it.
 /// The previous binding stays in place when the pick is cancelled or fails.
 #[tauri::command]
 pub async fn desktop_restore_project() -> Result<Option<ProjectConfig>, String> {
@@ -348,18 +380,12 @@ pub async fn desktop_restore_project() -> Result<Option<ProjectConfig>, String> 
                 return Ok(None);
             };
             let config = selected_config(&root)?;
-            let run = |operation: &str| {
-                bridge_with(config.clone(), operation, |mut command| {
-                    command
-                        .output()
-                        .map_err(|_| "无法启动项目Python，请修复项目环境。".into())
-                })
-            };
-            let loaded = run("load")?;
-            if loaded.get("snapshot").is_none_or(Value::is_null) {
-                run("refresh")?;
-            }
-            save_config_at(&config_path()?, config).map(Some)
+            restore_project_at(&config_path()?, config, |mut command| {
+                command
+                    .output()
+                    .map_err(|_| "无法启动项目Python，请修复项目环境。".into())
+            })
+            .map(Some)
         })
         .await
         .map_err(|_| "选择账本目录未完成。".to_string())?
@@ -572,6 +598,92 @@ mod tests {
             .is_err()
         );
         assert!(validate_refresh(json!({"snapshot":fixture(),"appPublish":{"ok":true,"published":true},"sourceChanged":false,"monthChanged":false,"warning":"x".repeat(1025)})).is_err());
+    }
+
+    fn restore_response() -> Value {
+        json!({"snapshot":fixture(),"appPublish":{"ok":null,"published":false,"skipped":true,"reason":"local restore"},"sourceChanged":false,"monthChanged":false})
+    }
+
+    fn successful_output(value: Value) -> Output {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: serde_json::to_vec(&value).unwrap(),
+            stderr: vec![],
+        }
+    }
+
+    #[test]
+    fn folder_restore_checks_existing_binding_before_running_any_rebuild() {
+        let (temp, first) = fake_project();
+        let (_other, second) = fake_project();
+        let path = temp.path().join("config/project.json");
+        save_config_at(&path, first).unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(
+            restore_project_at(&path, second, |_| panic!("must reject before runner")).is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn folder_restore_uses_dedicated_local_operation_before_saving_binding() {
+        let (temp, config) = fake_project();
+        let path = temp.path().join("config/project.json");
+        let saved = restore_project_at(&path, config.clone(), |command| {
+            let argv: Vec<_> = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(argv[3], "restore-local");
+            assert!(!path.exists());
+            Ok(successful_output(restore_response()))
+        })
+        .unwrap();
+        assert_eq!(saved, validate_config(config).unwrap());
+        assert_eq!(read_config_at(&path).unwrap(), saved);
+    }
+
+    #[test]
+    fn folder_restore_failure_preserves_binding_and_snapshot() {
+        let (temp, config) = fake_project();
+        let path = temp.path().join("config/project.json");
+        save_config_at(&path, config.clone()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let snapshot = PathBuf::from(&config.project_root).join("snapshot.json");
+        fs::write(&snapshot, b"synthetic old cache").unwrap();
+        assert!(
+            restore_project_at(&path, config, |_| Err("synthetic rebuild failure".into())).is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read(&snapshot).unwrap(), b"synthetic old cache");
+    }
+
+    #[test]
+    fn local_restore_rejects_publication_staleness_warning_and_old_schema() {
+        let (_temp, config) = fake_project();
+        for (key, value) in [
+            ("appPublish", json!({"ok":true,"published":true})),
+            ("appPublish", json!({"ok":null,"published":false})),
+            ("sourceChanged", json!(true)),
+            ("monthChanged", json!(true)),
+            ("warning", json!("synthetic uncertainty")),
+        ] {
+            let mut response = restore_response();
+            response[key] = value;
+            assert!(
+                bridge_with(config.clone(), "restore-local", |_| Ok(successful_output(
+                    response
+                )))
+                .is_err()
+            );
+        }
+        let mut response = restore_response();
+        response["snapshot"]["schemaVersion"] = json!(2);
+        assert!(bridge_with(config, "restore-local", |_| Ok(successful_output(response))).is_err());
     }
 
     #[test]
