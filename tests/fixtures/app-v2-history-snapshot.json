@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "snapshotKind": "account-ledger-view",
   "sourceHash": "abababababababababababababababababababababababababababababababab",
   "calendarMonth": "2026-11",
@@ -28,7 +28,8 @@
         "openingBudgetCents": 150000,
         "availableCents": 150000,
         "overrunCents": 0,
-        "safetyCents": 0
+        "safetyCents": 0,
+        "incomeCents": 0
       },
       "pools": [
         {
@@ -295,7 +296,9 @@
       "categories": [],
       "records": [],
       "structuralRecords": [],
-      "topIds": []
+      "topIds": [],
+      "incomeRecords": [],
+      "incomeCategories": []
     },
     {
       "month": "2026-10",
@@ -303,14 +306,15 @@
       "mechanismActive": true,
       "summary": {
         "personalCents": 13000,
-        "structuralCents": -550000,
-        "totalCents": -537000,
+        "structuralCents": 250000,
+        "totalCents": 263000,
         "unknownCents": 1200,
         "monthlyBudgetCents": 150000,
         "openingBudgetCents": 146500,
         "availableCents": 134700,
         "overrunCents": 0,
-        "safetyCents": 30000
+        "safetyCents": 30000,
+        "incomeCents": 800000
       },
       "pools": [
         {
@@ -665,16 +669,6 @@
           "pool": "unknown",
           "scope": "STRUCTURAL",
           "amountCents": 250000
-        },
-        {
-          "id": "tx_oct_salary",
-          "time": "2026-10-10T12:00:00+08:00",
-          "date": "2026-10-10",
-          "title": "合成工资入账",
-          "category": "收入结转",
-          "pool": "unknown",
-          "scope": "STRUCTURAL",
-          "amountCents": -800000
         }
       ],
       "topIds": [
@@ -682,6 +676,25 @@
         "tx_oct_lunch",
         "tx_oct_metro",
         "tx_oct_misc"
+      ],
+      "incomeRecords": [
+        {
+          "id": "tx_oct_salary",
+          "time": "2026-10-10T12:00:00+08:00",
+          "date": "2026-10-10",
+          "title": "合成工资入账",
+          "category": "收入结转",
+          "pool": "unknown",
+          "scope": "INCOME",
+          "amountCents": 800000
+        }
+      ],
+      "incomeCategories": [
+        {
+          "name": "收入结转",
+          "amountCents": 800000,
+          "count": 1
+        }
       ]
     },
     {
@@ -690,14 +703,15 @@
       "mechanismActive": true,
       "summary": {
         "personalCents": 24900,
-        "structuralCents": -550000,
-        "totalCents": -525100,
+        "structuralCents": 250000,
+        "totalCents": 274900,
         "unknownCents": 0,
         "monthlyBudgetCents": 150000,
         "openingBudgetCents": 146500,
         "availableCents": 121600,
         "overrunCents": 0,
-        "safetyCents": 30000
+        "safetyCents": 30000,
+        "incomeCents": 800000
       },
       "pools": [
         {
@@ -1030,7 +1044,14 @@
           "pool": "unknown",
           "scope": "STRUCTURAL",
           "amountCents": 250000
-        },
+        }
+      ],
+      "topIds": [
+        "tx_sep_train",
+        "tx_sep_course",
+        "tx_sep_coffee"
+      ],
+      "incomeRecords": [
         {
           "id": "tx_sep_salary",
           "time": "2026-09-10T12:00:00+08:00",
@@ -1038,14 +1059,16 @@
           "title": "合成工资入账",
           "category": "收入结转",
           "pool": "unknown",
-          "scope": "STRUCTURAL",
-          "amountCents": -800000
+          "scope": "INCOME",
+          "amountCents": 800000
         }
       ],
-      "topIds": [
-        "tx_sep_train",
-        "tx_sep_course",
-        "tx_sep_coffee"
+      "incomeCategories": [
+        {
+          "name": "收入结转",
+          "amountCents": 800000,
+          "count": 1
+        }
       ]
     }
   ]

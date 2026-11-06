@@ -232,7 +232,7 @@ class BudgetSettingsTests(unittest.TestCase):
         self.assertTrue(saved['snapshotUpdated'])
         snapshot = app_desktop.load_snapshot(self.root)['snapshot']
         self.assertEqual(snapshot['sourceHash'], saved['sourceHash'])
-        self.assertEqual(snapshot['schemaVersion'], 2)
+        self.assertEqual(snapshot['schemaVersion'], 3)
 
     def test_export_failure_is_reported_separately_from_committed_ledger(self):
         self.assertIsNotNone(budget_settings, 'budget settings bridge is required')

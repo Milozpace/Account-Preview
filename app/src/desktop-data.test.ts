@@ -34,7 +34,7 @@ describe('native data behind the unchanged web presentation',()=>{
  it('shows the verified cache before a slow local read and never fetches cloud automatically',async()=>{
   vi.useFakeTimers();const local=deferred<unknown>();const calls:string[]=[];
   const data=createDesktopData({invoke:async command=>{calls.push(command);if(command==='ledger_cache')return{revision:7,snapshot:fresh()};if(command==='desktop_load_snapshot')return local.promise;throw Error('unexpected');},today:()=> '2026-10-17'});
-  const snapshot=await data.api<any>('/api/dashboard');expect(snapshot.schemaVersion).toBe(1);expect(snapshot.months).toEqual(fixture.months);
+  const snapshot=await data.api<any>('/api/dashboard');expect(snapshot.schemaVersion).toBe(2);expect(snapshot.months).toEqual(fixture.months);
   await vi.runOnlyPendingTimersAsync();expect(calls).toEqual(['ledger_cache','desktop_load_snapshot']);
   expect((await data.api<any>('/api/status')).syncDetail).toContain('本地缓存');
   local.resolve({snapshot:fresh(),sourceChanged:false,monthChanged:false});await Promise.resolve();await Promise.resolve();

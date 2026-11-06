@@ -2,7 +2,7 @@
 //!
 //! The live business identity is independent from the synthetic probe: its
 //! own secure-storage slots, cache files, and cloud directory. This module
-//! validates the exported `account-ledger-view` payload (schemaVersion 2);
+//! validates the exported `account-ledger-view` payload (schemaVersion 3);
 //! it never re-derives budget, rollover, or classification. Contract:
 //! `docs/App真实快照契约V2.md`.
 #![forbid(unsafe_code)]
@@ -73,7 +73,7 @@ impl LedgerIdentity {
 }
 
 // ---------------------------------------------------------------------------
-// App V2 payload contract. Deserialization enforces the field whitelist;
+// App V3 payload contract. Deserialization enforces the field whitelist;
 // validation enforces reconciliation and range rules before any cache write.
 // ---------------------------------------------------------------------------
 
@@ -114,6 +114,8 @@ pub struct LedgerMonth {
     pub categories: Vec<Category>,
     pub records: Vec<LedgerRecord>,
     pub structural_records: Vec<LedgerRecord>,
+    pub income_records: Vec<LedgerRecord>,
+    pub income_categories: Vec<Category>,
     pub top_ids: Vec<String>,
 }
 
@@ -130,6 +132,7 @@ pub struct MonthSummary {
     pub available_cents: i64,
     pub overrun_cents: i64,
     pub safety_cents: i64,
+    pub income_cents: i64,
 }
 
 /// One funding pool. All cents fields are mandatory integers in the real V1
@@ -301,6 +304,7 @@ fn check_record(
     record: &LedgerRecord,
     month: &str,
     seen: &mut std::collections::HashSet<String>,
+    income: bool,
 ) -> Result<i64, String> {
     if record.id.is_empty() || !seen.insert(record.id.clone()) {
         return Err(format!("{month} 记录ID缺失或重复，已拒绝。"));
@@ -330,7 +334,12 @@ fn check_record(
     ) {
         return Err(format!("{month} 记录资金池越界，已拒绝。"));
     }
-    if !matches!(record.scope.as_str(), "PERSONAL" | "PROJECT" | "STRUCTURAL") {
+    if income {
+        // Income records carry no pool and never mix into consumption lists.
+        if record.scope != "INCOME" || record.pool != "unknown" {
+            return Err(format!("{month} 收入记录口径或资金池越界，已拒绝。"));
+        }
+    } else if !matches!(record.scope.as_str(), "PERSONAL" | "PROJECT" | "STRUCTURAL") {
         return Err(format!("{month} 记录口径越界，已拒绝。"));
     }
     check_cents(record.amount_cents, &format!("{month} 记录金额"))?;
@@ -391,6 +400,7 @@ fn check_summary(
     personal: i64,
     structural: i64,
     unknown: i64,
+    income: i64,
     pools: &[Pool],
 ) -> Result<(), String> {
     for (label, value) in [
@@ -403,6 +413,7 @@ fn check_summary(
         ("availableCents", summary.available_cents),
         ("overrunCents", summary.overrun_cents),
         ("safetyCents", summary.safety_cents),
+        ("incomeCents", summary.income_cents),
     ] {
         check_cents(value, &format!("{month} 汇总{label}"))?;
     }
@@ -412,6 +423,9 @@ fn check_summary(
     }
     if summary.unknown_cents != unknown {
         return Err(format!("{month} 待归类净额与明细对账失败，已拒绝。"));
+    }
+    if summary.income_cents != income {
+        return Err(format!("{month} 收入合计与明细对账失败，已拒绝。"));
     }
     let pool_sum = |pick: fn(&Pool) -> i64| -> Result<i64, String> {
         pools.iter().try_fold(0i64, |acc, pool| {
@@ -476,43 +490,44 @@ fn check_daily(
 fn check_categories(
     categories: &[Category],
     month: &str,
-    personal: i64,
+    expected_total: i64,
     by_category: &std::collections::HashMap<String, i64>,
     by_category_count: &std::collections::HashMap<String, u64>,
+    label: &str,
 ) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     let mut total = 0i64;
     for category in categories {
         if category.name.is_empty() || !seen.insert(category.name.clone()) {
-            return Err(format!("{month} 分类名称缺失或重复，已拒绝。"));
+            return Err(format!("{month} {label}名称缺失或重复，已拒绝。"));
         }
-        check_cents(category.amount_cents, &format!("{month} 分类金额"))?;
+        check_cents(category.amount_cents, &format!("{month} {label}金额"))?;
         if category.count > MAX_SAFE_CENTS as u64 {
-            return Err(format!("{month} 分类笔数超出范围，已拒绝。"));
+            return Err(format!("{month} {label}笔数超出范围，已拒绝。"));
         }
         if by_category.get(&category.name).copied().unwrap_or(0) != category.amount_cents
             || by_category_count.get(&category.name).copied().unwrap_or(0) != category.count
         {
-            return Err(format!("{month} 分类消费与明细对账失败，已拒绝。"));
+            return Err(format!("{month} {label}与明细对账失败，已拒绝。"));
         }
-        total = checked_sum(total, category.amount_cents, &format!("{month} 分类合计"))?;
+        total = checked_sum(total, category.amount_cents, &format!("{month} {label}合计"))?;
     }
-    if total != personal {
-        return Err(format!("{month} 分类合计与个人净额对账失败，已拒绝。"));
+    if total != expected_total {
+        return Err(format!("{month} {label}合计与对应净额对账失败，已拒绝。"));
     }
     Ok(())
 }
 
-/// Validate the full App V2 contract. Returns the parsed snapshot; the
+/// Validate the full App V3 contract. Returns the parsed snapshot; the
 /// plaintext is rejected before any cache write when anything is off.
 pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
     if plaintext.len() > account_app_core::MAX_SNAPSHOT_BYTES {
         return Err("账单快照超过大小上限，已拒绝。".into());
     }
     let snapshot: LedgerSnapshot = serde_json::from_slice(plaintext)
-        .map_err(|_| "账单快照不是受支持的 App V2 契约，已拒绝。".to_string())?;
-    if snapshot.schema_version != 2 || snapshot.snapshot_kind != SNAPSHOT_KIND {
-        return Err("账单快照不是受支持的 App V2 契约，已拒绝。".into());
+        .map_err(|_| "账单快照不是受支持的 App V3 契约，已拒绝。".to_string())?;
+    if snapshot.schema_version != 3 || snapshot.snapshot_kind != SNAPSHOT_KIND {
+        return Err("账单快照不是受支持的 App V3 契约，已拒绝。".into());
     }
     if snapshot.coverage.kind != COVERAGE_KIND && snapshot.coverage.kind != LEGACY_COVERAGE_KIND {
         return Err("账单快照范围声明无效，已拒绝。".into());
@@ -566,7 +581,7 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
         for record in &view.records {
             personal = checked_sum(
                 personal,
-                check_record(record, month, &mut seen)?,
+                check_record(record, month, &mut seen, false)?,
                 &format!("{month} 个人净额"),
             )?;
         }
@@ -574,11 +589,19 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
         for record in &view.structural_records {
             structural = checked_sum(
                 structural,
-                check_record(record, month, &mut seen)?,
+                check_record(record, month, &mut seen, false)?,
                 &format!("{month} 结构性净额"),
             )?;
         }
-        exported += view.records.len() + view.structural_records.len();
+        let mut income = 0i64;
+        for record in &view.income_records {
+            income = checked_sum(
+                income,
+                check_record(record, month, &mut seen, true)?,
+                &format!("{month} 收入合计"),
+            )?;
+        }
+        exported += view.records.len() + view.structural_records.len() + view.income_records.len();
         if view.summary.personal_cents != personal {
             return Err(format!("{month} 个人净额与明细对账失败，已拒绝。"));
         }
@@ -612,6 +635,7 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
             personal,
             structural,
             unknown,
+            income,
             &view.pools,
         )?;
         check_pools(&view.pools, month, &pool_used)?;
@@ -622,6 +646,30 @@ pub fn parse_payload(plaintext: &[u8]) -> Result<LedgerSnapshot, String> {
             personal,
             &by_category,
             &by_category_count,
+            "分类",
+        )?;
+        let mut by_income_category: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        let mut by_income_count: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for record in &view.income_records {
+            let category = by_income_category
+                .entry(record.category.clone())
+                .or_insert(0);
+            *category = checked_sum(
+                *category,
+                record.amount_cents,
+                &format!("{month} 收入分类合计"),
+            )?;
+            *by_income_count.entry(record.category.clone()).or_insert(0) += 1;
+        }
+        check_categories(
+            &view.income_categories,
+            month,
+            income,
+            &by_income_category,
+            &by_income_count,
+            "收入分类",
         )?;
         if view.top_ids.len() > 10
             || view
@@ -840,7 +888,45 @@ pub mod tests {
         assert_eq!(snapshot.months[0].pools.len(), 4);
         assert_eq!(snapshot.months[0].daily.len(), 31);
         assert_eq!(snapshot.months[1].daily.len(), 30);
-        assert_eq!(snapshot.months[0].summary.total_cents, -537000);
+        assert_eq!(snapshot.months[0].summary.total_cents, 263000);
+        assert_eq!(snapshot.months[0].summary.income_cents, 800000);
+        assert_eq!(snapshot.months[0].income_records.len(), 1);
+        assert_eq!(snapshot.months[0].income_records[0].amount_cents, 800000);
+        assert_eq!(snapshot.months[1].income_records.len(), 1);
+    }
+
+    #[test]
+    fn income_contract_rejects() {
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["months"][0]["incomeRecords"][0]["pool"] = serde_json::json!("operation")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["months"][0]["incomeRecords"][0]["scope"] = serde_json::json!("STRUCTURAL")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["months"][0]["records"][0]["scope"] = serde_json::json!("INCOME")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["months"][0]["summary"]["incomeCents"] = serde_json::json!(1)
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["months"][0]["incomeCategories"][0]["amountCents"] = serde_json::json!(1)
+            ))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1026,6 +1112,12 @@ pub mod tests {
         assert!(
             parse_payload(&mutate_payload(
                 |v| v["schemaVersion"] = serde_json::json!(1)
+            ))
+            .is_err()
+        );
+        assert!(
+            parse_payload(&mutate_payload(
+                |v| v["schemaVersion"] = serde_json::json!(2)
             ))
             .is_err()
         );

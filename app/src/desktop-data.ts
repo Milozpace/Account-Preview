@@ -16,7 +16,7 @@ interface Options {
 }
 const errorText=(error:unknown,fallback:string)=>typeof error==='string'&&error.length<200?error:fallback;
 
-/** Native validates V2; only the presentation-facing envelope is V1-shaped. */
+/** Native validates V3; only the presentation-facing envelope is V2-shaped. */
 export function createDesktopData(options:Options){
   let current:AppV2Snapshot|null=options.previewSnapshot??null;
   let source=options.previewSnapshot?'preview':'none';
@@ -75,7 +75,7 @@ export function createDesktopData(options:Options){
     await initialize();
     if(path==='/api/dashboard'){
       if(!current)throw Error(error||'还没有可用快照，请先同步展示。');
-      return {...current,schemaVersion:1} as T;
+      return {...current,schemaVersion:2} as T;
     }
     if(path==='/api/status'){
       if(source!=='preview'&&Date.now()-lastRead>5000&&!syncing&&lastRead)void loadLocal();

@@ -1,8 +1,8 @@
-"""App V2 ledger-view snapshot export.
+"""App V3 ledger-view snapshot export.
 
-Reuses the web V1 product of one native Excel recalculation; adds the
+Reuses the web V2 product of one native Excel recalculation; adds the
 versioned `account-ledger-view` envelope with a tracked-months coverage
-declaration. Contract: docs/App真实快照契约V2.md. This module never talks
+declaration. Contract: docs/快照与月份.md. This module never talks
 to the network; publishing belongs to the native App publisher.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ import account
 import dashboard_data
 import ledger_source
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SNAPSHOT_KIND = 'account-ledger-view'
 COVERAGE_KIND = 'tracked-months'
 LEGACY_COVERAGE_KIND = 'recent-months'
@@ -38,10 +38,12 @@ SAFE_CENTS_LIMIT = 2 ** 53 - 1
 TOP_FIELDS = {'schemaVersion', 'snapshotKind', 'sourceHash', 'calendarMonth',
               'generatedAt', 'sourceLastRecordedAt', 'ledgerCount', 'coverage', 'months'}
 MONTH_FIELDS = {'month', 'lastRecordedAt', 'mechanismActive', 'summary', 'pools',
-                'daily', 'categories', 'records', 'structuralRecords', 'topIds'}
+                'daily', 'categories', 'records', 'structuralRecords', 'topIds',
+                'incomeRecords', 'incomeCategories'}
 SUMMARY_FIELDS = {'personalCents', 'structuralCents', 'totalCents', 'unknownCents',
                   'monthlyBudgetCents', 'openingBudgetCents', 'availableCents',
-                  'overrunCents', 'safetyCents'}
+                  'overrunCents', 'safetyCents', 'incomeCents'}
+CONSUMPTION_SCOPES = ('PERSONAL', 'PROJECT', 'STRUCTURAL')
 POOL_FIELDS = {'id', 'name', 'budgetCents', 'carryCents', 'openingCents', 'spentCents',
                'endingCents', 'availableCents', 'overrunCents', 'usageRatio'}
 DAILY_FIELDS = {'date', 'amountCents', 'operationCumulativeCents', 'referenceCents', 'count'}
@@ -84,7 +86,7 @@ def _timestamp(value, label):
     return value
 
 
-def _check_record(item, month, seen, label):
+def _check_record(item, month, seen, label, income=False):
     if not isinstance(item, dict):
         raise ValueError(f'{label}记录必须是对象')
     identity = item.get('id')
@@ -104,7 +106,11 @@ def _check_record(item, month, seen, label):
         raise ValueError(f'{month}记录分类缺失')
     if item['pool'] not in POOL_IDS:
         raise ValueError(f'{month}记录资金池越界')
-    if item['scope'] not in ('PERSONAL', 'PROJECT', 'STRUCTURAL'):
+    if income:
+        # Income records carry no pool and never mix into consumption lists.
+        if item['scope'] != 'INCOME' or item['pool'] != 'unknown':
+            raise ValueError(f'{month}收入记录口径或资金池越界')
+    elif item['scope'] not in CONSUMPTION_SCOPES:
         raise ValueError(f'{month}记录口径越界')
     return _cents(item['amountCents'], f'{month}记录金额')
 
@@ -166,26 +172,26 @@ def _check_daily(view, month, by_date, by_count):
             raise ValueError(f'{month}日消费与明细对账失败')
 
 
-def _check_categories(view, month, personal, by_category, by_category_count):
+def _check_categories(view, month, total, by_category, by_category_count, label='分类'):
     categories = view.get('categories')
     if not isinstance(categories, list):
-        raise ValueError(f'{month}分类消费缺失')
-    total = 0
+        raise ValueError(f'{month}{label}消费缺失')
+    sum_total = 0
     seen_names = set()
     for item in categories:
         if not isinstance(item, dict) or set(item) != CATEGORY_FIELDS:
-            raise ValueError(f'{month}分类字段不符合白名单')
+            raise ValueError(f'{month}{label}字段不符合白名单')
         name = item['name']
         if not isinstance(name, str) or not name or name in seen_names:
-            raise ValueError(f'{month}分类名称缺失或重复')
+            raise ValueError(f'{month}{label}名称缺失或重复')
         seen_names.add(name)
-        amount = _cents(item['amountCents'], f'{month}分类金额')
-        _count(item['count'], f'{month}分类笔数')
+        amount = _cents(item['amountCents'], f'{month}{label}金额')
+        _count(item['count'], f'{month}{label}笔数')
         if amount != by_category.get(name, 0) or item['count'] != by_category_count.get(name, 0):
-            raise ValueError(f'{month}分类消费与明细对账失败')
-        total += amount
-    if total != personal:
-        raise ValueError(f'{month}分类合计与个人净额对账失败')
+            raise ValueError(f'{month}{label}与明细对账失败')
+        sum_total += amount
+    if sum_total != total:
+        raise ValueError(f'{month}{label}合计与对应净额对账失败')
 
 
 def validate_app_snapshot(snapshot):
@@ -196,7 +202,7 @@ def validate_app_snapshot(snapshot):
     if set(snapshot) != TOP_FIELDS:
         raise ValueError('快照字段不符合白名单')
     if snapshot.get('schemaVersion') != SCHEMA_VERSION:
-        raise ValueError('快照不是App V2契约；已拒绝')
+        raise ValueError('快照不是App V3契约；已拒绝')
     if snapshot.get('snapshotKind') != SNAPSHOT_KIND:
         raise ValueError('快照类型不是account-ledger-view；已拒绝')
     if not isinstance(snapshot['sourceHash'], str) or not snapshot['sourceHash']:
@@ -246,11 +252,17 @@ def validate_app_snapshot(snapshot):
             raise ValueError(f'{month}汇总字段不符合白名单')
         records = view.get('records')
         structural = view.get('structuralRecords')
-        if not isinstance(records, list) or not isinstance(structural, list):
+        income = view.get('incomeRecords')
+        income_categories = view.get('incomeCategories')
+        if not isinstance(records, list) or not isinstance(structural, list) \
+                or not isinstance(income, list) or not isinstance(income_categories, list):
             raise ValueError(f'{month}明细缺失')
         personal = sum(_check_record(item, month, seen, '个人') for item in records)
         structural_total = sum(_check_record(item, month, seen, '结构性') for item in structural)
-        exported += len(records) + len(structural)
+        income_total = sum(_check_record(item, month, seen, '收入', income=True) for item in income)
+        exported += len(records) + len(structural) + len(income)
+        if _cents(summary['incomeCents'], f'{month}收入合计') != income_total:
+            raise ValueError(f'{month}收入合计与明细对账失败')
         if _cents(summary['personalCents'], f'{month}个人净额') != personal:
             raise ValueError(f'{month}个人净额与明细对账失败')
         if _cents(summary['structuralCents'], f'{month}结构性净额') != structural_total:
@@ -286,6 +298,12 @@ def validate_app_snapshot(snapshot):
             raise ValueError(f'{month}超支额与四池对账失败')
         _check_daily(view, month, by_date, by_count)
         _check_categories(view, month, personal, by_category, by_category_count)
+        by_income_category, by_income_count = defaultdict(int), defaultdict(int)
+        for item in income:
+            by_income_category[item['category']] += item['amountCents']
+            by_income_count[item['category']] += 1
+        _check_categories({'categories': income_categories}, month, income_total,
+                          by_income_category, by_income_count, label='收入分类')
         top = view.get('topIds')
         if not isinstance(top, list) or len(top) > 10:
             raise ValueError(f'{month}重点记录数量无效')
@@ -394,7 +412,7 @@ def export_snapshot(workbook, output=None, write=True):
                'snapshotKind': SNAPSHOT_KIND, 'months': snapshot['coverage']['months'],
                'calendarMonth': snapshot['calendarMonth'], 'ledgerCount': snapshot['ledgerCount'],
                'exportedRecords': sum(len(v['records']) + len(v['structuralRecords'])
-                                      for v in snapshot['months']),
+                                      + len(v['incomeRecords']) for v in snapshot['months']),
                'bytes': len(payload.encode('utf-8')), 'webSnapshotReused': reuse['reused'],
                'sourceHash': snapshot['sourceHash']}
     return summary

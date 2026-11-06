@@ -75,6 +75,21 @@ function validate(selected: DashboardMonth, month: string): void {
         || ![...POOLS, 'unknown'].includes(record.pool)) throw new Error('快照明细口径无效');
     }
   }
+  for (const record of selected.incomeRecords) {
+    cents(record.amountCents);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date) || !record.date.startsWith(`${month}-`)
+      || new Date(`${record.date}T00:00:00Z`).toISOString().slice(0, 10) !== record.date) {
+      throw new Error('快照明细日期无效或不属于所选月份');
+    }
+    if (record.scope !== 'INCOME' || record.pool !== 'unknown') throw new Error('快照收入明细口径无效');
+  }
+  for (const category of selected.incomeCategories) {
+    cents(category.amountCents);
+    if (!Number.isSafeInteger(category.count) || category.count < 0) throw new Error('快照收入分类笔数无效');
+  }
+  if (selected.incomeCategories.reduce((sum, category) => sum + category.amountCents, 0) !== summary.incomeCents) {
+    throw new Error('快照收入分类合计与收入净额不一致');
+  }
 }
 
 function table(headers: string[], rows: string[][]): string[] {
@@ -91,17 +106,18 @@ export function buildAnalysisExport(
   const selected = matches[0];
   validate(selected, month);
   const { summary, mechanismActive } = selected;
+  cents(summary.incomeCents);
   const monthEnd = new Date(`${month}-01T00:00:00Z`);
   monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
   monthEnd.setUTCDate(0);
-  const dates = [...selected.records, ...selected.structuralRecords].map(record => record.date).sort();
+  const dates = [...selected.records, ...selected.structuralRecords, ...selected.incomeRecords].map(record => record.date).sort();
   const share = (amount: number) => percent(summary.personalCents > 0 ? amount / summary.personalCents : null);
   const budgetMoney = (amount: number | null) => money(mechanismActive ? amount : null);
   const poolNames = new Map(selected.pools.map(pool => [pool.id, text(pool.name)]));
-  const details = (records: LedgerRecord[], structural: boolean): string[] => records.length === 0 ? ['暂无记录。']
+  const details = (records: LedgerRecord[], structural: boolean, income = false): string[] => records.length === 0 ? ['暂无记录。']
     : table(['序号', '日期', '事项', '主分类', '资金池', '净额（元）'], records.map((record, index) => [
       String(index + 1), record.date, text(record.title) || '消费记录', text(record.category) || '未填写分类',
-      structural ? '不适用' : record.pool === 'unknown' ? '待归类' : poolNames.get(record.pool)!, money(record.amountCents),
+      income ? '不适用' : structural ? '不适用' : record.pool === 'unknown' ? '待归类' : poolNames.get(record.pool)!, money(record.amountCents),
     ]));
   const lines = [
     `# ${month} 消费复盘`, '',
@@ -113,6 +129,7 @@ export function buildAnalysisExport(
     '## 统计口径', '',
     '- 金额单位为元，沿用账本已计算净额；退款及其他负调整保留负号。个人净消费包含 PERSONAL 与 PROJECT。',
     '- 结构性净额及明细单列，不计入个人消费分类、四池消费与预算。待归类单列，不补判分类或分池。',
+    '- 当月收入单列：仅统计已入账的 INCOME 收入记录，与消费、四池、预算互相独立；未导入账本的真实收入不计入。',
     '- 消费占比以个人净消费为分母，仅在分母大于零时展示；四池占比不强制合计为 100%。预算使用率沿用快照，仅在期初预算大于零且预算机制启用时展示。',
     '- 期初预算包含滚存。预算、可用额度、安全积累均不代表实际账户现金；预算机制未启用时相关数值显示“—”。',
     '- 本文只反映所选月份的已缓存记录，时间信息不代表来源完整性；不作消费价值判断。', '',
@@ -120,6 +137,7 @@ export function buildAnalysisExport(
     ...table(['指标', '金额（元）'], [
       ['个人净消费（含项目）', money(summary.personalCents)],
       ['结构性净额', money(summary.structuralCents)], ['合计净额', money(summary.totalCents)],
+      ['当月收入（已入账）', money(summary.incomeCents)],
       ['待归类净消费', money(summary.unknownCents)], ['月度新增预算', budgetMoney(summary.monthlyBudgetCents)],
       ['期初预算（含滚存）', budgetMoney(summary.openingBudgetCents)], ['可用额度', budgetMoney(summary.availableCents)],
       ['超支', budgetMoney(summary.overrunCents)], ['安全积累', budgetMoney(summary.safetyCents)],
@@ -127,6 +145,10 @@ export function buildAnalysisExport(
     '## 分类汇总', '',
     ...table(['主分类', '净消费（元）', '笔数', '个人消费占比'], selected.categories.map(category => [
       text(category.name) || '未填写分类', money(category.amountCents), String(category.count), share(category.amountCents),
+    ])), '',
+    '## 收入分类汇总', '',
+    ...table(['主分类', '收入（元）', '笔数'], selected.incomeCategories.map(category => [
+      text(category.name) || '未填写分类', money(category.amountCents), String(category.count),
     ])), '',
     '## 四池与待归类', '',
     ...table(['资金池', '月度预算（元）', '滚存（元）', '期初预算（元）', '净消费（元）', '个人消费占比', '预算使用率', '可用额度（元）', '超支（元）'], [
@@ -141,6 +163,7 @@ export function buildAnalysisExport(
     ]), '',
     '## 个人消费明细（含项目）', '', ...details(selected.records, false), '',
     '## 结构性明细', '', ...details(selected.structuralRecords, true), '',
+    '## 收入明细（已入账）', '', ...details(selected.incomeRecords, true, true), '',
   ];
   return { fileName: `消费复盘_${month}.md`, content: lines.join('\n') };
 }

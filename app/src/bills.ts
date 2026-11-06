@@ -2,17 +2,19 @@
  * Pure bill-view logic for the App ledger UI: month selection, record
  * filtering, and row rendering. No Tauri or DOM access here, so every rule
  * is unit-testable. Types come from the shared web dashboard sources; the
- * App renders the same validated App V2 snapshot shape.
+ * App renders the same validated App V3 snapshot shape.
  */
 import { escapeHtml, money, monthTitle } from '../../dashboard/src/helpers';
 import type { LedgerRecord, Pool, PoolId } from '../../dashboard/src/types';
 
 // ---------------------------------------------------------------------------
-// App V2 contract types — the TypeScript mirror of src-tauri/src/ledger.rs.
+// App V3 contract types — the TypeScript mirror of src-tauri/src/ledger.rs.
 // All cents are safe integers (money() throws on anything else); pool and
-// summary cents are mandatory, exactly like the real V1 native result. Only
+// summary cents are mandatory, exactly like the real native result. Only
 // usageRatio (when opening <= 0) and timestamps may be null. The Rust parser
 // enforces this before any display, so these types document the trusted shape.
+// Income records ride in the snapshot (scope INCOME, pool unknown) but the
+// mobile UI does not render them yet.
 // ---------------------------------------------------------------------------
 export interface AppV2Daily {
   date: string; amountCents: number; operationCumulativeCents: number;
@@ -27,15 +29,18 @@ export interface AppV2Summary {
   personalCents: number; structuralCents: number; totalCents: number; unknownCents: number;
   monthlyBudgetCents: number; openingBudgetCents: number;
   availableCents: number; overrunCents: number; safetyCents: number;
+  incomeCents: number;
 }
 export interface AppV2Month {
   month: string; lastRecordedAt: string | null; mechanismActive: boolean;
   summary: AppV2Summary; pools: AppV2Pool[]; daily: AppV2Daily[];
   categories: Array<{ name: string; amountCents: number; count: number }>;
-  records: LedgerRecord[]; structuralRecords: LedgerRecord[]; topIds: string[];
+  records: LedgerRecord[]; structuralRecords: LedgerRecord[];
+  incomeRecords: LedgerRecord[]; incomeCategories: Array<{ name: string; amountCents: number; count: number }>;
+  topIds: string[];
 }
 export interface AppV2Snapshot {
-  schemaVersion: 2; snapshotKind: string; sourceHash: string;
+  schemaVersion: 3; snapshotKind: string; sourceHash: string;
   calendarMonth: string; generatedAt: string; sourceLastRecordedAt: string | null;
   ledgerCount: number; coverage: { kind: string; months: string[] };
   months: AppV2Month[];

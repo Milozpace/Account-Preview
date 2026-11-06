@@ -18,15 +18,18 @@ describe('buildAnalysisExport', () => {
     expect(result.content).toContain('来源最新记录时间：2026-10-12T12:00:00+08:00');
     expect(result.content).toContain('本月最新记录时间：2026-10-12T12:00:00+08:00');
     expect(result.content).toContain('| 个人净消费（含项目） | 130.00 |');
-    expect(result.content).toContain('| 结构性净额 | -5500.00 |');
-    expect(result.content).toContain('| 合计净额 | -5370.00 |');
+    expect(result.content).toContain('| 结构性净额 | 2500.00 |');
+    expect(result.content).toContain('| 合计净额 | 2630.00 |');
+    expect(result.content).toContain('| 当月收入（已入账） | 8000.00 |');
     expect(result.content).toContain('| 待归类净消费 | 12.00 |');
     expect(result.content).toContain('| 学习提升 | 68.00 | 1 | 52.31% |');
     expect(result.content).toContain('| 随心消费 | 300.00 | 5.00 | 305.00 | 68.00 | 52.31% | 22.30% | 237.00 | 0.00 |');
     expect(result.content).toContain('| 待归类 | — | — | — | 12.00 | 9.23% | — | — | — |');
     expect(result.content).toContain('| 5 | 2026-10-12 | 合成负调整退款 | 餐饮与日常食品 | 运行账户 | -15.00 |');
     expect(result.content.split('## 结构性明细')[0]).not.toContain('合成房租');
-    expect(result.content).toContain('| 2 | 2026-10-10 | 合成工资入账 | 收入结转 | 不适用 | -8000.00 |');
+    expect(result.content).toContain('| 收入结转 | 8000.00 | 1 |');
+    expect(result.content).toContain('| 1 | 2026-10-10 | 合成工资入账 | 收入结转 | 不适用 | 8000.00 |');
+    expect(result.content).toContain('未导入账本的真实收入不计入');
     expect(result.content).not.toContain('合成火车票');
     expect(result.content).not.toMatch(/tx_oct|tx_sep|abababab|sourceHash|topIds|ledgerCount|完整账单/);
     expect(result.content).toContain('个人净消费包含 PERSONAL 与 PROJECT');
@@ -92,10 +95,13 @@ describe('buildAnalysisExport', () => {
     data.months[0].lastRecordedAt = null;
     data.months[0].records = [];
     data.months[0].structuralRecords = [];
+    data.months[0].incomeRecords = [];
+    data.months[0].incomeCategories = [];
+    data.months[0].summary.incomeCents = 0;
     const content = buildAnalysisExport(data, '2026-10').content;
     expect(content).toContain('来源最新记录时间：—');
     expect(content).toContain('本月记录日期范围：—');
-    expect(content.match(/暂无记录。/g)).toHaveLength(2);
+    expect(content.match(/暂无记录。/g)).toHaveLength(3);
     expect(content).toContain('时间信息不代表来源完整性');
   });
 

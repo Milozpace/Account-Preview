@@ -4,7 +4,7 @@
  * Used only when there is no real ledger cache and no pairing (fresh Android
  * build, browser preview, or a device before first pairing). It always carries
  * a visible "合成预览" label in the UI and never claims to be real data.
- * The shape mirrors the frozen App V2 contract (docs/App真实快照契约V2.md):
+ * The shape mirrors the frozen App V3 contract (docs/快照与月份.md):
  * full daily calendars, integer pool/summary cents, usageRatio null exactly
  * when opening <= 0 — the Rust parser would reject anything looser.
  */
@@ -29,10 +29,16 @@ const septemberRecords = [
   record('sample-102', '2026-09-18', '2026-09-18T16:45:00+08:00', '合成预览 · 上月旅行门票', '门票', 'travel', 'PERSONAL', -12000),
 ];
 const octoberStructural = [
-  record('sample-struct-2026-10', '2026-10-01', '2026-10-01T00:01:00+08:00', '合成预览 · 工资入账', '收入', 'unknown', 'STRUCTURAL', 1200000),
+  record('sample-struct-2026-10', '2026-10-01', '2026-10-01T00:01:00+08:00', '合成预览 · 云服务年费', '订阅服务', 'unknown', 'STRUCTURAL', 30000),
+];
+const octoberIncome = [
+  record('sample-income-2026-10', '2026-10-10', '2026-10-10T12:00:00+08:00', '合成预览 · 工资入账', '工资薪酬', 'unknown', 'INCOME', 1200000),
 ];
 const septemberStructural = [
-  record('sample-struct-2026-09', '2026-09-01', '2026-09-01T00:01:00+08:00', '合成预览 · 上月工资入账', '收入', 'unknown', 'STRUCTURAL', 1200000),
+  record('sample-struct-2026-09', '2026-09-01', '2026-09-01T00:01:00+08:00', '合成预览 · 上月云服务年费', '订阅服务', 'unknown', 'STRUCTURAL', 30000),
+];
+const septemberIncome = [
+  record('sample-income-2026-09', '2026-09-10', '2026-09-10T12:00:00+08:00', '合成预览 · 上月工资入账', '工资薪酬', 'unknown', 'INCOME', 1200000),
 ];
 
 /** Full-month daily calendar derived from the records, like the real V1. */
@@ -71,9 +77,10 @@ function poolView(spent: number, opening: number) {
   };
 }
 
-function summaryFor(records: typeof octoberRecords, structural: typeof octoberStructural, pools: ReturnType<typeof poolView>[]) {
+function summaryFor(records: typeof octoberRecords, structural: typeof octoberStructural, income: typeof octoberIncome, pools: ReturnType<typeof poolView>[]) {
   const personal = records.reduce((sum, entry) => sum + entry.amountCents, 0);
   const structuralSum = structural.reduce((sum, entry) => sum + entry.amountCents, 0);
+  const incomeSum = income.reduce((sum, entry) => sum + entry.amountCents, 0);
   const sum = (pick: (pool: ReturnType<typeof poolView>) => number) =>
     pools.reduce((total, pool) => total + pick(pool), 0);
   return {
@@ -86,7 +93,19 @@ function summaryFor(records: typeof octoberRecords, structural: typeof octoberSt
     availableCents: sum((pool) => pool.availableCents),
     overrunCents: sum((pool) => pool.overrunCents),
     safetyCents: 250000,
+    incomeCents: incomeSum,
   };
+}
+
+function incomeCategoriesFor(income: typeof octoberIncome) {
+  return Object.entries(
+    income.reduce<Record<string, { amountCents: number; count: number }>>((acc, entry) => {
+      acc[entry.category] = acc[entry.category] ?? { amountCents: 0, count: 0 };
+      acc[entry.category].amountCents += entry.amountCents;
+      acc[entry.category].count += 1;
+      return acc;
+    }, {}),
+  ).map(([name, value]) => ({ name, ...value }));
 }
 
 const octoberPools = [
@@ -120,17 +139,18 @@ const septemberCategories = Object.entries(
   }, {}),
 ).map(([name, value]) => ({ name, ...value }));
 
-const octoberSummary = summaryFor(octoberRecords, octoberStructural, octoberPools);
-const septemberSummary = summaryFor(septemberRecords, septemberStructural, septemberPools);
+const octoberSummary = summaryFor(octoberRecords, octoberStructural, octoberIncome, octoberPools);
+const septemberSummary = summaryFor(septemberRecords, septemberStructural, septemberIncome, septemberPools);
 
 export const sampleSnapshot: AppV2Snapshot = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   snapshotKind: 'account-ledger-view',
   sourceHash: '0000000000000000000000000000000000000000000000000000000000000000',
   calendarMonth: '2026-10',
   generatedAt: '2026-10-15T09:00:00+08:00',
   sourceLastRecordedAt: '2026-10-15T10:00:00+08:00',
-  ledgerCount: octoberRecords.length + septemberRecords.length + octoberStructural.length + septemberStructural.length,
+  ledgerCount: octoberRecords.length + septemberRecords.length + octoberStructural.length + septemberStructural.length
+    + octoberIncome.length + septemberIncome.length,
   coverage: { kind: 'recent-months', months: ['2026-10', '2026-09'] },
   months: [
     {
@@ -143,6 +163,8 @@ export const sampleSnapshot: AppV2Snapshot = {
       categories: octoberCategories,
       records: octoberRecords,
       structuralRecords: octoberStructural,
+      incomeRecords: octoberIncome,
+      incomeCategories: incomeCategoriesFor(octoberIncome),
       topIds: ['sample-003', 'sample-004', 'sample-002'],
     },
     {
@@ -155,6 +177,8 @@ export const sampleSnapshot: AppV2Snapshot = {
       categories: septemberCategories,
       records: septemberRecords,
       structuralRecords: septemberStructural,
+      incomeRecords: septemberIncome,
+      incomeCategories: incomeCategoriesFor(septemberIncome),
       topIds: ['sample-102', 'sample-101'],
     },
   ],

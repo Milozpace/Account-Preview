@@ -173,7 +173,7 @@ describe('home cards and pool rows', () => {
 
 describe('shared three-end fixture', () => {
   it('is the exact file the Python and Rust suites load and renders correctly', () => {
-    expect(sharedFixture.schemaVersion).toBe(2);
+    expect(sharedFixture.schemaVersion).toBe(3);
     expect(sharedFixture.coverage.months).toEqual(['2026-10', '2026-09']);
     const fixtureOctober = sharedFixture.months[0];
     const cards = homeCards(fixtureOctober);
@@ -186,19 +186,21 @@ describe('shared three-end fixture', () => {
 });
 
 describe('synthetic preview snapshot', () => {
-  it('stays inside the App V2 contract shape', () => {
-    expect(sampleSnapshot.schemaVersion).toBe(2);
+  it('stays inside the App V3 contract shape', () => {
+    expect(sampleSnapshot.schemaVersion).toBe(3);
     expect(sampleSnapshot.months).toHaveLength(2);
     for (const month of sampleSnapshot.months) {
       expect(month.records.every((record) => Number.isSafeInteger(record.amountCents))).toBe(true);
       expect(month.records.every((record) => /^2026-\d{2}-\d{2}$/.test(record.date))).toBe(true);
       expect(month.records.every((record) => record.date.startsWith(month.month))).toBe(true);
+      expect(month.incomeRecords.every((record) => record.scope === 'INCOME' && record.pool === 'unknown')).toBe(true);
+      expect(month.summary.incomeCents).toBe(month.incomeRecords.reduce((sum, record) => sum + record.amountCents, 0));
     }
   });
 
   it('never collides with real ledger ids', () => {
     for (const month of sampleSnapshot.months) {
-      for (const record of [...month.records, ...month.structuralRecords]) {
+      for (const record of [...month.records, ...month.structuralRecords, ...month.incomeRecords]) {
         expect(record.id.startsWith('sample-')).toBe(true);
       }
     }

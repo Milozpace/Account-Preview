@@ -1,4 +1,4 @@
-"""V1 presentation from one consistent SQLite business state."""
+"""V2 presentation from one consistent SQLite business state."""
 from datetime import datetime
 import json
 import os
@@ -24,12 +24,12 @@ def sync_database_snapshot(database):
         views = [dashboard_data.build_month(state['rows'], selected,
                     ledger_calculation.calculate_month(state, selected, month)) for selected in months]
         last = max((account.timestamp(row['交易时间']) for row in state['rows']),default=None)
-        snapshot = dict(schemaVersion=1,sourceHash=state['sourceHash'],calendarMonth=month,
+        snapshot = dict(schemaVersion=dashboard_data.SCHEMA_VERSION,sourceHash=state['sourceHash'],calendarMonth=month,
                         generatedAt=datetime.now(account.TZ).isoformat(),ledgerCount=len(state['rows']),
                         sourceLastRecordedAt=last.replace(' ','T')+'+08:00' if last else None,months=views)
-        # The App validator also audits all V1 month internals before either export.
+        # The App validator also audits all month internals before either export.
         import app_export
-        app_export.validate_app_snapshot({**snapshot,'schemaVersion':2,
+        app_export.validate_app_snapshot({**snapshot,'schemaVersion':app_export.SCHEMA_VERSION,
             'snapshotKind':'account-ledger-view','coverage':{'kind':app_export.COVERAGE_KIND,'months':months}})
         payload = json.dumps(snapshot,ensure_ascii=False,separators=(',',':'),allow_nan=False)
         with tempfile.TemporaryDirectory(prefix='sqlite-snapshot-',dir=runtime) as folder:

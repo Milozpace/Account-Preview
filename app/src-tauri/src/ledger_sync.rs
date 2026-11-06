@@ -1881,7 +1881,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let good = write_payload(dir.path(), "good.json", &valid_payload());
         let inspected = inspect_snapshot_file(good.to_str().unwrap()).unwrap();
-        assert_eq!(inspected["schemaVersion"], 2);
+        assert_eq!(inspected["schemaVersion"], 3);
         assert_eq!(inspected["snapshotKind"], "account-ledger-view");
         // No ledger durable state was created by inspection.
         assert!(!dir.path().join(LEDGER_CACHE_FILE).exists());

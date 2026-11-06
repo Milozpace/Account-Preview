@@ -28,7 +28,7 @@ class DashboardServerTests(unittest.TestCase):
         self.root=Path(self.temp.name);self.workbook=self.root/'book.xlsx';self.workbook.write_bytes(b'ledger')
         self.dist=self.root/'dist';self.dist.mkdir();(self.dist/'index.html').write_text('<h1>Dashboard</h1>')
         (self.root/'.runtime').mkdir()
-        self.snapshot={'schemaVersion':1,'sourceHash':account.sha(self.workbook),
+        self.snapshot={'schemaVersion':data.SCHEMA_VERSION,'sourceHash':account.sha(self.workbook),
             'calendarMonth':data.current_month(),'generatedAt':'2026-10-03T12:00:00+08:00','months':[]}
         (self.root/'.runtime'/'dashboard.json').write_text(json.dumps(self.snapshot))
         self.http=server.make_server(self.workbook,self.dist,0)
@@ -199,7 +199,7 @@ class ServiceProcessTests(unittest.TestCase):
             (root/'dashboard'/'dist'/'index.html').write_text('<h1>Dashboard</h1>')
             book=root/'book.xlsx';book.write_bytes(b'fixture ledger')
             (root/'.runtime').mkdir()
-            (root/'.runtime'/'dashboard.json').write_text(json.dumps({'schemaVersion':1,
+            (root/'.runtime'/'dashboard.json').write_text(json.dumps({'schemaVersion':data.SCHEMA_VERSION,
                 'sourceHash':account.sha(book),'calendarMonth':data.current_month(),'months':[]}))
             # Managed Windows Python may have a launcher parent. Capture the
             # actual server interpreter independently rather than its launcher.

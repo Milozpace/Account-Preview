@@ -153,6 +153,7 @@ export function mountDashboard(options: DashboardOptions): void {
     content.querySelectorAll<HTMLButtonElement>('[data-scope]').forEach((button) => button.addEventListener('click', () => {
       const month = selected()!;
       if (button.dataset.scope === 'structural') openDrawer('结构性支出', '', month.structuralRecords);
+      else if (button.dataset.scope === 'income') openDrawer('本月收入', '仅统计已入账的收入记录；未导入账本的真实收入不计入', month.incomeRecords);
       else openDrawer('待归类消费', '', month.records.filter((record) => record.pool === 'unknown'));
     }));
     bindCategoryToggle();
@@ -208,9 +209,10 @@ export function mountDashboard(options: DashboardOptions): void {
 
   function openRecord(id: string): void {
     const month = selected();
-    const record = month && [...month.records, ...month.structuralRecords].find((item) => item.id === id);
+    const record = month && [...month.records, ...month.structuralRecords, ...month.incomeRecords].find((item) => item.id === id);
     if (!record) return;
-    openDrawer(record.title, `${dateTitle(record.time, true)} · ${record.category} · ${record.scope === 'STRUCTURAL' ? '结构性支出' : poolNames[record.pool] ?? record.scope}`, [record]);
+    const scopeLabel = record.scope === 'STRUCTURAL' ? '结构性支出' : record.scope === 'INCOME' ? '收入' : poolNames[record.pool] ?? record.scope;
+    openDrawer(record.title, `${dateTitle(record.time, true)} · ${record.category} · ${scopeLabel}`, [record]);
   }
 
   function openDrawer(title: string, description: string, records: LedgerRecord[], source?: HTMLElement | null): void {
@@ -239,7 +241,7 @@ export function mountDashboard(options: DashboardOptions): void {
   function renderDrawer(): void {
     const total = drawerRecords.reduce((sum, record) => sum + record.amountCents, 0);
     const body = document.querySelector('#detail-body')!;
-    body.innerHTML = `<div class="drawer-total"><span>${drawerRecords.length} 笔记录</span><strong>净额 ¥ ${money(total)}</strong></div>${drawerRecords.length ? `<div class="drawer-list">${drawerRecords.slice(0, drawerLimit).map((record) => `<article class="drawer-record"><div><h3>${escape(record.title)}</h3><p>${escape(dateTitle(record.time, true))}</p><div class="detail-tags"><span>${escape(record.category)}</span><span>${escape(record.scope === 'STRUCTURAL' ? '结构性支出' : poolNames[record.pool] ?? record.pool)}</span>${record.amountCents < 0 ? '<span class="negative-tag">负调整</span>' : ''}</div></div><strong class="${record.amountCents < 0 ? 'negative-money' : ''}">¥ ${money(record.amountCents)}</strong></article>`).join('')}</div>` : '<div class="drawer-empty"><span aria-hidden="true">◌</span><p>没有可展示的消费记录</p></div>'}${drawerRecords.length > drawerLimit ? `<button id="more-details" class="expand-button" type="button">再显示 ${Math.min(60, drawerRecords.length - drawerLimit)} 笔</button>` : ''}`;
+    body.innerHTML = `<div class="drawer-total"><span>${drawerRecords.length} 笔记录</span><strong>净额 ¥ ${money(total)}</strong></div>${drawerRecords.length ? `<div class="drawer-list">${drawerRecords.slice(0, drawerLimit).map((record) => `<article class="drawer-record"><div><h3>${escape(record.title)}</h3><p>${escape(dateTitle(record.time, true))}</p><div class="detail-tags"><span>${escape(record.category)}</span><span>${escape(record.scope === 'INCOME' ? '收入' : record.scope === 'STRUCTURAL' ? '结构性支出' : poolNames[record.pool] ?? record.pool)}</span>${record.amountCents < 0 ? '<span class="negative-tag">负调整</span>' : ''}</div></div><strong class="${record.amountCents < 0 ? 'negative-money' : ''}">¥ ${money(record.amountCents)}</strong></article>`).join('')}</div>` : '<div class="drawer-empty"><span aria-hidden="true">◌</span><p>没有可展示的记录</p></div>'}${drawerRecords.length > drawerLimit ? `<button id="more-details" class="expand-button" type="button">再显示 ${Math.min(60, drawerRecords.length - drawerLimit)} 笔</button>` : ''}`;
     document.querySelector('#more-details')?.addEventListener('click', () => { drawerLimit += 60; renderDrawer(); });
   }
 
@@ -247,7 +249,7 @@ export function mountDashboard(options: DashboardOptions): void {
     if (snapshotRequest) return snapshotRequest;
     snapshotRequest = (async () => {
       const snapshot = await api<DashboardSnapshot>('/api/dashboard');
-      if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.months) || !snapshot.months.length) throw new Error('快照格式暂不支持，请重新同步。');
+      if (snapshot.schemaVersion !== 2 || !Array.isArray(snapshot.months) || !snapshot.months.length) throw new Error('快照格式暂不支持，请重新同步。');
       state.snapshot = snapshot;
       if (!snapshot.months.some((month) => month.month === state.selectedMonth)) state.selectedMonth = snapshot.calendarMonth;
       if (!snapshot.months.some((month) => month.month === state.selectedMonth)) state.selectedMonth = snapshot.months[0].month;

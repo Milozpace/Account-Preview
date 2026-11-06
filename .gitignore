@@ -47,3 +47,6 @@ app/src-tauri/gen/android/app/tauri.properties
 app/plugins/platform/android/build/
 dashboard/node_modules/
 dashboard/dist/
+
+# Root-level tooling caches (created when running vitest/npx from the repo root).
+/node_modules/

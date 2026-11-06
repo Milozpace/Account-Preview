@@ -27,7 +27,7 @@ export function exportFormHtml(snapshot:ExportSnapshot|null,wanted:string):strin
   return `<div class="analysis-export-form"><div class="export-intro"><span class="export-document-mark" aria-hidden="true">${uiIcon('document')}</span>${noData?'<h2>尚无可导出的账单</h2>':''}<p>${noData?'同步账单后即可导出。':'保存当前缓存中的月度汇总与明细。'}</p></div>
     <label class="export-month-label" for="export-month">导出月份</label><select id="export-month" ${noData?'disabled':''}>${snapshot?.months.map(item=>`<option value="${e(item.month)}" ${item.month===month?.month?'selected':''}>${e(monthTitle(item.month))}</option>`).join('')??''}</select>
     <div class="export-contents"><span>消费概览</span><span>分类汇总</span><span>四个资金池</span><span>消费明细</span></div>
-    <p class="export-record-count">${month?`${month.records.length} 笔个人消费 · ${month.structuralRecords.length} 笔结构性支出`:''}</p>
+    <p class="export-record-count">${month?`${month.records.length} 笔个人消费 · ${month.structuralRecords.length} 笔结构性支出 · ${month.incomeRecords.length} 笔收入`:''}</p>
     <div class="export-file-meta"><span>Markdown · .md</span><span>${snapshot?`数据更新 ${e(dateTitle(snapshot.generatedAt,true))}`:''}</span></div>
     <button type="button" id="save-analysis-export" class="export-save-button" ${noData?'disabled':''}>保存文件</button><p id="export-feedback" class="export-feedback" role="status" aria-live="polite"></p></div>`;
 }

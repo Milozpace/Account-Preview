@@ -1,4 +1,4 @@
-"""App V2 snapshot contract tests with synthetic fixtures (no real ledger).
+"""App V3 snapshot contract tests with synthetic fixtures (no real ledger).
 
 The canonical shared fixture (tests/fixtures/app-v2-snapshot.json) is the
 same file the Rust and TypeScript suites load; targeted corruptions of it
@@ -44,7 +44,7 @@ class SharedFixtureContractTests(unittest.TestCase):
 
     def test_shared_fixture_passes_validation(self):
         result = app_export.validate_app_snapshot(load_fixture())
-        self.assertEqual(result['schemaVersion'], 2)
+        self.assertEqual(result['schemaVersion'], 3)
         self.assertEqual(result['coverage']['months'], ['2026-10', '2026-09'])
 
     def test_wrong_total_rejected(self):
@@ -173,6 +173,26 @@ class SharedFixtureContractTests(unittest.TestCase):
                 v['months'][0]['pools'][0].update(openingCents=100),
                 v['months'][0]['pools'][0].update(usageRatio=float('inf')))))
 
+    def test_income_contract_reconciles_and_rejects(self):
+        with self.assertRaisesRegex(ValueError, '收入合计'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['summary'].update(incomeCents=1)))
+        with self.assertRaisesRegex(ValueError, '收入记录口径或资金池越界'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['incomeRecords'][0].update(pool='operation')))
+        with self.assertRaisesRegex(ValueError, '收入记录口径或资金池越界'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['incomeRecords'][0].update(scope='STRUCTURAL')))
+        with self.assertRaisesRegex(ValueError, '记录口径越界'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['records'][0].update(scope='INCOME')))
+        with self.assertRaisesRegex(ValueError, '收入分类与明细对账失败'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['incomeCategories'][0].update(amountCents=1)))
+        with self.assertRaisesRegex(ValueError, '收入分类合计与对应净额对账失败'):
+            app_export.validate_app_snapshot(mutate(
+                change=lambda v: v['months'][0]['incomeCategories'].pop()))
+
 
 class ValidatorEdgeTests(unittest.TestCase):
     """Compact synthetic cases complementing the shared fixture."""
@@ -180,7 +200,7 @@ class ValidatorEdgeTests(unittest.TestCase):
     def test_v1_snapshot_is_rejected(self):
         value = load_fixture()
         value['schemaVersion'] = 1
-        with self.assertRaisesRegex(ValueError, 'V2'):
+        with self.assertRaisesRegex(ValueError, 'V3'):
             app_export.validate_app_snapshot(value)
 
     def test_duplicate_record_id_across_months_rejected(self):

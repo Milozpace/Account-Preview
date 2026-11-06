@@ -58,6 +58,39 @@ class DashboardDataTests(unittest.TestCase):
         self.assertEqual(month['categories'][0]['amountCents'],800)
         self.assertEqual(month['topIds'],['tx_a'])
 
+    def test_income_rows_display_from_received_amount_without_touching_consumption(self):
+        rows=[row('tx_a',10),
+              row('tx_salary',0,pool='',scope='INCOME',**{'原始金额':8000,'主分类':'工资薪酬'}),
+              row('tx_rev',0,pool='',scope='INCOME',**{'原始金额':-300,'主分类':'工资薪酬'})]
+        month=data.build_month(rows,'2026-10',view(1000))
+        self.assertEqual(month['summary']['incomeCents'],770000)
+        self.assertEqual(month['summary']['personalCents'],1000)
+        self.assertEqual(month['summary']['totalCents'],1000)
+        self.assertEqual([(r['id'],r['amountCents'],r['scope'],r['pool']) for r in month['incomeRecords']],
+                         [('tx_rev',-30000,'INCOME','unknown'),('tx_salary',800000,'INCOME','unknown')])
+        self.assertEqual(month['incomeCategories'],
+                         [{'name':'工资薪酬','amountCents':770000,'count':2}])
+        self.assertNotIn('tx_salary',[r['id'] for r in month['records']])
+
+    def test_income_only_month_builds_with_zero_consumption(self):
+        rows=[row('tx_salary',0,pool='',scope='INCOME',**{'原始金额':8000,'主分类':'工资薪酬'})]
+        month=data.build_month(rows,'2026-10',view(0,used=0))
+        self.assertEqual(month['summary']['incomeCents'],800000)
+        self.assertEqual(month['summary']['personalCents'],0)
+        self.assertEqual(month['incomeCategories'][0]['count'],1)
+
+    def test_income_calculation_mismatch_refuses_publication(self):
+        rows=[row('tx_salary',0,pool='',scope='INCOME',**{'原始金额':8000,'主分类':'工资薪酬'})]
+        native=view(0,used=0); native['income']={'incomeCents':1,'count':1,'categories':{}}
+        with self.assertRaisesRegex(ValueError,'收入合计与计算结果对账失败'):
+            data.build_month(rows,'2026-10',native)
+        native=view(0,used=0); native['income']={'incomeCents':800000,'count':2,'categories':{'工资薪酬':800000}}
+        with self.assertRaisesRegex(ValueError,'收入笔数与计算结果对账失败'):
+            data.build_month(rows,'2026-10',native)
+        native=view(0,used=0); native['income']={'incomeCents':800000,'count':1,'categories':{'工资薪酬':1}}
+        with self.assertRaisesRegex(ValueError,'收入分类与计算结果对账失败'):
+            data.build_month(rows,'2026-10',native)
+
     def test_formula_disagreement_refuses_publication(self):
         with self.assertRaisesRegex(ValueError,'对账'):
             data.build_month([row(amount=11)],'2026-10',view())
@@ -143,7 +176,7 @@ class DashboardDataTests(unittest.TestCase):
     def test_file_hash_and_calendar_rollover_invalidate_cache(self):
         with tempfile.TemporaryDirectory() as temp:
             source=Path(temp)/'book.xlsx';source.write_bytes(b'original')
-            snapshot={'schemaVersion':1,'sourceHash':data.account.sha(source),'calendarMonth':'2026-10'}
+            snapshot={'schemaVersion':data.SCHEMA_VERSION,'sourceHash':data.account.sha(source),'calendarMonth':'2026-10'}
             self.assertTrue(data.snapshot_current(source,snapshot,'2026-10'))
             self.assertFalse(data.snapshot_current(source,snapshot,'2026-11'))
             source.write_bytes(b'changed')

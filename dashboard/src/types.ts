@@ -18,9 +18,12 @@ export interface DashboardMonth {
     personalCents: number; structuralCents: number; totalCents: number; unknownCents: number;
     monthlyBudgetCents: number | null; openingBudgetCents: number | null;
     availableCents: number | null; overrunCents: number | null; safetyCents: number | null;
+    incomeCents: number;
   };
   pools: Pool[]; daily: Daily[]; categories: { name: string; amountCents: number; count: number }[];
-  records: LedgerRecord[]; structuralRecords: LedgerRecord[]; topIds: string[];
+  records: LedgerRecord[]; structuralRecords: LedgerRecord[];
+  incomeRecords: LedgerRecord[]; incomeCategories: { name: string; amountCents: number; count: number }[];
+  topIds: string[];
 }
 export interface DashboardSnapshot {
   schemaVersion: number; sourceHash: string; calendarMonth: string; generatedAt: string;

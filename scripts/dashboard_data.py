@@ -18,7 +18,7 @@ import openpyxl
 import account
 import ledger_source
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POOL_IDS = dict(zip(account.POOLS, ['operation', 'free', 'travel', 'growth']))
 
 
@@ -139,17 +139,26 @@ def build_month(rows, month, native):
             raise ValueError('流水记录ID缺失或重复')
         seen.add(identity)
     selected = [r for r in rows if account.timestamp(r['交易时间'])[:7] == month]
-    records, structural = [], []
+    records, structural, income = [], [], []
     for row in selected:
-        amount = int(account.money(row.get('计入消费金额')) * 100)
         scope = account.text(row.get('统计口径')).upper()
+        instant = account.timestamp(row['交易时间']).replace(' ', 'T')
+        if not instant.endswith('+08:00'):
+            instant += '+08:00'
+        if scope == 'INCOME':
+            # Income displays from the audited received amount (原始金额);
+            # it never enters consumption, pools or the daily calendar.
+            income.append(dict(id=row['记录ID'], time=instant, date=instant[:10],
+                               title=display_title(row),
+                               category=account.text(row.get('主分类')) or '未填写分类',
+                               pool='unknown', scope='INCOME',
+                               amountCents=int(account.money(row.get('原始金额')) * 100)))
+            continue
+        amount = int(account.money(row.get('计入消费金额')) * 100)
         if amount == 0:
             continue
         if scope not in ('PERSONAL', 'PROJECT', 'STRUCTURAL'):
             raise ValueError('未支持的非零消费口径；请先核对权威流水')
-        instant = account.timestamp(row['交易时间']).replace(' ', 'T')
-        if not instant.endswith('+08:00'):
-            instant += '+08:00'
         item = dict(id=row['记录ID'], time=instant, date=instant[:10], title=display_title(row),
                     category=account.text(row.get('主分类')) or '未填写分类',
                     pool=POOL_IDS.get(account.text(row.get('资金池')), 'unknown'),
@@ -157,6 +166,7 @@ def build_month(rows, month, native):
         (structural if scope == 'STRUCTURAL' else records).append(item)
     records.sort(key=lambda r:(r['time'],r['id']))
     structural.sort(key=lambda r:(r['time'],r['id']))
+    income.sort(key=lambda r:(r['time'],r['id']))
     daily_amount, daily_count = defaultdict(int), defaultdict(int)
     category_amount, category_count = defaultdict(int), defaultdict(int)
     pool_used = defaultdict(int)
@@ -164,13 +174,27 @@ def build_month(rows, month, native):
         daily_amount[item['date']] += item['amountCents']; daily_count[item['date']] += 1
         category_amount[item['category']] += item['amountCents']; category_count[item['category']] += 1
         pool_used[item['pool']] += item['amountCents']
+    income_amount, income_count = defaultdict(int), defaultdict(int)
+    for item in income:
+        income_amount[item['category']] += item['amountCents']; income_count[item['category']] += 1
     summary = dict(native['summary'])
     personal = sum(r['amountCents'] for r in records)
     structural_total = sum(r['amountCents'] for r in structural)
+    income_total = sum(r['amountCents'] for r in income)
     expected = {'personalCents':personal, 'structuralCents':structural_total,
                 'totalCents':personal+structural_total, 'unknownCents':pool_used['unknown']}
     if any(summary.get(k) != v for k,v in expected.items()):
         raise ValueError(f'{month}消费净额与Excel结果对账失败')
+    native_income = native.get('income')
+    if native_income is not None:
+        if native_income.get('incomeCents') != income_total:
+            raise ValueError(f'{month}收入合计与计算结果对账失败')
+        if native_income.get('count') != len(income):
+            raise ValueError(f'{month}收入笔数与计算结果对账失败')
+        for name, amount in native_income.get('categories', {}).items():
+            if income_amount[name] != amount:
+                raise ValueError(f'{month}收入分类与计算结果对账失败')
+    summary['incomeCents'] = income_total
     pools = native['pools']
     if len(pools) != 4 or {p['id'] for p in pools} != set(POOL_IDS.values()):
         raise ValueError('四池结果不完整')
@@ -200,6 +224,9 @@ def build_month(rows, month, native):
     categories = [dict(name=name, amountCents=amount, count=category_count[name])
                   for name,amount in category_amount.items() if category_count[name]]
     categories.sort(key=lambda r:(-r['amountCents'],r['name']))
+    income_categories = [dict(name=name, amountCents=amount, count=income_count[name])
+                         for name,amount in income_amount.items() if income_count[name]]
+    income_categories.sort(key=lambda r:(-r['amountCents'],r['name']))
     # The fixed Excel category list may omit an approved Unknown/new category.
     # Its display grouping is still accountable to the native monthly net amount.
     if sum(c['amountCents'] for c in categories) != summary['personalCents']:
@@ -209,6 +236,7 @@ def build_month(rows, month, native):
     return dict(month=month, lastRecordedAt=last.replace(' ','T')+'+08:00' if last else None,
                 mechanismActive=native['mechanismActive'], summary=summary, pools=pools,
                 daily=daily, categories=categories, records=records, structuralRecords=structural,
+                incomeRecords=income, incomeCategories=income_categories,
                 topIds=[r['id'] for r in top])
 
 
