@@ -5,6 +5,7 @@
 /exports/
 /archive/
 /PROJECT_MEMORY.md
+/.workbuddy/
 .runtime/
 .tauri/
 /.venv/
