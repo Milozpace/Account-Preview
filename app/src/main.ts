@@ -162,12 +162,10 @@ function detailHtml():string {
 }
 function poolLabel(id:string):string {return ({operation:'运行',free:'随心',travel:'旅行',growth:'成长',unknown:'待归类'} as Record<string,string>)[id]??id;}
 function settingsPageHtml():string {
-  const config=state.desktopConfig;
-  const preference=loadMotionPreference();
   const themePreference=loadThemePreference();
-  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,motion:preference,config:state.desktopConfig,version:state.version,diagnostics:diagnosticsHtml(),budgetContent:budgetSettingsHtml(budgetSession),syncContent:desktopSyncHtml(ledgerStatusHtml(),credentialsHtml(),pairingHtml(),state.busy||state.checkingCloud,isTauri()&&!state.preview)});
+  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,config:state.desktopConfig,version:state.version,budgetContent:budgetSettingsHtml(budgetSession),syncContent:desktopSyncHtml(ledgerStatusHtml(),credentialsHtml(),pairingHtml(),state.busy||state.checkingCloud,isTauri()&&!state.preview)});
   const appearance=`<label for="theme-preference">外观</label><select id="theme-preference">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<option value="${value}" ${themePreference===value?'selected':''}>${label}</option>`).join('')}</select>`;
-  return `<section class="settings"><div class="card-block"><h2>显示与操作</h2>${appearance}<label for="motion-preference">动态效果</label><select id="motion-preference"><option value="system" ${preference==='system'?'selected':''}>跟随系统</option><option value="reduce" ${preference==='reduce'?'selected':''}>减少动态效果</option></select><p class="hint">字体跟随系统设置。系统开启减少动态效果时，应用也会减少动效。</p></div>${!mobile()?`<div class="card-block"><h2>电脑账本位置</h2><form id="desktop-config-form"><label for="project-root">账本项目目录</label><input id="project-root" value="${escapeHtml(config?.projectRoot??'')}" autocomplete="off" spellcheck="false"><label for="python-path">Python 程序</label><input id="python-path" value="${escapeHtml(config?.pythonExecutable??'')}" autocomplete="off" spellcheck="false"><div class="actions"><button type="submit">保存本机配置</button></div><p id="desktop-config-status" role="status"></p></form></div><div class="menu-group"><button type="button" class="menu-row" data-open="diagnostics"><span>开发与诊断</span><span class="row-chevron" aria-hidden="true">${uiIcon('right')}</span></button></div>`:''}</section>`;
+  return `<section class="settings"><div class="card-block"><h2>显示与操作</h2>${appearance}</div></section>`;
 }
 function viewHtml():string {
   const month=currentMonth();
@@ -281,7 +279,7 @@ function searchBills(input:HTMLInputElement):void {
   const clear=document.querySelector<HTMLButtonElement>('[data-action="clear-search"]');if(clear)clear.hidden=!query.query;
 }
 function selectSettingsSection(section:SettingsSection):void {
-  if(!['general','budget','sync','advanced','diagnostics'].includes(section))return;
+  if(!['general','budget','sync','advanced'].includes(section))return;
   if(section!=='sync')hideQr();
   if(section!=='budget'&&budgetSession.editing)budgetSession.cancelEdit();
   state.settingsSection=section;
@@ -327,7 +325,6 @@ function bindView():void {
   document.querySelector<HTMLButtonElement>('#save-analysis-export')?.addEventListener('click',()=>void saveAnalysisExport());
   document.querySelector<HTMLSelectElement>('#theme-preference')?.addEventListener('change',event=>{saveThemePreference((event.target as HTMLSelectElement).value as ThemePreference);});
   document.querySelector<HTMLSelectElement>('#motion-preference')?.addEventListener('change',event=>{saveMotionPreference((event.target as HTMLSelectElement).value as MotionPreference);document.documentElement?.setAttribute?.('data-motion-preference',loadMotionPreference());if(mobile())render();});
-  for(const id of ['project-root','python-path'])document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input',event=>{(event.target as HTMLInputElement).dataset.dirty='true';});
   const search=document.querySelector<HTMLInputElement>('#bill-search');
   search?.addEventListener('compositionstart',()=>{searchComposing=true;});
   search?.addEventListener('input',event=>{if((event as InputEvent).isComposing){searchComposing=true;return;}searchBills(event.target as HTMLInputElement);});
@@ -337,7 +334,7 @@ function bindView():void {
   document.querySelector<HTMLSelectElement>('#bill-scope')?.addEventListener('change',event=>updateQuery({scope:(event.target as HTMLSelectElement).value as BillQuery['scope'],category:'',pool:''}));
   document.querySelector<HTMLFormElement>('#sync-form')?.addEventListener('submit',onSyncSubmit);
   document.querySelector<HTMLFormElement>('#inspect-form')?.addEventListener('submit',onInspectSubmit);
-  document.querySelector<HTMLFormElement>('#desktop-config-form')?.addEventListener('submit',onDesktopConfigure);
+  document.querySelector<HTMLButtonElement>('#choose-project')?.addEventListener('click',()=>void onChooseProject());
   document.querySelector<HTMLButtonElement>('#fetch-button')?.addEventListener('click',()=>refreshController.requestManual());
   document.querySelector<HTMLButtonElement>('#show-pairing')?.addEventListener('click',onShowPairing);
   document.querySelector<HTMLButtonElement>('#hide-qr')?.addEventListener('click',hideQr);
@@ -418,9 +415,15 @@ function updateBusy():void {
   const button=document.querySelector<HTMLButtonElement>('#desktop-sync');if(button){button.disabled=state.busy||!isTauri()||state.preview;const label=state.busy?'正在同步…':'同步展示';button.innerHTML=`${uiIcon('sync')}<span class="sr-only">${label}</span>`;button.ariaLabel=label;button.title=label;}
   syncMobilePickers();
 }
-async function onDesktopConfigure(event:Event):Promise<void>{
-  event.preventDefault();if(state.busy)return;const root=document.querySelector<HTMLInputElement>('#project-root')?.value??'',python=document.querySelector<HTMLInputElement>('#python-path')?.value??'';
-  await withBusy(async()=>{state.desktopConfig=await invoke<DesktopConfig>('desktop_configure_project',{projectRoot:root,pythonExecutable:python});state.configFeedback='本机账本位置已保存。';state.configError=false;for(const id of ['project-root','python-path']){const input=document.querySelector<HTMLInputElement>(`#${id}`);if(input)input.dataset.dirty='false';}}).catch(error=>{state.configFeedback=shortError(error,'本机配置保存失败。');state.configError=true;});render();
+async function onChooseProject():Promise<void>{
+  if(state.busy)return;
+  let selected:DesktopConfig|null=null;
+  await withBusy(async()=>{
+    selected=await invoke<DesktopConfig|null>('desktop_restore_project');
+    if(selected){state.desktopConfig=selected;state.configFeedback='账本位置已恢复。';state.configError=false;}
+  }).catch(error=>{state.configFeedback=shortError(error,'账本位置恢复失败。');state.configError=true;});
+  if(selected)await loadDesktop(true);
+  render();
 }
 let localEpoch=0;
 let localLoad:Promise<void>|null=null;

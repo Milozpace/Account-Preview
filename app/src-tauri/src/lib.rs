@@ -131,6 +131,7 @@ pub fn run() {
             ledger_sync::ledger_publish,
             desktop_bridge::desktop_project_config,
             desktop_bridge::desktop_configure_project,
+            desktop_bridge::desktop_restore_project,
             desktop_bridge::desktop_load_snapshot,
             desktop_bridge::desktop_refresh_snapshot,
             desktop_budget::desktop_budget_status,

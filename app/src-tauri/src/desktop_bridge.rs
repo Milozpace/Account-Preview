@@ -318,6 +318,58 @@ pub async fn desktop_configure_project(
     .map_err(|_| "保存项目配置未完成。".to_string())?
 }
 
+/// Derive the owner's project config from a chosen folder: the interpreter is
+/// always the project's own virtualenv, never an input field.
+#[cfg(any(windows, target_os = "macos"))]
+fn selected_config(root: &Path) -> Result<ProjectConfig, String> {
+    let canonical = root.canonicalize().map_err(|_| "找不到账本文件夹。")?;
+    #[cfg(windows)]
+    let python = canonical.join(".venv/Scripts/python.exe");
+    #[cfg(not(windows))]
+    let python = canonical.join(".venv/bin/python");
+    validate_config(ProjectConfig {
+        project_root: canonical.to_string_lossy().into_owned(),
+        python_executable: python.to_string_lossy().into_owned(),
+    })
+}
+
+/// Pick a ledger folder, prove it answers a real snapshot load, then bind it.
+/// The previous binding stays in place when the pick is cancelled or fails.
+#[tauri::command]
+pub async fn desktop_restore_project() -> Result<Option<ProjectConfig>, String> {
+    require_desktop(cfg!(any(windows, target_os = "macos")))?;
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let Some(root) = rfd::FileDialog::new()
+                .set_title("选择账本文件夹")
+                .pick_folder()
+            else {
+                return Ok(None);
+            };
+            let config = selected_config(&root)?;
+            let run = |operation: &str| {
+                bridge_with(config.clone(), operation, |mut command| {
+                    command
+                        .output()
+                        .map_err(|_| "无法启动项目Python，请修复项目环境。".into())
+                })
+            };
+            let loaded = run("load")?;
+            if loaded.get("snapshot").is_none_or(Value::is_null) {
+                run("refresh")?;
+            }
+            save_config_at(&config_path()?, config).map(Some)
+        })
+        .await
+        .map_err(|_| "选择账本目录未完成。".to_string())?
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Err("仅支持电脑端选择账本目录。".into())
+    }
+}
+
 #[tauri::command]
 pub async fn desktop_load_snapshot() -> Result<Value, String> {
     run_bridge("load").await

@@ -600,7 +600,9 @@ describe('Windows local presentation and isolated preview',()=>{
     const assign=vi.fn();vi.stubGlobal('location',{pathname:'/',assign});
     const module=await import('./main');await flush(30);module.openAppSettings();
     expect(mainHtml()).toContain('id="theme-preference"');
-    expect(mainHtml()).toContain('id="project-root"');
+    expect(mainHtml()).toContain('id="choose-project"');
+    expect(mainHtml()).not.toContain('id="project-root"');
+    expect(mainHtml()).not.toContain('data-settings-panel="diagnostics"');
     expect(mainHtml()).not.toContain('class="my"');
     for(const handler of elements.get('#main')!.handlers.click??[])handler({target:{closest:()=>({dataset:{action:'back'}})}});
     expect(assign).toHaveBeenCalledWith('/');

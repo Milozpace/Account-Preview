@@ -1,29 +1,26 @@
 import {escapeHtml} from '../../dashboard/src/helpers';
 import {uiIcon} from '../../dashboard/src/ui-icons';
-export type SettingsSection='general'|'budget'|'sync'|'advanced'|'diagnostics';
+export type SettingsSection='general'|'budget'|'sync'|'advanced';
 interface SettingsOptions {
- section:SettingsSection;theme:'system'|'light'|'dark';motion:'system'|'reduce';
- config:{projectRoot:string;pythonExecutable:string}|null;version:string;diagnostics:string;
+ section:SettingsSection;theme:'system'|'light'|'dark';
+ config:{projectRoot:string;pythonExecutable:string}|null;version:string;
  budgetContent?:string;syncContent?:string;
 }
 export function desktopSettingsHtml(options:SettingsOptions):string {
- const {section,theme,motion,config,version,diagnostics,budgetContent='',syncContent=''}=options;
+ const {section,theme,config,version,budgetContent='',syncContent=''}=options;
  const hidden=(id:SettingsSection)=>section===id?'':' hidden';
  return `<section class="desktop-settings" aria-label="设置">
-  <aside class="settings-sidebar"><nav aria-label="设置分类">${([['general','一般','settings'],['budget','四池预算','calendar'],['sync','手机与同步','sync'],['advanced','高级','document'],['diagnostics','开发与诊断','info']] as const).map(([id,label,icon])=>`<button type="button" data-settings-tab="${id}"${section===id?' aria-current="page"':''}>${uiIcon(icon)}<span>${label}</span></button>`).join('')}</nav><span class="settings-version">${version?`v${escapeHtml(version)}`:''}</span></aside>
+  <aside class="settings-sidebar"><nav aria-label="设置分类">${([['general','一般','settings'],['budget','四池预算','calendar'],['sync','手机与同步','sync'],['advanced','账本位置','document']] as const).map(([id,label,icon])=>`<button type="button" data-settings-tab="${id}"${section===id?' aria-current="page"':''}>${uiIcon(icon)}<span>${label}</span></button>`).join('')}</nav><span class="settings-version">${version?`v${escapeHtml(version)}`:''}</span></aside>
   <div class="settings-workspace">
    <section data-settings-panel="general"${hidden('general')} aria-labelledby="settings-general-title"><h2 id="settings-general-title">一般</h2>
     <div class="settings-surface settings-appearance"><div class="setting-heading">${uiIcon('settings')}<div><h3 id="appearance-label">外观</h3><p>选择账本的显示方式</p></div></div><div id="theme-preference" class="settings-segments" role="group" aria-labelledby="appearance-label">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<button type="button" data-theme-choice="${value}" aria-pressed="${theme===value}"><span class="theme-thumbnail theme-thumbnail-${value}" aria-hidden="true"><i></i><i></i><i></i></span><span>${label}</span>${uiIcon('check')}</button>`).join('')}</div></div>
-    <div class="settings-surface desktop-setting-row"><div class="setting-copy"><label for="motion-preference">动态效果</label><p>跟随系统偏好，或减少界面动画</p></div><select id="motion-preference"><option value="system"${motion==='system'?' selected':''}>跟随系统</option><option value="reduce"${motion==='reduce'?' selected':''}>减少动态效果</option></select></div>
    </section>
    <section data-settings-panel="budget"${hidden('budget')} aria-labelledby="settings-budget-title"><h2 id="settings-budget-title">四池预算</h2>${budgetContent}</section>
    <section data-settings-panel="sync"${hidden('sync')} aria-labelledby="settings-sync-title"><h2 id="settings-sync-title">手机与同步</h2>${syncContent}</section>
-   <section data-settings-panel="advanced"${hidden('advanced')} aria-labelledby="settings-advanced-title"><h2 id="settings-advanced-title">高级</h2><form id="desktop-config-form" class="settings-surface"><div class="setting-heading">${uiIcon('document')}<div><h3>本机账本位置</h3><p>用于读取这台电脑上的账本</p></div></div>
-    <div class="desktop-path-row"><label for="project-root">账本项目目录</label><input id="project-root" value="${escapeHtml(config?.projectRoot??'')}" autocomplete="off" spellcheck="false"></div>
-    <div class="desktop-path-row"><label for="python-path">Python 程序</label><input id="python-path" value="${escapeHtml(config?.pythonExecutable??'')}" autocomplete="off" spellcheck="false"></div>
-    <div class="settings-save-row"><button type="submit" class="settings-save">保存本机配置</button><p id="desktop-config-status" role="status" aria-live="polite"></p></div>
-   </form></section>
-   <section data-settings-panel="diagnostics"${hidden('diagnostics')} aria-labelledby="settings-diagnostics-title"><h2 id="settings-diagnostics-title">开发与诊断</h2>${diagnostics}</section>
+   <section data-settings-panel="advanced"${hidden('advanced')} aria-labelledby="settings-advanced-title"><h2 id="settings-advanced-title">账本位置</h2><div class="settings-surface"><div class="setting-heading">${uiIcon('document')}<div><h3>本机账本位置</h3><p>用于读取这台电脑上的账本</p></div></div>
+    <div class="desktop-path-row"><span>账本项目目录</span><p>${escapeHtml(config?.projectRoot??'尚未选择账本文件夹')}</p></div>
+    <div class="settings-save-row"><button type="button" id="choose-project" class="settings-save">选择账本文件夹</button><p id="desktop-config-status" role="status" aria-live="polite"></p></div>
+   </div></section>
   </div></section>`;
 }
 
