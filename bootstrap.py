@@ -60,8 +60,9 @@ def platform_key(system=None, machine=None):
     system, machine = system or platform.system(), (machine or platform.machine()).lower()
     if system == 'Windows' and machine in {'amd64', 'x86_64'}: return 'windows-x64'
     if system == 'Darwin' and machine in {'arm64', 'aarch64'}: return 'macos-arm64'
-    if system == 'Darwin' and machine in {'x86_64', 'amd64'}: return 'macos-x64'
-    raise ValueError('此试用版支持 Windows x64 和 macOS Apple Silicon/Intel。')
+    if system == 'Darwin' and machine in {'x86_64', 'amd64'}:
+        raise ValueError('从 preview.5 起停止支持 Intel Mac；macOS 仅支持 Apple Silicon。')
+    raise ValueError('此试用版支持 Windows x64 和 macOS Apple Silicon。')
 
 
 def project_profile(root):
@@ -266,11 +267,12 @@ def setup_native(root, *, initialize=False, enable_publish=False):
 
 
 def prepare_python(root, uv=None):
+    platform_key()  # Direct callers must reject unsupported hosts before writes.
     root = Path(root)
     python = root / ('.venv/Scripts/python.exe' if os.name == 'nt' else '.venv/bin/python')
     if uv is None:
         names = ['uv.exe'] if os.name == 'nt' else [
-            ('uv-aarch64-apple-darwin/uv' if platform.machine() == 'arm64' else 'uv-x86_64-apple-darwin/uv')]
+            'uv-aarch64-apple-darwin/uv']
         # An existing owner may have no runtime yet. Borrow only the trusted
         # tools' uv executable; managed CPython/cache still live in the owner root.
         uv = next((base/'.runtime/bootstrap'/name for base in (root, ROOT) for name in names

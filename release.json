@@ -13,7 +13,6 @@
       "platforms": [
         "windows-x64",
         "macos-arm64",
-        "macos-x64",
         "android-arm64"
       ]
     },

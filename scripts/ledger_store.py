@@ -619,6 +619,92 @@ def find_records(path, *, month=None, query='', limit=20):
                 records=[{key: row.get(key) for key in fields} for row in matches[:limit]])
 
 
+def income_review_candidates(path, *, months=3, limit=50, offset=0):
+    """Return bounded evidence for Agent review, never a classification decision.
+
+    Filter and paginate inside one read-only SQLite snapshot. In particular this
+    does not decode the full ledger or load old source files into Agent context.
+    """
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError('查询 limit 必须为 1 到 100')
+    if type(offset) is not int or offset < 0:
+        raise ValueError('查询 offset 必须为非负整数')
+    current = datetime.now(account.TZ)
+    calendar_month = f'{current.year:04d}-{current.month:02d}'
+    current_index = (current.year - 1) * 12 + current.month - 1
+    if months != 'all':
+        if isinstance(months, bool) or not isinstance(months, (str, int)) or not re.fullmatch(r'[1-9][0-9]*', str(months)):
+            raise ValueError('查询 months 必须为正整数或 all')
+        if len(str(months)) > 6 or not 1 <= int(months) <= current_index + 1:
+            raise ValueError('查询月份范围超出有效日历')
+        months = int(months)
+        start_year, start_month = divmod(current_index - months + 1, 12)
+        requested_start = f'{start_year + 1:04d}-{start_month + 1:02d}'
+        requested_end = calendar_month
+    else:
+        requested_start = requested_end = None
+    # Raw incoming direction is necessary but not sufficient evidence of income.
+    # Include legacy excluded/structural rows even without useful keywords so
+    # Agent can distinguish actual income from transfers, refunds and loans.
+    scope = "upper(trim(coalesce(json_extract(row_json, '$.统计口径'), '')))"
+    direction = "lower(trim(coalesce(json_extract(row_json, '$.收支方向'), '')))"
+    month_sql = "substr(json_extract(row_json, '$.交易时间'), 1, 7)"
+    fields = ('记录ID', '平台', '交易时间', '交易对方', '商品/说明', '原始类型', '原始分类',
+              '收支方向', '原始金额', '状态', '原始财务事件', '最终财务事件', '统计口径',
+              '计入消费金额', '退款调整', '主分类', '资金池', '语义说明', '用户修正规则',
+              '复核状态', '原记录ID', '关联记录ID', '记录类型')
+    columns = ', '.join("json_extract(row_json, '$.\"" + field + "\"')" for field in fields)
+    with _connect(path) as conn:
+        schema = conn.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+        if not schema or schema[0] != str(SCHEMA_VERSION):
+            raise ValueError('SQLite账本结构版本不支持')
+        ledger_start, ledger_end, history_start, history_end = conn.execute(
+            f'SELECT min({month_sql}), max({month_sql}), '
+            f'min(CASE WHEN {month_sql} <= ? THEN {month_sql} END), '
+            f'max(CASE WHEN {month_sql} <= ? THEN {month_sql} END) FROM ledger',
+            [calendar_month, calendar_month]).fetchone()
+        history_months = 0
+        if history_start and history_end:
+            first_year, first_month = map(int, history_start.split('-'))
+            last_year, last_month = map(int, history_end.split('-'))
+            history_months = (last_year - first_year) * 12 + last_month - first_month + 1
+        effective_start, effective_end = requested_start, requested_end
+        if months == 'all':
+            query_start, query_end = ledger_start, ledger_end
+        elif history_start and history_months <= months:
+            # A short ledger is reviewed completely, even when its months are old.
+            effective_start, effective_end = history_start, history_end
+            query_start, query_end = history_start, history_end
+        else:
+            query_start = max(history_start, requested_start) if history_start else None
+            query_end = min(history_end, requested_end) if history_end else None
+        where = (f"{scope} != 'INCOME' AND original_cents != 0 AND "
+                 f"({scope} IN ('STRUCTURAL', 'EXCLUDED') OR {direction} IN ('收入', '收', 'income', 'credit'))")
+        params = []
+        if months != 'all':
+            where += f' AND {month_sql} >= ? AND {month_sql} <= ?'
+            params += [effective_start, effective_end]
+        matched = conn.execute(f'SELECT count(*) FROM ledger WHERE {where}', params).fetchone()[0]
+        rows = conn.execute(f'SELECT {columns} FROM ledger WHERE {where} '
+                            "ORDER BY json_extract(row_json, '$.交易时间') DESC, record_id DESC LIMIT ? OFFSET ?",
+                            [*params, limit, min(offset, matched)]).fetchall()
+    # No intersection is represented explicitly; do not pretend the latest old
+    # month was reviewed when the requested window is anchored to current time.
+    if query_start and query_end and query_start > query_end:
+        query_start = query_end = None
+    next_offset = offset + len(rows) if offset + len(rows) < matched else None
+    return dict(ok=True, dryRun=True, months=months, calendarMonth=calendar_month,
+                ledgerStartMonth=ledger_start, ledgerEndMonth=ledger_end,
+                requestedStartMonth=requested_start, requestedEndMonth=requested_end,
+                queryStartMonth=query_start, queryEndMonth=query_end,
+                historyMonths=history_months, historyExceedsWindow=months != 'all' and history_months > months,
+                includesFutureMonths=months == 'all' and bool(ledger_end and ledger_end > calendar_month),
+                matchedRecords=matched, limit=limit, offset=offset, nextOffset=next_offset,
+                truncated=next_offset is not None, records=[dict(zip(fields, values)) for values in rows],
+                reviewRequired=True,
+                note='仅为收入复核候选；退款、互转、报销、代收代付和借款不能仅凭方向改为 INCOME。')
+
+
 def import_reviewed(path, approved, apply=False):
     """Plan with the legacy reviewed JSON contract, then validate before commit."""
     if not isinstance(approved, dict):

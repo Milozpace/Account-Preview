@@ -6,7 +6,7 @@ on:
         description: Platform to verify (all runs the complete matrix)
         type: choice
         default: all
-        options: [all, windows-x64, macos-arm64, macos-x64, android-arm64, python-only]
+        options: [all, windows-x64, macos-arm64, android-arm64, python-only]
   push:
     branches: [main, dev, 'feature/**', 'fix/**', 'hotfix/**', 'release/**', 'docs/**', 'codex/**']
     paths-ignore: ['**/*.md', 'templates/**', '.github/ISSUE_TEMPLATE/**']
@@ -57,7 +57,6 @@ jobs:
           targets = [
               dict(os='windows-2022', platform='windows-x64', target='x86_64-pc-windows-msvc', bundles='nsis', profile='preview'),
               dict(os='macos-15', platform='macos-arm64', target='aarch64-apple-darwin', bundles='dmg', profile='preview'),
-              dict(os='macos-15-intel', platform='macos-x64', target='x86_64-apple-darwin', bundles='dmg', profile='preview'),
           ]
           requested = os.environ['REQUESTED']
           selected = [t for t in targets if requested == 'all' or t['platform'] == requested]
@@ -69,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-15, macos-15-intel]
+        os: [windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:

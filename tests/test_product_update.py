@@ -72,6 +72,48 @@ class ProductUpdateFixture:
                               installer=lambda path:self.installs.append(Path(path)), **kwargs)
 
 class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
+    def test_version_guidance_available_on_install_status_and_same_version(self):
+        self.adopt()
+        self.release(source={'scripts/shared.py': b'new code',
+                             'docs/版本衔接指引.md': '# 累计衔接\n'.encode()})
+        before = {p.relative_to(self.root).as_posix(): p.read_bytes()
+                  for p in self.root.rglob('*') if p.is_file()}
+        plan = self.update()
+        self.assertEqual(plan['agentGuidance']['state'], 'pending')
+        self.assertEqual(before, {p.relative_to(self.root).as_posix(): p.read_bytes()
+                                 for p in self.root.rglob('*') if p.is_file()})
+        result = self.update(apply=True)
+        path = Path(result['agentGuidance']['path'])
+        self.assertTrue(path.is_file())
+        self.assertEqual(result['agentGuidance']['state'], 'available')
+        self.assertIn(str(path), result['next'])
+        self.assertEqual(updater.status(self.root)['agentGuidance']['path'], str(path))
+        repeated = self.update(apply=True)
+        self.assertTrue(repeated['unchanged'])
+        self.assertEqual(repeated['agentGuidance']['state'], 'available')
+        self.assertEqual(len(self.installs), 1)
+        path.write_text('tampered', encoding='utf-8')
+        self.assertEqual(updater.status(self.root)['agentGuidance']['state'], 'modified')
+
+    def test_legacy_source_without_guidance_does_not_claim_handoff_complete(self):
+        self.adopt(); self.release()
+        result = self.update(apply=True)
+        self.assertEqual(result['agentGuidance']['state'], 'unsupported')
+        self.assertIn('衔接', result['next'])
+        self.assertEqual(updater.status(self.root)['agentGuidance']['state'], 'unsupported')
+
+    def test_cross_version_guidance_points_to_new_cumulative_document(self):
+        self.adopt(); self.release()
+        self.update(apply=True)
+        document = '# 衔接\n\n旧版本收入事项\n\n新版本事项\n'.encode()
+        self.release(version='0.4.1-preview.2', native_version='0.4.2',
+                     source={'scripts/shared.py': b'newer code', 'docs/版本衔接指引.md': document})
+        result = self.update(apply=True)
+        self.assertEqual(Path(result['agentGuidance']['path']).read_bytes(), document)
+        self.assertIn('0.4.1-preview.2', result['agentGuidance']['path'])
+        self.assertEqual(updater.status(self.root)['agentGuidance'], result['agentGuidance'])
+        self.assertIn('跨版', result['next'])
+
     def test_preview_with_independent_native_version_preserves_owner_on_update(self):
         self.adopt()
         self.release(version='0.4.0-preview.2',native_version='0.4.2')

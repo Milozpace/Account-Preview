@@ -61,7 +61,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(manifest['commit'], commit)
             self.assertEqual(manifest['snapshotSchema'],3)
             self.assertEqual(set(manifest['profiles']), {'preview'})
-            self.assertEqual(len(result['assets']), 7)
+            self.assertEqual(len(result['assets']), 6)
             self.assertEqual(manifest['source']['sha256'], release.sha(assets/manifest['source']['asset']))
             self.assertTrue((assets/'SHA256SUMS').exists())
             self.assertTrue(result['ok'])

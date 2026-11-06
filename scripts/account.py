@@ -490,6 +490,10 @@ def main(argv=None):
     find.add_argument('--month')
     find.add_argument('--query', default='')
     find.add_argument('--limit', type=int, default=20)
+    income_review = commands.add_parser('income-review-candidates', help='只读分页定位指定期间的旧收入复核候选，不自动改账')
+    income_review.add_argument('--months', default='3', help='当前自然月起最近 N 个月，或 all')
+    income_review.add_argument('--limit', type=int, default=50)
+    income_review.add_argument('--offset', type=int, default=0)
     commands.add_parser('inbox-status', help='只读查看手机账单本机收取状态')
     inbox_fetch = commands.add_parser('inbox-fetch', help='核验并归档手机账单；--apply才收取，不记账')
     inbox_fetch.add_argument('--apply', action='store_true')
@@ -571,7 +575,7 @@ def main(argv=None):
     if 'archive' in [p.lower() for p in args.workbook.resolve().parts]: raise ValueError('拒绝将archive当作当前工作簿')
     if ledger_source.is_database(args.workbook):
         return database_command(args)
-    if args.command in {'backup','budget','export-excel','inbox-status','inbox-fetch','inbox-receipts','find-records'}:
+    if args.command in {'backup','budget','export-excel','inbox-status','inbox-fetch','inbox-receipts','find-records','income-review-candidates'}:
         raise ValueError('该命令需要SQLite账本；请显式传--database或先按验收流程启用SQLite')
     if args.command == 'dashboard':
         from dashboard_server import serve
@@ -634,6 +638,8 @@ def database_command(args):
     if args.command == 'inspect': result = ledger_store.inspect(source)
     elif args.command == 'find-records':
         result = ledger_store.find_records(source, month=args.month, query=args.query, limit=args.limit)
+    elif args.command == 'income-review-candidates':
+        result = ledger_store.income_review_candidates(source, months=args.months, limit=args.limit, offset=args.offset)
     elif args.command == 'verify': result = ledger_store.verify(source)
     elif args.command == 'prepare':
         sources=[{'path':str(Path(path).resolve()),'sha256':sha(Path(path).resolve())} for path in args.source]

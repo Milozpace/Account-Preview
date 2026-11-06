@@ -12,7 +12,7 @@ VERSION_FILES = ['app/package.json', 'app/package-lock.json', 'app/src-tauri/Car
 PROFILES = {
     'preview': {'identifier': 'com.account.preview', 'desktopConfig': 'AccountPreview',
                 'productName': 'Account Preview',
-                'platforms': ['windows-x64', 'macos-arm64', 'macos-x64', 'android-arm64']},
+                'platforms': ['windows-x64', 'macos-arm64', 'android-arm64']},
     'personal': {'identifier': 'com.account.probe', 'desktopConfig': 'AccountDesktop',
                  'productName': 'Account', 'platforms': ['windows-x64', 'android-arm64']},
 }

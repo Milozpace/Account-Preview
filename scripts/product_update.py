@@ -42,6 +42,7 @@ SHA = re.compile(r'[0-9a-f]{64}\Z')
 STATE = '.runtime/product/state.json'
 SKILL_ROOT = '.agents/skills/account-maintenance'
 SKILL_ENTRY = SKILL_ROOT+'/SKILL.md'
+GUIDANCE = 'docs/版本衔接指引.md'
 
 
 def digest(data):
@@ -190,6 +191,27 @@ def skill_next(skill):
     return '此状态尚无已同步的官方 Skill；旧版不支持时不得声称新版记账流程已就绪。'
 
 
+def guidance_status(root, version=None, expected=None, *, pending=False):
+    path = checked_path(root, f'.runtime/product/releases/{version}/source/{GUIDANCE}') if version else None
+    state = 'unsupported'
+    if expected is not None:
+        if not isinstance(expected, str) or not SHA.fullmatch(expected):
+            raise ValueError('版本衔接指引来源哈希无效。')
+        state = 'pending' if pending else ('available' if path and path.is_file()
+                 and digest(path.read_bytes()) == expected else 'modified')
+    return {'path': str(path) if path else None, 'version': version, 'state': state}
+
+
+def update_next(skill, guidance):
+    if guidance['state'] in {'available', 'pending'}:
+        instruction = f"更新后必须重新读取同版累计版本衔接指引：{guidance['path']}；检查跨版尚未完成事项，程序更新不等于业务衔接完成。"
+    elif guidance['state'] == 'modified':
+        instruction = '版本衔接指引缺失或被修改；先核对固定来源，不得声称衔接完成。'
+    else:
+        instruction = '此版本未提供已校验的版本衔接指引；明确报告，不能推断业务衔接已完成。'
+    return skill_next(skill) + ' ' + instruction
+
+
 def previous_skill_baseline(root, state):
     """Recover a legacy baseline only from an authenticated, archived source ZIP."""
     version=state.get('version')
@@ -328,8 +350,9 @@ def assert_protected(root, expected):
 def status(root):
     root=checked_root(root)
     skill=skill_status(root)
+    guidance=guidance_status(root)
     if not checked_path(root,STATE).exists(): return {'ok':True,'root':str(root),'adopted':False,'dryRun':True,'releaseDocs':None,
-            'officialSkill':skill,'next':skill_next(skill),
+            'officialSkill':skill,'agentGuidance':guidance,'next':update_next(skill,guidance),
             'pending':checked_path(root,'.runtime/product/pending.json').exists(),
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
     value=load_state(root)
@@ -337,9 +360,10 @@ def status(root):
     if version: owner_version_tuple(version,value['profile'])
     release_docs=root/f'.runtime/product/releases/{version}/source' if version else None
     skill=skill_status(root,value)
+    guidance=guidance_status(root,version,value.get('guidanceSha256'))
     return {'ok':True,'root':str(root),'adopted':True,'profile':value['profile'],'version':value.get('version'),
             'repository':REPOSITORY,'managedFiles':len(value['managed']),'dryRun':True,
-            'officialSkill':skill,'next':skill_next(skill),
+            'officialSkill':skill,'agentGuidance':guidance,'next':update_next(skill,guidance),
             'releaseDocs':str(release_docs) if release_docs else None,
             'pending':checked_path(root,'.runtime/product/pending.json').exists(),
             'updateLocked':checked_path(root,'.runtime/product/update.lock').exists()}
@@ -763,7 +787,8 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     if checked_path(root,'.runtime/product/pending.json').exists():
         raise ValueError('发现中断的更新恢复日志；请先检查 pending.json 与恢复目录，不自动重试覆盖。')
     bootstrap=trusted_bootstrap(); target=target or bootstrap.platform_key()
-    if target not in {'windows-x64','macos-arm64','macos-x64'}: raise ValueError('更新入口只安装桌面；Android 另行按相同 profile 安装。')
+    if target == 'macos-x64': raise ValueError('从 preview.5 起停止支持 Intel Mac。')
+    if target not in {'windows-x64','macos-arm64'}: raise ValueError('更新入口只安装桌面；Android 另行按相同 profile 安装。')
     if release_dir is None:
         with remote_release(target,state['profile']) as folder:
             return update(root,release_dir=folder,target=target,apply=apply,installer=installer,
@@ -856,18 +881,22 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                   'sourceVersion':manifest.get('sourceVersion',version) if skill_files else (saved_skill or {}).get('sourceVersion'),
                   'commit':manifest['commit'] if skill_files else (saved_skill or {}).get('commit'),
                   'state':'pending' if skill_files else 'unsupported'}
+    guidance_hash=digest(source[GUIDANCE]) if GUIDANCE in source else None
+    guidance=guidance_status(root,version,guidance_hash,pending=old_version!=version)
     report={'ok':True,'dryRun':not apply,'root':str(root),'profile':state['profile'],'version':version,
             'changed':changed,'removed':removed,'retained':sorted(set(state['managed'])-set(desired)),
             'officialSkill':skill_report,
             'ledger':ledger,'protectedPreserved':True,'protectedDeltaCount':0,
             'binaryInstall':'not-attempted','requiresEnvironment':requires_environment,
             'environment':'requested' if prepare_environment else ('requires-preparation' if requires_environment else 'preserved'),
-            'next':skill_next(skill_report)}
+            'agentGuidance':guidance,
+            'releaseDocs':str(root/f'.runtime/product/releases/{version}/source'),
+            'next':update_next(skill_report,guidance)}
     skill_record={'path':SKILL_ENTRY,'supported':bool(skill_files),
                   'version':skill_report['version'],'sourceVersion':skill_report['sourceVersion'],'commit':skill_report['commit'],
                   'files':{name:digest(data) for name,data in skill_files.items()} if skill_files else skill_baseline}
     install_required=old_version!=version or any(managed_name(name) for name in changed) or requires_environment
-    if old_version==version and not changed and not requires_environment and saved_skill==skill_record:
+    if old_version==version and not changed and not requires_environment and saved_skill==skill_record and state.get('guidanceSha256')==guidance_hash:
         return {**report,'unchanged':True,'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'}}
     if not apply: return report
     if not _lock_held:
@@ -955,7 +984,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         if any(checked_path(root,name).exists() for name in removed): raise ValueError('更新后官方 Skill 引用文件冲突。')
         new_state={**state,'version':version,'manifestSha256':manifest_hash,'commit':manifest['commit'],
                    'distribution':manifest.get('distribution','public'),'sourceVersion':manifest.get('sourceVersion',version),
-                   'officialSkill':skill_record,
+                   'officialSkill':skill_record,'guidanceSha256':guidance_hash,
                    'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items() if managed_name(name)}}}
         new_state['nativeVersion']=manifest['nativeVersion']
         if 'androidVersionCode' in manifest: new_state['androidVersionCode']=manifest['androidVersionCode']
@@ -965,7 +994,9 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         journal.update(phase='complete',binaryInstall=outcome)
         atomic_json(recovery/'journal.json',journal)
         pending.unlink()
+        guidance=guidance_status(root,version,guidance_hash)
         return {**report,'unchanged':False,'binaryInstall':outcome,'recovery':str(recovery),
+                'agentGuidance':guidance,'next':update_next(skill_report,guidance),
                 'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'},
                 'releaseDocs':str(release_parent),'ledgerBackup':str(ledger_backup) if ledger['initialized'] else None}
     except Exception as error:

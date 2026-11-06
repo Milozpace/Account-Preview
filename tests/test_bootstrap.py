@@ -181,9 +181,17 @@ class BootstrapTests(unittest.TestCase):
 
     def test_platform_selection(self):
         self.assertEqual(bootstrap.platform_key('Darwin', 'arm64'), 'macos-arm64')
-        self.assertEqual(bootstrap.platform_key('Darwin', 'x86_64'), 'macos-x64')
+        with self.assertRaisesRegex(ValueError, 'Intel'):
+            bootstrap.platform_key('Darwin', 'x86_64')
         self.assertEqual(bootstrap.platform_key('Windows', 'AMD64'), 'windows-x64')
         with self.assertRaises(ValueError): bootstrap.platform_key('Linux', 'x86_64')
+
+    def test_intel_python_preparation_rejects_before_creating_runtime(self):
+        with patch.object(bootstrap.platform, 'system', return_value='Darwin'), \
+             patch.object(bootstrap.platform, 'machine', return_value='x86_64'):
+            with self.assertRaisesRegex(ValueError, 'Intel'):
+                bootstrap.prepare_python(self.root)
+        self.assertFalse((self.root/'.runtime').exists())
 
     def test_cli_json_is_utf8_even_with_legacy_console_encoding(self):
         if sys.platform not in ('win32', 'darwin'):
