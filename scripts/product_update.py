@@ -575,6 +575,8 @@ def validate_release(directory, profile, target):
         source_version=manifest.get('sourceVersion');version_tuple(source_version)
         if not unified and not independent and not VERSION.fullmatch(source_version):
             raise ValueError('旧个人索引的共享源码须为历史 preview 版本；新包须声明统一版本策略。')
+        if not unified and not independent and version_tuple(source_version)>=version_tuple('0.4.0-preview.5'):
+            raise ValueError('新个人交付必须显式声明版本策略，不能伪装成历史索引。')
         if unified and source_version!=version: raise ValueError('统一产品版本须与源码版本一致。')
         if manifest.get('tag') is not None or manifest.get('channel')!='personal-local':
             raise ValueError('个人本地索引不创建公开标签或使用公开频道。')
