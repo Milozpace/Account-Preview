@@ -19,6 +19,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 class SlotArgs { var slot: String = "" }
 
 @InvokeArg
+class BillIndexArgs { var index: Int = -1 }
+
+@InvokeArg
 class StoreSecretArgs {
     var slot: String = ""
     var secret: String = ""
@@ -43,6 +46,7 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
     // A provider may block; its work must never queue ahead of vault operations.
     private val billWorker = BillImport.newWorker()
     private val billSelection = BillImport.SelectionGate()
+    @Volatile private var selectedBills: List<android.net.Uri> = emptyList()
 
     /** Native Rust bridge only. A provider picker grants access to one chosen document. */
     @Command
@@ -57,7 +61,7 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
                 // Providers label exported CSV/XLSX inconsistently. Allow the native
                 // chooser to show documents, then enforce the display-name suffix.
                 type = "*/*"
-                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }
             reportActivity.runOnUiThread {
                 try {
@@ -77,46 +81,63 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
     private fun selectBillResult(invoke: Invoke, result: ActivityResult) {
         if (!billSelection.claimResult(invoke)) return
         try {
-            billWorker.execute {
-                var bytes: ByteArray? = null
-                try {
-                    if (result.resultCode == Activity.RESULT_CANCELED) {
-                        invoke.resolve(JSObject().put("cancelled", true))
-                    } else {
-                        require(result.resultCode == Activity.RESULT_OK)
-                        val data = result.data ?: error("document missing")
-                        require(data.clipData == null || data.clipData!!.itemCount <= 1)
-                        val uri = data.data ?: error("document missing")
-                        require(uri.scheme == "content")
-                        var name: String? = null
-                        var size: Long? = null
-                        reportActivity.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
-                            require(it.moveToFirst())
-                            val nameColumn = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                            require(nameColumn >= 0 && !it.isNull(nameColumn))
-                            name = BillImport.validateName(it.getString(nameColumn))
-                            val sizeColumn = it.getColumnIndex(OpenableColumns.SIZE)
-                            if (sizeColumn >= 0 && !it.isNull(sizeColumn)) size = it.getLong(sizeColumn)
-                        }
-                        val fileName = name ?: error("document name unavailable")
-                        bytes = BillImport.readSelected(fileName, size) {
-                            reportActivity.contentResolver.openInputStream(uri)
-                        }
-                        invoke.resolve(JSObject().put("cancelled", false)
-                            .put("fileName", fileName)
-                            .put("contentBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
-                    }
-                } catch (_: Exception) {
-                    invoke.reject("bill selection failed; choose a CSV or XLSX file up to 4 MiB")
-                } finally {
-                    bytes?.fill(0)
-                    billSelection.finish(invoke)
-                }
+            if (result.resultCode == Activity.RESULT_CANCELED) {
+                selectedBills = emptyList()
+                invoke.resolve(JSObject().put("cancelled", true).put("count", 0))
+            } else {
+                require(result.resultCode == Activity.RESULT_OK)
+                val data = result.data ?: error("document missing")
+                val clip = data.clipData
+                val uris = if (clip != null) (0 until clip.itemCount).map { clip.getItemAt(it).uri } else listOf(data.data ?: error("document missing"))
+                require(uris.all { it.scheme == "content" })
+                selectedBills = BillImport.selectItems(uris)
+                invoke.resolve(JSObject().put("cancelled", false).put("count", selectedBills.size))
             }
         } catch (_: Exception) {
-            billSelection.finish(invoke)
+            selectedBills = emptyList()
             invoke.reject("bill selection failed")
+        } finally {
+            billSelection.finish(invoke)
         }
+    }
+
+    /** Native callers consume one selected document at a time; URIs never enter the WebView. */
+    @Command
+    fun readSelectedBill(invoke: Invoke) {
+        try {
+            val index = invoke.parseArgs(BillIndexArgs::class.java).index
+            val uri = selectedBills.getOrNull(index) ?: error("document unavailable")
+            billWorker.execute {
+                var bytes: ByteArray? = null
+                var displayName = "文件 ${index + 1}"
+                try {
+                    var name: String? = null
+                    var size: Long? = null
+                    reportActivity.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use {
+                        require(it.moveToFirst())
+                        val nameColumn = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        require(nameColumn >= 0 && !it.isNull(nameColumn))
+                        val rawName = it.getString(nameColumn)
+                        displayName = rawName.filter { char -> !char.isISOControl() && char != '/' && char != '\\' }.take(200).ifBlank { displayName }
+                        name = BillImport.validateName(rawName)
+                        val sizeColumn = it.getColumnIndex(OpenableColumns.SIZE)
+                        if (sizeColumn >= 0 && !it.isNull(sizeColumn)) size = it.getLong(sizeColumn)
+                    }
+                    val fileName = name ?: error("document name unavailable")
+                    bytes = BillImport.readSelected(fileName, size) { reportActivity.contentResolver.openInputStream(uri) }
+                    invoke.resolve(JSObject().put("cancelled", false).put("fileName", fileName)
+                        .put("contentBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
+                } catch (_: Exception) {
+                    invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", displayName))
+                } finally { bytes?.fill(0) }
+            }
+        } catch (_: Exception) { invoke.reject("bill selection failed") }
+    }
+
+    @Command
+    fun clearSelectedBills(invoke: Invoke) {
+        selectedBills = emptyList()
+        invoke.resolve(JSObject())
     }
 
     /** Reached only by the Rust report command; the raw plugin rejects WebView calls. */

@@ -17,37 +17,76 @@ fn acquire(active: &AtomicBool) -> Result<OperationLease<'_>, String> {
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[derive(serde::Serialize)]
+pub struct BatchResult {
+    items: Vec<crate::bill_inbox::UploadSummary>,
+    failed: usize,
+    completed: usize,
+    failures: Vec<BatchFailure>,
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchFailure { file_name: String, reason: &'static str }
+
 #[tauri::command]
 pub async fn bill_upload_choose(
     app: tauri::AppHandle,
-) -> Result<Option<crate::bill_inbox::UploadSummary>, String> {
+) -> Result<Option<BatchResult>, String> {
     let lease = acquire(&ACTIVE)?;
     #[cfg(target_os = "android")]
     {
         use tauri::Manager;
         use tauri_plugin_platform::PlatformExt;
-        let Some(selected) = app
-            .platform()
-            .select_bill()
-            .await
-            .map_err(|_| "账单选择失败，请选择不超过 4 MiB 的 CSV 或 XLSX 文件".to_string())?
-        else {
-            return Ok(None);
+        let count = match app.platform().select_bills().await {
+            Ok(Some(count)) => count,
+            Ok(None) => return Ok(None),
+            Err(_) => return Err("账单选择失败，请选择 CSV 或 XLSX 文件".into()),
         };
-        let directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "账单暂存目录不可用".to_string())?;
-        tauri::async_runtime::spawn_blocking(move || {
-            // Retain the busy lease until native I/O actually finishes, even if
-            // the WebView stops waiting for its response.
-            let _lease = lease;
-            let vault = crate::probe_sync::SyncVault(app.platform());
-            crate::bill_inbox::upload(&vault, &directory, &selected.file_name, &selected.bytes)
-                .map(Some)
-        })
-        .await
-        .map_err(|_| "账单上传失败，请稍后重试".to_string())?
+        let directory = app.path().app_data_dir().map_err(|_| "账单暂存目录不可用".to_string())?;
+        let lease = std::sync::Arc::new(lease);
+        let mut items = Vec::new();
+        let mut failed = 0;
+        let mut failures = Vec::new();
+        for index in 0..count {
+            let selected = match app.platform().read_selected_bill(index).await {
+                Ok((Some(value), _)) => value,
+                Ok((None, name)) => {
+                    failed += 1;
+                    failures.push(BatchFailure { file_name: name.unwrap_or_else(|| format!("文件 {}", index + 1)), reason: "文件无效或读取失败" });
+                    continue;
+                },
+                Err(_) => {
+                    failed += 1;
+                    failures.push(BatchFailure { file_name: format!("文件 {}", index + 1), reason: "读取失败" });
+                    continue;
+                }
+            };
+            let file_name = selected.file_name.clone();
+            let worker_app = app.clone();
+            let worker_dir = directory.clone();
+            let worker_lease = lease.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let _lease = worker_lease;
+                let vault = crate::probe_sync::SyncVault(worker_app.platform());
+                crate::bill_inbox::upload(&vault, &worker_dir, &selected.file_name, &selected.bytes)
+            }).await;
+            match result {
+                Ok(Ok(summary)) => items.push(summary),
+                _ => { failed += 1; failures.push(BatchFailure { file_name, reason: "上传未确认" }); },
+            }
+        }
+        let _ = app.platform().clear_selected_bills().await;
+        // A failed upload may already have an encrypted pending copy; recover it.
+        if failed > 0 {
+            let worker_app = app.clone();
+            let worker_lease = lease.clone();
+            if let Ok(Ok(saved)) = tauri::async_runtime::spawn_blocking(move || {
+                let _lease = worker_lease;
+                let vault = crate::probe_sync::SyncVault(worker_app.platform());
+                crate::bill_inbox::status(&vault, &directory, false)
+            }).await { items.extend(saved); }
+        }
+        Ok(Some(BatchResult { items, failed, completed: count - failed, failures }))
     }
     #[cfg(not(target_os = "android"))]
     {

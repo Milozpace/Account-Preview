@@ -353,7 +353,7 @@ async function loadBillUploads(refresh:boolean):Promise<void>{
 }
 async function chooseBillUpload():Promise<void>{
   if(state.preview||!state.android||!isTauri()||uploadSession.busy)return;
-  const operation=uploadSession.choose(()=>invoke<BillUploadItem|null>('bill_upload_choose'));
+  const operation=uploadSession.choose(()=>invoke<import('./bill-upload').BillUploadBatch|null>('bill_upload_choose'));
   render();await operation;
   // Reload persisted pending metadata after network failure; it enables retry
   // without retaining the document URI or reselecting a raw file in WebView.

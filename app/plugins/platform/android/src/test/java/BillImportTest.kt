@@ -8,6 +8,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class BillImportTest {
+    @Test fun selectionPreservesOrderDeduplicatesAndBoundsBatch() {
+        assertEquals(listOf("one", "two"), BillImport.selectItems(listOf("one", "two", "one")))
+        assertThrows(IllegalArgumentException::class.java) { BillImport.selectItems(emptyList<String>()) }
+        assertThrows(IllegalArgumentException::class.java) { BillImport.selectItems((0..128).toList()) }
+    }
+
     @Test fun acceptsBillBasenamesOnly() {
         for (name in listOf("支付宝账单.csv", "微信账单.XLSX", "bill.2026.CsV")) {
             assertEquals(name, BillImport.validateName(name))

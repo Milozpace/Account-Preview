@@ -1,0 +1,20 @@
+import {describe,it,expect} from 'vitest';
+import {BillUploadSession,billUploadHtml} from './bill-upload';
+const entry={id:'a',fileName:'a.csv',byteCount:10,status:'uploaded' as const};
+describe('bill batches',()=>{
+ it('retains successes and reports each failure safely',async()=>{
+  const s=new BillUploadSession();
+  await s.choose(async()=>({items:[entry],completed:1,failed:1,failures:[{fileName:'<bad>.xlsx',reason:'读取失败'}]}));
+  expect(s.items).toHaveLength(1);expect(s.error).toBe(true);expect(s.message).toContain('1');
+  expect(billUploadHtml(s,true)).toContain('&lt;bad&gt;.xlsx');
+  expect(billUploadHtml(s,true)).toContain('读取失败');
+ });
+ it('retains earlier successful items after a later cancellation',async()=>{
+  const s=new BillUploadSession();await s.choose(async()=>({items:[entry],completed:1,failed:0}));
+  await s.choose(async()=>null);expect(s.items).toHaveLength(1);expect(s.message).toBe('已取消选择');
+ });
+ it('does not duplicate same content across a batch',async()=>{
+  const s=new BillUploadSession();await s.choose(async()=>({items:[entry,entry],completed:2,failed:0}));
+  expect(s.items).toHaveLength(1);
+ });
+});
