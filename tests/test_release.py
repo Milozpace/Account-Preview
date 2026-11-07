@@ -301,4 +301,36 @@ class ReleaseTests(unittest.TestCase):
                 self.assertTrue((archive.getinfo('bootstrap.sh').external_attr >> 16) & 0o111)
 
 
+    def test_personal_prepare_declares_local_only_skill_policy_and_can_omit_public_skill(self):
+        from scripts import product_update
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder).resolve();root=parent/'repo';commit=self.repository(root)
+            version_file=parent/'personal-version.json'
+            version_file.write_text('{"version":"0.3.17","androidVersionCode":3017}')
+            binary=parent/'bin';binary.mkdir()
+            for name in ['ledger_cli','bill_inbox_cli','sync_diagnose']:(binary/(name+'.exe')).write_bytes(b'fixture')
+            def build(directory,tag):
+                directory.mkdir()
+                for platform,suffix in [('windows-x64','.exe'),('android-arm64','.apk')]:
+                    installer=parent/('fixture-'+tag+suffix);installer.write_bytes(b'fixture')
+                    release.bundle(platform,binary,installer,directory/f"Account-Personal-0.3.17-{platform}.zip",
+                                   profile='personal',root=root,commit=commit,personal_version_file=version_file)
+            notes=parent/'notes.md';notes.write_text('User local update notes')
+            kept=parent/'assets-keep';build(kept,'keep')
+            release.prepare_release(root,kept,commit,notes,'personal-local',version_file)
+            manifest=json.loads((kept/'release-manifest.json').read_text())
+            self.assertEqual(manifest['skillPolicy'],'local-only')
+            with zipfile.ZipFile(kept/manifest['source']['asset']) as archive:
+                self.assertTrue(any(name.startswith('.agents/skills/account-maintenance/') for name in archive.namelist()))
+            omitted=parent/'assets-omit';build(omitted,'omit')
+            release.prepare_release(root,omitted,commit,notes,'personal-local',version_file,omit_skill=True)
+            manifest=json.loads((omitted/'release-manifest.json').read_text())
+            self.assertEqual(manifest['skillPolicy'],'local-only')
+            with zipfile.ZipFile(omitted/manifest['source']['asset']) as archive:
+                self.assertFalse(any(name.startswith('.agents/skills/account-maintenance/') for name in archive.namelist()))
+            product_update.validate_release(omitted,'personal','windows-x64')
+            public=parent/'assets-public'
+            self.assertRaises(ValueError,release.prepare_release,root,public,commit,notes,'public',version_file,True)
+
+
 if __name__ == '__main__': unittest.main()

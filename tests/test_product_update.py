@@ -942,5 +942,117 @@ class ProductUpdateOfficialSkillTests(ProductUpdateFixture, unittest.TestCase):
         (self.root/'.runtime/product/pending.json').write_text('{}')
         self.assertTrue(updater.status(self.root)['pending'])
 
+    def local_only_release(self, version, code, product='0.4.0-rc.1', with_skill=False):
+        payload=json.dumps({'version':product,'tag':'v'+product,'channel':'private-preview'}).encode()
+        source={'scripts/shared.py':b'newer code','scripts/app_export.py':b'SCHEMA_VERSION = 3\n',
+                'release.json':payload}
+        if with_skill:
+            source['.agents/skills/account-maintenance/SKILL.md']=b'published bookkeeping instructions'
+        manifest=self.release(version=version,native_version=version,androidVersionCode=code,
+                     versionPolicy='independent-personal',distribution='personal-local',
+                     tag=None,channel='personal-local',sourceVersion=product,skillPolicy='local-only',
+                     snapshotSchema=3,source=source)
+        bundle=self.assets/'bundle.zip'
+        with zipfile.ZipFile(bundle) as archive: contents={name:archive.read(name) for name in archive.namelist()}
+        inner=json.loads(contents['manifest.json'])
+        inner.update(versionPolicy='independent-personal',distribution='personal-local',
+                     sourceVersion=product,androidVersionCode=code)
+        contents['manifest.json']=json.dumps(inner).encode()
+        with zipfile.ZipFile(bundle,'w') as archive:
+            for name,data in contents.items(): archive.writestr(name,data)
+        manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+        (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+
+    def test_local_only_policy_never_touches_owner_skill(self):
+        self.adopt()
+        skill=self.root/updater.SKILL_ENTRY
+        skill.parent.mkdir(parents=True)
+        skill.write_bytes(b'owner bookkeeping instructions')
+        reference=skill.parent/'references/local.md'
+        reference.parent.mkdir(); reference.write_bytes(b'private reference')
+        self.local_only_release('0.3.20',3020)
+        first=self.update(apply=True)
+        self.assertTrue(first['ok'])
+        self.assertEqual(first['officialSkill']['state'],'owner-managed')
+        self.assertTrue(first['officialSkill']['entryPresent'])
+        self.assertNotIn(updater.SKILL_ENTRY,first['changed'])
+        self.assertEqual(skill.read_bytes(),b'owner bookkeeping instructions')
+        self.assertEqual(reference.read_bytes(),b'private reference')
+        saved=json.loads((self.root/updater.STATE).read_text())
+        self.assertEqual(saved['officialSkill']['skillPolicy'],'local-only')
+        self.assertTrue(saved['officialSkill']['ownerManaged'])
+        self.assertEqual(saved['officialSkill']['files'],{})
+        self.local_only_release('0.3.21',3021)
+        second=self.update(apply=True)
+        self.assertTrue(second['ok'])
+        self.assertEqual(skill.read_bytes(),b'owner bookkeeping instructions')
+        self.assertEqual(reference.read_bytes(),b'private reference')
+
+    def test_local_only_missing_owner_skill_prompts_instead_of_installing(self):
+        self.adopt()
+        self.local_only_release('0.3.20',3020)
+        result=self.update(apply=True)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['officialSkill']['state'],'owner-managed')
+        self.assertFalse(result['officialSkill']['entryPresent'])
+        self.assertIn('入口缺失',result['next'])
+        self.assertFalse((self.root/updater.SKILL_ENTRY).exists())
+        self.assertFalse((self.root/'.agents').exists())
+
+    def test_local_only_renamed_owner_skill_is_preserved_and_reported_missing(self):
+        self.adopt()
+        skill=self.root/updater.SKILL_ENTRY
+        skill.parent.mkdir(parents=True)
+        renamed=skill.parent/'SKILL-personal.md'
+        renamed.write_bytes(b'owner renamed instructions')
+        self.local_only_release('0.3.20',3020)
+        result=self.update(apply=True)
+        self.assertFalse(result['officialSkill']['entryPresent'])
+        self.assertIn('入口缺失',result['next'])
+        self.assertEqual(renamed.read_bytes(),b'owner renamed instructions')
+        self.assertFalse(skill.exists())
+
+    def test_local_only_installer_failure_preserves_owner_skill(self):
+        self.adopt()
+        skill=self.root/updater.SKILL_ENTRY
+        skill.parent.mkdir(parents=True)
+        skill.write_bytes(b'owner bookkeeping instructions')
+        self.local_only_release('0.3.20',3020)
+        before=json.loads((self.root/updater.STATE).read_text())
+        def failing(path): raise RuntimeError('installer failed')
+        result=updater.update(self.root,release_dir=self.assets,target='windows-x64',apply=True,installer=failing)
+        self.assertFalse(result['ok'])
+        self.assertIn('installer failed',result['error'])
+        self.assertEqual(result['binaryInstall'],'uncertain-needs-retry')
+        self.assertEqual(skill.read_bytes(),b'owner bookkeeping instructions')
+        self.assertEqual(json.loads((self.root/updater.STATE).read_text()),before)
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'untracked')
+
+    def test_local_only_transition_package_ignores_bundled_public_skill(self):
+        self.adopt()
+        self.local_only_release('0.3.20',3020,with_skill=True)
+        result=self.update(apply=True)
+        self.assertTrue(result['ok'])
+        self.assertNotIn(updater.SKILL_ENTRY,result['changed'])
+        self.assertFalse((self.root/updater.SKILL_ENTRY).exists())
+        self.assertEqual(result['officialSkill']['state'],'owner-managed')
+
+    def test_legacy_owner_managed_state_still_reports_owner_managed(self):
+        self.adopt()
+        state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text())
+        state['distribution']='personal-local'
+        state['officialSkill']={'path':updater.SKILL_ENTRY,'supported':False,'version':None,
+                                'sourceVersion':None,'commit':None,'files':{},'ownerManaged':True}
+        state_path.write_text(json.dumps(state))
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'owner-managed')
+
+    def test_public_release_rejects_local_only_skill_policy(self):
+        self.adopt(profile='preview')
+        self.release(profile='preview',version='0.4.0-rc.2',versionPolicy='unified',
+                     native_version='0.4.7',androidVersionCode=4007,skillPolicy='local-only')
+        with self.assertRaisesRegex(ValueError,'个人本地'):
+            updater.validate_release(self.assets,'preview','windows-x64')
+
 
 if __name__=='__main__': unittest.main()

@@ -30,9 +30,14 @@ EXCLUDED = {'node_modules', 'target', 'dist', 'build', '.runtime', '.gradle', '.
             '.git', '.venv', '.tauri', 'local', 'data', 'sra', 'exports', 'archive'}
 GENERATED = {'tauri.settings.gradle', 'tauri.properties', 'local.properties', 'key.properties', 'keystore.properties',
              'proguard-tauri.pro', 'tauri.build.gradle.kts'}
+SKILL_ROOT = '.agents/skills/account-maintenance'
 
 
-def source_files(root):
+def excluded_name(relative, exclude=()):
+    return any(relative == item or relative.startswith(item.rstrip('/') + '/') for item in exclude)
+
+
+def source_files(root, exclude=()):
     root = Path(root).resolve()
     for directory, dirs, names in os.walk(root):
         base = Path(directory)
@@ -42,9 +47,10 @@ def source_files(root):
         if relative.startswith(('app/src-tauri/gen/android/app/src/main/assets', 'app/src-tauri/gen/android/app/src/main/jniLibs')) or ('app/src-tauri/gen/android/' in relative and base.name == 'generated'):
             dirs[:] = []; continue
         for name in sorted(names):
-            p = base/name; rel = p.relative_to(root)
+            p = base/name; rel = p.relative_to(root).as_posix()
+            if excluded_name(rel, exclude): continue
             if p.is_symlink() or not p.is_file(): continue
-            if len(rel.parts) == 1:
+            if len(rel.split('/')) == 1:
                 if p.name in ROOT_FILES: yield p
             elif p.name not in GENERATED:
                 if p.suffix.lower() in EXTENSIONS or p.name in {'gradlew', 'gradlew.bat', 'gradle-wrapper.jar'}: yield p
@@ -83,7 +89,7 @@ def fixed_commit(root, commit):
     return commit
 
 
-def source_archive(root, output, commit=None):
+def source_archive(root, output, commit=None, exclude=()):
     root, output = Path(root).resolve(), Path(output).resolve()
     if commit is not None:
         fixed_commit(root, commit)
@@ -96,16 +102,17 @@ def source_archive(root, output, commit=None):
                     path = Path(info.filename)
                     if path.is_absolute() or '..' in path.parts or (info.external_attr >> 16) & 0o170000 == 0o120000:
                         raise ValueError('固定源码含不安全路径或符号链接。')
+                    if excluded_name(info.filename, exclude): continue
                     target = snapshot/path
                     if info.is_dir(): target.mkdir(parents=True, exist_ok=True)
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(archive.read(info))
-            return source_archive(snapshot, output)
+            return source_archive(snapshot, output, exclude=exclude)
     report = audit_sources(root)
     if not report['ok']: raise ValueError('源码隐私检查失败：' + ','.join(report['findings']))
     if output.exists(): raise ValueError('输出已存在，拒绝覆盖。')
     output.parent.mkdir(parents=True, exist_ok=True)
-    selected = list(source_files(root))
+    selected = list(source_files(root, exclude=exclude))
     with zipfile.ZipFile(output, 'x', compression=zipfile.ZIP_DEFLATED) as z:
         for p in selected:
             info = zipfile.ZipInfo(p.relative_to(root).as_posix())
@@ -272,11 +279,12 @@ def checksums(directory):
     return {'ok': True, 'files': len(paths)}
 
 
-def prepare_release(root, directory, commit, notes, distribution='public', personal_version_file=None):
+def prepare_release(root, directory, commit, notes, distribution='public', personal_version_file=None, omit_skill=False):
     raw_notes = Path(notes).absolute()
     root, directory, notes = Path(root).resolve(), Path(directory).resolve(), Path(notes).resolve()
     fixed_commit(root, commit)
     if distribution not in {'public', 'personal-local'}: raise ValueError('未知发布范围。')
+    if omit_skill and distribution != 'personal-local': raise ValueError('只有个人本地交付可以省略公开 Skill。')
     data = personal_version.build_data(root, personal_version_file) if distribution == 'personal-local' else product_version.load(root)
     profiles = ('personal',) if distribution == 'personal-local' else ('preview',)
     if not notes.is_file() or not notes.read_text(encoding='utf-8-sig').strip():
@@ -298,7 +306,8 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
                     commit=commit, nativeVersion=data['nativeVersion'], ledgerSchema=1,
                     profiles={}, notesSha256=sha(notes), distribution=distribution)
     if distribution == 'personal-local':
-        manifest.update(sourceVersion=data['sourceVersion'], androidVersionCode=data['androidVersionCode'])
+        manifest.update(sourceVersion=data['sourceVersion'], androidVersionCode=data['androidVersionCode'],
+                        skillPolicy='local-only')
     for profile in profiles:
         config = data['profiles'][profile]
         platforms = {}
@@ -312,13 +321,18 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
     # Compare an existing source asset against a fresh deterministic export; refuse stale archives.
     with tempfile.TemporaryDirectory() as folder:
         candidate = Path(folder)/source_name
-        source_archive(root, candidate, commit=commit)
+        exclude = (SKILL_ROOT + '/',) if (distribution == 'personal-local' and omit_skill) else ()
+        source_archive(root, candidate, commit=commit, exclude=exclude)
         try:
             import product_update
         except ModuleNotFoundError:
             from scripts import product_update
         source_contents=product_update.zip_contents(candidate, source=True)
-        if not product_update.official_skill_source(source_contents):
+        published_skill=product_update.official_skill_source(source_contents)
+        if omit_skill:
+            if published_skill or any(name.startswith(SKILL_ROOT + '/') for name in source_contents):
+                raise ValueError('本地自管个人源码仍包含公开 Skill；拒绝生成。')
+        elif not published_skill:
             raise ValueError('新发布源码必须包含核心记账 Skill 及其完整引用文件。')
         manifest['snapshotSchema']=product_update.source_snapshot_schema(source_contents,required=True)
         source = directory/source_name
@@ -358,13 +372,15 @@ def main():
     prepare.add_argument('--notes', required=True, type=Path)
     prepare.add_argument('--distribution', choices=['public','personal-local'], default='public')
     prepare.add_argument('--personal-version-file', type=Path)
+    prepare.add_argument('--omit-skill', action='store_true',
+                         help='personal-local only: export source without the public Skill')
     args = parser.parse_args()
     if args.command == 'audit': result = audit_sources(ROOT)
     elif args.command == 'source': result = source_archive(ROOT, args.output, commit=args.commit)
     elif args.command == 'version-check':
         mismatches = product_version.check(ROOT); result = {'ok': not mismatches, 'mismatches': mismatches}
     elif args.command == 'bundle': result = bundle(args.platform, args.binaries, args.installer, args.output, profile=args.profile, personal_version_file=args.personal_version_file)
-    elif args.command == 'prepare': result = prepare_release(ROOT, args.directory, args.commit, args.notes, args.distribution, args.personal_version_file)
+    elif args.command == 'prepare': result = prepare_release(ROOT, args.directory, args.commit, args.notes, args.distribution, args.personal_version_file, args.omit_skill)
     else: result = checksums(args.directory)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result['ok'] else 1

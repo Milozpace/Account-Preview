@@ -42,6 +42,7 @@ SHA = re.compile(r'[0-9a-f]{64}\Z')
 STATE = '.runtime/product/state.json'
 SKILL_ROOT = '.agents/skills/account-maintenance'
 SKILL_ENTRY = SKILL_ROOT+'/SKILL.md'
+SKILL_POLICIES = {None, 'local-only'}
 GUIDANCE = 'docs/版本衔接指引.md'
 
 
@@ -189,7 +190,9 @@ def skill_status(root, state=None):
 
 def skill_next(skill):
     if skill['state']=='owner-managed':
-        return f"记账前读取个人维护的 Skill：{skill['path']}；发布 Skill 单独保存在已校验的版本源码中。"
+        if skill.get('entryPresent') is False:
+            return f"个人 Skill 归本机所有者管理，入口缺失：{skill['path']}。请自行恢复该入口后再记账；更新器不会安装公开 Skill。"
+        return f"记账前读取个人维护的 Skill：{skill['path']}；公开 Skill 不随个人交付安装，个人内容留在使用目录。"
     if skill['state'] in {'synchronized','pending'}:
         return f"记账前必须读取官方 Skill：{skill['path']}；通用说明读取 releaseDocs 的本版本副本，本机所有者确认继续保留。"
     if skill['state']=='modified': return '官方 Skill 有本地变化；先保留并处理冲突，不将其视为已同步。'
@@ -595,6 +598,10 @@ def validate_release(directory, profile, target):
             raise ValueError('旧公共索引仅支持历史 preview；新包须声明统一版本策略。')
     if manifest.get('format')!=1 or (not local and (manifest.get('tag')!='v'+version or manifest.get('channel')!='private-preview')) or manifest.get('draft') is True:
         raise ValueError('不是已发布 private-preview 格式；旧版无兼容清单时不可更新。')
+    skill_policy=manifest.get('skillPolicy')
+    if skill_policy not in SKILL_POLICIES: raise ValueError('未知的 Skill 管理策略。')
+    if skill_policy=='local-only' and not local:
+        raise ValueError('本地自管 Skill 策略只用于个人本地交付。')
     if manifest.get('ledgerSchema')!=1 or type(manifest.get('snapshotSchema')) is not int or manifest['snapshotSchema'] not in {2,3}: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')
@@ -621,7 +628,10 @@ def validate_release(directory, profile, target):
         if not path.is_file() or digest(path.read_bytes())!=entry['sha256']: raise ValueError('发布资产 SHA256 校验失败。')
         assets.append(path)
     source=zip_contents(assets[0],source=True)
-    official_skill_source(source)
+    # Local-only personal packages may omit the public Skill; a transition package
+    # that still carries it must stay internally consistent for older updaters.
+    if skill_policy!='local-only' or any(name.startswith(SKILL_ROOT+'/') for name in source):
+        official_skill_source(source)
     if source_snapshot_schema(source,required=unified or independent)!=manifest['snapshotSchema']:
         raise ValueError('发布快照 schema 与固定源码生产端不一致。')
     try: source_version=json.loads(source['release.json'])
@@ -835,8 +845,9 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
             raise ValueError('新产品的原生安装版本和 Android 安装序号必须严格递增；拒绝降级。')
     ledger=ledger_report(root,manifest['ledgerSchema'])
     saved_skill=state.get('officialSkill')
-    owner_skill=(manifest.get('versionPolicy')=='independent-personal'
-                 and (bool((saved_skill or {}).get('ownerManaged')) or checked_path(root,SKILL_ENTRY).is_file()))
+    local_only=manifest.get('skillPolicy')=='local-only'
+    owner_skill=(local_only or (manifest.get('versionPolicy')=='independent-personal'
+                 and (bool((saved_skill or {}).get('ownerManaged')) or checked_path(root,SKILL_ENTRY).is_file())))
     protected=protected_snapshot(root,owner_skill=owner_skill)
     desired={name:data for name,data in source.items() if managed_name(name)}
     if not desired: raise ValueError('发布源码没有共享程序。')
@@ -906,6 +917,9 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     skill_report={'path':str(checked_path(root,SKILL_ENTRY)),
                   **{key:skill_provenance.get(key) for key in ('version','sourceVersion','commit')},
                   'state':skill_state}
+    if owner_skill:
+        # The updater never installs, updates or removes the owner's Skill.
+        skill_report['entryPresent']=checked_path(root,SKILL_ENTRY).is_file()
     skill_final={**skill_report,'state':'synchronized' if skill_files else skill_report['state']}
     guidance_hash=digest(source[GUIDANCE]) if GUIDANCE in source else None
     guidance=guidance_status(root,version,guidance_hash,pending=old_version!=version)
@@ -922,6 +936,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                   'version':skill_report['version'],'sourceVersion':skill_report['sourceVersion'],'commit':skill_report['commit'],
                   'files':{name:digest(data) for name,data in skill_files.items()} if skill_files else skill_baseline}
     if owner_skill: skill_record['ownerManaged']=True
+    if local_only: skill_record['skillPolicy']='local-only'
     install_required=old_version!=version or any(managed_name(name) for name in changed) or requires_environment
     if old_version==version and not changed and not requires_environment and saved_skill==skill_record and state.get('guidanceSha256')==guidance_hash:
         return {**report,'unchanged':True,'officialSkill':skill_final}
