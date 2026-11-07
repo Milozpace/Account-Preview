@@ -252,13 +252,21 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
 class UnifiedProductVersionTests(ProductUpdateFixture, unittest.TestCase):
     def test_personal_0318_updates_independent_0319(self):
         self.adopt()
+        skill=updater.SKILL_ENTRY
+        owner=self.root/skill
+        owner.parent.mkdir(parents=True)
+        owner.write_bytes(b'owner bookkeeping instructions')
+        owner_reference=owner.parent/'references/local.md'
+        owner_reference.parent.mkdir()
+        owner_reference.write_bytes(b'private reference')
         state_path=self.root/updater.STATE
         state=json.loads(state_path.read_text()); state.update(version='0.3.18',sourceVersion='0.4.0-preview.4',androidVersionCode=3018)
         state_path.write_text(json.dumps(state))
         source_version='0.4.0-preview.5'
         product=dict(version=source_version,tag='v'+source_version,channel='private-preview')
         manifest=self.release(version='0.3.19',native_version='0.3.19',
-            source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode(),'scripts/app_export.py':b'SCHEMA_VERSION = 3\n'},
+            source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode(),
+                    'scripts/app_export.py':b'SCHEMA_VERSION = 3\n',skill:b'published bookkeeping instructions'},
             versionPolicy='independent-personal',distribution='personal-local',sourceVersion=source_version,
             tag=None,channel='personal-local',androidVersionCode=3019,snapshotSchema=3)
         bundle=self.assets/'bundle.zip'
@@ -273,7 +281,17 @@ class UnifiedProductVersionTests(ProductUpdateFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Android.*序号'): self.update()
         self.assertEqual(self.installs,[])
         state['androidVersionCode']=3018; state_path.write_text(json.dumps(state))
-        self.assertTrue(self.update(apply=True)['ok'])
+        preflight=self.update()
+        self.assertEqual(preflight['officialSkill']['state'],'owner-managed')
+        self.assertNotIn(skill,preflight['changed'])
+        result=self.update(apply=True)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['officialSkill']['state'],'owner-managed')
+        self.assertEqual(updater.status(self.root)['officialSkill']['state'],'owner-managed')
+        self.assertEqual(owner.read_bytes(),b'owner bookkeeping instructions')
+        self.assertEqual(owner_reference.read_bytes(),b'private reference')
+        self.assertEqual((Path(result['releaseDocs'])/skill).read_bytes(),b'published bookkeeping instructions')
+        self.assertTrue(self.update(apply=True)['unchanged'])
         saved=json.loads(state_path.read_text())
         self.assertEqual((saved['version'],saved['sourceVersion'],saved['androidVersionCode']),('0.3.19',source_version,3019))
         inner.pop('versionPolicy'); contents['manifest.json']=json.dumps(inner).encode()

@@ -176,6 +176,9 @@ def skill_status(root, state=None):
     report={'path':str(checked_path(root,SKILL_ENTRY)),'version':None,'sourceVersion':None,'state':'untracked'}
     if saved is None: return report
     report.update({key:saved.get(key) for key in ('version','sourceVersion','commit')})
+    if saved.get('ownerManaged'):
+        report['state']='owner-managed'
+        return report
     modified=False
     for name,expected in saved['files'].items():
         path=checked_path(root,name)
@@ -185,6 +188,8 @@ def skill_status(root, state=None):
 
 
 def skill_next(skill):
+    if skill['state']=='owner-managed':
+        return f"记账前读取个人维护的 Skill：{skill['path']}；发布 Skill 单独保存在已校验的版本源码中。"
     if skill['state'] in {'synchronized','pending'}:
         return f"记账前必须读取官方 Skill：{skill['path']}；通用说明读取 releaseDocs 的本版本副本，本机所有者确认继续保留。"
     if skill['state']=='modified': return '官方 Skill 有本地变化；先保留并处理冲突，不将其视为已同步。'
@@ -277,6 +282,9 @@ def load_state(root):
             if not official_skill_name(name) or not isinstance(sha,str) or not SHA.fullmatch(sha):
                 raise ValueError('官方 Skill 文件基线无效。')
         if skill['supported'] and SKILL_ENTRY not in skill['files']: raise ValueError('官方 Skill 入口基线缺失。')
+        if 'ownerManaged' in skill and (skill['ownerManaged'] is not True or value['profile']!='personal'
+                or value.get('distribution')!='personal-local' or skill['supported'] or skill['files']):
+            raise ValueError('个人 Skill 管理状态无效。')
     return value
 
 
@@ -302,7 +310,7 @@ class ProtectedChange(ValueError):
         super().__init__(f'检测到 {detail}所有者文件变化；保留更改并停止更新，不自动恢复私人文件。')
 
 
-def protected_snapshot(root):
+def protected_snapshot(root, *, owner_skill=False):
     """Hash owner material in memory only; never follow redirects or open native vaults.
 
     These fingerprints and relative names are intentionally absent from journals and
@@ -317,8 +325,9 @@ def protected_snapshot(root):
         with path.open('rb') as stream:
             result[path.relative_to(root).as_posix()]=hashlib.file_digest(stream,'sha256').hexdigest()
     try:
-        for name in ('local','sra','docs'):
-            directory=root/name
+        directories_to_protect=('local','sra','docs',SKILL_ROOT) if owner_skill else ('local','sra','docs')
+        for name in directories_to_protect:
+            directory=checked_path(root,SKILL_ENTRY).parent if name==SKILL_ROOT else root/name
             if redirected(directory): raise ProtectedChange()
             if not directory.exists(): continue
             if not directory.is_dir(): raise ProtectedChange()
@@ -342,8 +351,8 @@ def protected_delta(before, after):
     return sum(before.get(name)!=after.get(name) for name in before.keys()|after.keys())
 
 
-def assert_protected(root, expected):
-    count=protected_delta(expected,protected_snapshot(root))
+def assert_protected(root, expected, *, owner_skill=False):
+    count=protected_delta(expected,protected_snapshot(root,owner_skill=owner_skill))
     if count: raise ProtectedChange(count)
 
 
@@ -824,12 +833,15 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                                              or manifest['androidVersionCode']<=old_code))):
             raise ValueError('新产品的原生安装版本和 Android 安装序号必须严格递增；拒绝降级。')
     ledger=ledger_report(root,manifest['ledgerSchema'])
-    protected=protected_snapshot(root)
+    saved_skill=state.get('officialSkill')
+    owner_skill=(manifest.get('versionPolicy')=='independent-personal'
+                 and (bool((saved_skill or {}).get('ownerManaged')) or checked_path(root,SKILL_ENTRY).is_file()))
+    protected=protected_snapshot(root,owner_skill=owner_skill)
     desired={name:data for name,data in source.items() if managed_name(name)}
     if not desired: raise ValueError('发布源码没有共享程序。')
-    skill_files=official_skill_source(source)
-    saved_skill=state.get('officialSkill')
-    skill_baseline=saved_skill['files'] if saved_skill else {}
+    # validate_release already verified the published Skill and its references.
+    skill_files={} if owner_skill else official_skill_source(source)
+    skill_baseline=saved_skill['files'] if saved_skill and not owner_skill else {}
     if skill_files and saved_skill is None:
         for name,data in skill_files.items():
             path=checked_path(root,name)
@@ -882,11 +894,18 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     if conflicts: raise ValueError('本机程序与采用基线冲突；保留现场：'+', '.join(sorted(set(conflicts))))
     if old_version==version and state.get('manifestSha256')!=manifest_hash: raise ValueError('同版本发布清单发生变化；保留原版本并停止。')
     binding=desktop_plan(root,state['profile'],desktop_config,prepare_environment=prepare_environment)
+    skill_provenance=saved_skill or {}
+    skill_state='unsupported'
+    if owner_skill:
+        skill_provenance={}
+        skill_state='owner-managed'
+    elif skill_files:
+        skill_provenance={'version':version,'sourceVersion':manifest.get('sourceVersion',version),'commit':manifest['commit']}
+        skill_state='pending'
     skill_report={'path':str(checked_path(root,SKILL_ENTRY)),
-                  'version':version if skill_files else (saved_skill or {}).get('version'),
-                  'sourceVersion':manifest.get('sourceVersion',version) if skill_files else (saved_skill or {}).get('sourceVersion'),
-                  'commit':manifest['commit'] if skill_files else (saved_skill or {}).get('commit'),
-                  'state':'pending' if skill_files else 'unsupported'}
+                  **{key:skill_provenance.get(key) for key in ('version','sourceVersion','commit')},
+                  'state':skill_state}
+    skill_final={**skill_report,'state':'synchronized' if skill_files else skill_report['state']}
     guidance_hash=digest(source[GUIDANCE]) if GUIDANCE in source else None
     guidance=guidance_status(root,version,guidance_hash,pending=old_version!=version)
     report={'ok':True,'dryRun':not apply,'root':str(root),'profile':state['profile'],'version':version,
@@ -901,9 +920,10 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     skill_record={'path':SKILL_ENTRY,'supported':bool(skill_files),
                   'version':skill_report['version'],'sourceVersion':skill_report['sourceVersion'],'commit':skill_report['commit'],
                   'files':{name:digest(data) for name,data in skill_files.items()} if skill_files else skill_baseline}
+    if owner_skill: skill_record['ownerManaged']=True
     install_required=old_version!=version or any(managed_name(name) for name in changed) or requires_environment
     if old_version==version and not changed and not requires_environment and saved_skill==skill_record and state.get('guidanceSha256')==guidance_hash:
-        return {**report,'unchanged':True,'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'}}
+        return {**report,'unchanged':True,'officialSkill':skill_final}
     if not apply: return report
     if not _lock_held:
         with update_lock(root):
@@ -958,7 +978,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         # Keep the verified bundle for recovery/retry; never use a redownload here.
         staged_bundle=stage/bundle.name
         atomic_bytes(staged_bundle,bundle_bytes)
-        assert_protected(root,protected)
+        assert_protected(root,protected,owner_skill=owner_skill)
         if ledger_report(root,manifest['ledgerSchema'])!=ledger: raise ValueError('预检后账本发生变化；停止更新。')
         if checked_path(root,STATE).read_bytes()!=previous[STATE]: raise ValueError('采用状态在预检后发生变化。')
         for name in changed:
@@ -978,12 +998,12 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                 if 'publisher' in settings:
                     settings['publisher']=str(root/native['helpers']['ledger_cli'])
                     atomic_json(gate,settings)
-            assert_protected(root,protected)
+            assert_protected(root,protected,owner_skill=owner_skill)
             attempted=True
             (installer or bootstrap.install_app)(native['installer'])
-        assert_protected(root,protected)
+        assert_protected(root,protected,owner_skill=owner_skill)
         if ledger_report(root,manifest['ledgerSchema'])!=ledger: raise ValueError('更新后账本业务哈希改变；不自动恢复账本，请核对并发记账。')
-        assert_protected(root,protected)
+        assert_protected(root,protected,owner_skill=owner_skill)
         for name,data in skill_files.items():
             path=checked_path(root,name)
             if not path.is_file() or path.read_bytes()!=data: raise ValueError('更新后官方 Skill 内容冲突；停止并恢复程序。')
@@ -1003,12 +1023,12 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         guidance=guidance_status(root,version,guidance_hash)
         return {**report,'unchanged':False,'binaryInstall':outcome,'recovery':str(recovery),
                 'agentGuidance':guidance,'next':update_next(skill_report,guidance),
-                'officialSkill':{**skill_report,'state':'synchronized' if skill_files else 'unsupported'},
+                'officialSkill':skill_final,
                 'releaseDocs':str(release_parent),'ledgerBackup':str(ledger_backup) if ledger['initialized'] else None}
     except Exception as error:
         # Personal/concurrent edits are observed and reported, never restored blindly.
         try:
-            delta=protected_delta(protected,protected_snapshot(root))
+            delta=protected_delta(protected,protected_snapshot(root,owner_skill=owner_skill))
             preserved=delta==0
         except ProtectedChange:
             delta=None; preserved=False
