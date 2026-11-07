@@ -21,6 +21,7 @@ export interface DashboardOptions {
   saveExport?: SaveExport;
   openSettings?: ()=>void;
   desktopApp?: boolean;
+  showIncome?: boolean;
   retryLocal?: ()=>Promise<void>;
 }
 function previousMonth(month: string): string {
@@ -123,7 +124,7 @@ export function mountDashboard(options: DashboardOptions): void {
       document.querySelector('#first-sync-button')?.addEventListener('click', sync);
       return;
     }
-    content.innerHTML = dashboardHtml(month, today(), state.expanded);
+    content.innerHTML = dashboardHtml(month, today(), state.expanded, false, options.showIncome ?? true);
     bindContentActions();
     redrawCharts();
     disposeMotion = mountMotion(content);
@@ -134,7 +135,7 @@ export function mountDashboard(options: DashboardOptions): void {
     if (!month) return;
     const pinned = content.querySelector<HTMLElement>('[data-highlight-pool][aria-pressed="true"]')?.dataset.highlightPool;
     disposeCharts();
-    renderCharts(month, today(), (date) => openDate(date), (record) => openRecord(record.id), { dark: options.isDark?.() ?? false });
+    renderCharts(month, today(), (date) => openDate(date), (record) => openRecord(record.id), { dark: options.isDark?.() ?? false, reduceMotion: options.desktopApp ? false : undefined });
     if (pinned) highlightPool(pinned);
   }
 

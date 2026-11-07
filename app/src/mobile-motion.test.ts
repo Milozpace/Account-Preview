@@ -66,22 +66,22 @@ describe('mobile viewport and page motion', () => {
     mountMobileMotion(f.root as unknown as HTMLElement, { transition: 'none' })();
     expect(f.root.animate).not.toHaveBeenCalled();
   });
-  it.each(['user', 'system'])('leaves everything visible and still for %s reduction', source => {
+  it.each(['user', 'system'])('plays motion despite %s reduction', source => {
     const f = fixture();f.media.matches = source === 'system';
     const dispose = mountMobileMotion(f.root as unknown as HTMLElement, { preference: source === 'user' ? 'reduce' : 'system', transition: 'forward' });
-    expect(f.effects).toHaveLength(0);
-    expect(f.observer.observe).not.toHaveBeenCalled();
-    expect(f.root.dataset.motionPreference).toBe('reduce');
+    expect(f.effects).toHaveLength(1);
+    expect(f.observer.observe).toHaveBeenCalled();
+    expect(f.root.dataset.motionPreference).toBe('system');
     dispose();
     expect(f.root.dataset.motionPreference).toBeUndefined();
   });
-  it('cancels active motion when the system preference changes and removes its listener', () => {
+  it('keeps active motion when the system preference changes and removes its listener', () => {
     const f = fixture();
     const dispose = mountMobileMotion(f.root as unknown as HTMLElement, { transition: 'forward' });
     f.enter();f.media.matches = true;
     f.listeners.forEach(listener => listener({ matches: true }));
-    expect(f.effects.every(effect => effect.cancel.mock.calls.length === 1)).toBe(true);
-    expect(f.root.dataset.motionPreference).toBe('reduce');
+    expect(f.effects.every(effect => effect.cancel.mock.calls.length === 0)).toBe(true);
+    expect(f.root.dataset.motionPreference).toBe('system');
     dispose();
     expect(f.listeners.size).toBe(0);
   });

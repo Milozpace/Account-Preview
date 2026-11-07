@@ -68,7 +68,7 @@ export function renderCharts(month: DashboardMonth, today: string, onDate: (date
 
   const line = createChart(lineElement);
   line.setOption({
-    animation: !(options?.reduceMotion||reducedMotion()), animationDuration: 520, animationEasing: 'cubicOut',
+    animation: !(options?.reduceMotion ?? reducedMotion()), animationDuration: 520, animationEasing: 'cubicOut',
     grid: { left: 45, right: 12, top: 18, bottom: 28 },
     tooltip: {
       ...tooltipStyle, trigger: 'axis', ...(options?.touch?{triggerOn:'click'}:{}),
@@ -105,7 +105,7 @@ export function renderCharts(month: DashboardMonth, today: string, onDate: (date
   const largest = new Set(month.topIds.slice(0, 3));
   const ids = ['operation', 'free', 'travel', 'growth', 'unknown'];
   scatter.setOption({
-    animation: !(options?.reduceMotion||reducedMotion()), animationDuration: 420, animationEasing: 'cubicOut',
+    animation: !(options?.reduceMotion ?? reducedMotion()), animationDuration: 420, animationEasing: 'cubicOut',
     grid: { left: 48, right: 18, top: 24, bottom: 28 },
     tooltip: {
       ...tooltipStyle, trigger: 'item', ...(options?.touch?{triggerOn:'click'}:{}),

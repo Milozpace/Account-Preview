@@ -53,7 +53,7 @@ export function categoriesHtml(month: DashboardMonth, expanded = false): string 
 }
 
 
-export function dashboardHtml(month: DashboardMonth, today: string, expanded = false, canEditBudget = false): string {
+export function dashboardHtml(month: DashboardMonth, today: string, expanded = false, canEditBudget = false, showIncome = true): string {
   const summary = month.summary;
   const active = hasComparableAllowance(month);
   const progress = monthProgress(month.month, today);
@@ -64,13 +64,13 @@ export function dashboardHtml(month: DashboardMonth, today: string, expanded = f
     { id: 'structural', label: '结构性支出', cents: summary.structuralCents },
     { id: 'income', label: '本月收入', cents: summary.incomeCents },
     { id: 'unknown', label: '待归类消费', cents: summary.unknownCents },
-  ].filter(scope => scope.cents !== 0);
+  ].filter(scope => scope.cents !== 0 && (showIncome || scope.id !== 'income'));
   const top = month.topIds.slice(0, 10).map((id) => month.records.find((record) => record.id === id)).filter((record): record is LedgerRecord => Boolean(record));
   return `
     <section class="overview" aria-label="月度概览">
       <div class="overview-grid">
         <div class="overview-card"><span>个人净消费</span><strong class="overview-amount"><small>¥</small> ${money(summary.personalCents)}</strong></div>
-        <div class="overview-card"><span>本月收入</span><strong class="overview-amount"><small>¥</small> ${money(summary.incomeCents)}</strong></div>
+        ${showIncome ? `<div class="overview-card"><span>本月收入</span><strong class="overview-amount"><small>¥</small> ${money(summary.incomeCents)}</strong></div>` : `<div class="overview-card"><span>本月新增额度</span><strong class="overview-amount">${overviewBudgetValue(summary.monthlyBudgetCents, active)}</strong></div>`}
         <div class="overview-card"><span>${pendingCount?'各池可用（未含待分池）':'各池可用合计'}</span><strong class="overview-amount">${overviewBudgetValue(summary.availableCents, active)}</strong></div>
         <div class="overview-card"><span>安全积累</span><strong class="overview-amount">${overviewBudgetValue(summary.safetyCents, active)}</strong></div>
       </div>

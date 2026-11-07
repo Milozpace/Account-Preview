@@ -5,6 +5,10 @@ import type { DashboardMonth } from './types';
 
 describe('shared dashboard presentation without HTTP or native dependencies', () => {
   const month = fixture.months[0] as unknown as DashboardMonth;
+  it('shows the personal budget card and hides income leads',()=>{
+    const html=dashboardHtml(month,'2026-10-16',false,false,false);
+    expect(html).toContain('本月新增额度');expect(html).not.toContain('本月收入');
+  });
   it('renders the existing desktop dashboard sections and exact cents without changing data', () => {
     const before = JSON.stringify(month);
     const html = dashboardHtml(month, '2026-10-16');

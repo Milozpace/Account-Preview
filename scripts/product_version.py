@@ -95,8 +95,8 @@ def generated(root, data):
     return result
 
 
-def check(root=ROOT):
-    root = Path(root); data = load(root); mismatches = []
+def check(root=ROOT, data=None):
+    root = Path(root); data = data or load(root); mismatches = []
     for name, expected in generated(root, data).items():
         actual = (root/name).read_text(encoding='utf-8')
         if name.endswith('.json'):

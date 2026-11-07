@@ -1,4 +1,4 @@
-export const reducedMotion = () => (typeof document!=='undefined'&&document.documentElement?.dataset.layout==='desktop'&&document.documentElement.dataset.motionPreference==='reduce')||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const reducedMotion = () => (typeof document==='undefined'||!document.documentElement?.dataset.layout)&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const easing = 'cubic-bezier(.22, 1, .36, 1)';
 
 export function createDrawerMotion(dialog: HTMLDialogElement, reduce = reducedMotion) {

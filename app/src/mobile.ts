@@ -32,7 +32,7 @@ export function groupedRecords(records: AppMonth['records'], structural = false)
   return groupDays(records).map(day => `<section class="bill-day"><div class="day-heading"><h3>${e(dateTitle(day.date))}</h3><span>${structural?'合计':'净消费'} ¥ ${money(day.cents)}</span></div>${day.records.map(record => dashboardRecordRow(record)).join('')}</section>`).join('');
 }
 
-export function homeHtml(month: AppMonth): string {
+export function homeHtml(month: AppMonth, showIncome = true): string {
   const summary=month.summary,active=month.mechanismActive;
   const value=(cents:number)=>money(active?cents:null);
   const recent=filterRecords(month.records,emptyQuery()).slice(0,5);
@@ -41,11 +41,11 @@ export function homeHtml(month: AppMonth): string {
     {id:'structural',label:'结构性支出',cents:summary.structuralCents},
     {id:'income',label:'本月收入',cents:summary.incomeCents},
     {id:'unknown',label:'待归类消费',cents:summary.unknownCents},
-  ].filter(scope=>scope.cents!==0);
+  ].filter(scope=>scope.cents!==0 && (showIncome || scope.id!=='income'));
   const leads=scopes.length?`<div class="overview-secondary">${scopes.map(scope=>`<button class="scope-item" data-scope="${scope.id}" type="button"><span>${scope.label}</span><strong>¥ ${money(scope.cents)}</strong>${arrow}</button>`).join('')}</div>`:'';
   return `<section class="mobile-overview" aria-label="月度总览">
     <div class="hero-summary"><span class="eyebrow">月度观察</span><button type="button" class="hero-amount" data-action="all-bills"><span>个人净消费</span><strong><small>¥</small> ${money(summary.personalCents)}</strong><span class="hero-detail">查看消费明细 ${arrow}</span></button>
-    <div class="hero-secondary"><div><span>本月收入</span><strong>¥ ${money(summary.incomeCents)}</strong></div><div><span>各池可用合计</span><strong>¥ ${value(summary.availableCents)}</strong></div></div></div>
+    <div class="hero-secondary"><div><span>${showIncome ? '本月收入' : '本月新增额度'}</span><strong>¥ ${showIncome ? money(summary.incomeCents) : value(summary.monthlyBudgetCents)}</strong></div><div><span>各池可用合计</span><strong>¥ ${value(summary.availableCents)}</strong></div></div></div>
     ${!active?'<p class="mechanism-note">该月未设预算，仍按用途统计消费；可在电脑版“四池预算”设置额度。</p>':''}
     ${sectionHeading('四个资金池')}<div class="mobile-pools">${month.pools.filter(pool=>['operation','free','travel','growth'].includes(pool.id)).map(pool=>{
       const over=active&&pool.overrunCents>0;
@@ -75,14 +75,14 @@ export function analysisHtml(month: AppMonth, tab: AnalysisTab, date: string|nul
   return `<section class="analysis">${navigation}<div role="tabpanel" id="analysis-panel" aria-labelledby="tab-${tab}">${body}</div></section>`;
 }
 
-export function billsHtml(month: AppMonth, query: BillQuery): string {
+export function billsHtml(month: AppMonth, query: BillQuery, showIncome = true): string {
   const records=selectBills(month,query);
   const source=query.scope==='structural'?month.structuralRecords:query.scope==='income'?month.incomeRecords:month.records;
   const categories=[...new Set(source.map(r=>r.category))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
   const pooled=query.scope==='personal';
   const totalLabel=pooled?'净消费':'合计';
   return `<section class="bills"><div class="bill-toolbar"><label class="search-field"><span aria-hidden="true">${uiIcon('search')}</span><input id="bill-search" type="search" placeholder="搜索账单标题" value="${e(query.query)}" aria-label="搜索账单标题"><button class="search-clear" type="button" data-action="clear-search" aria-label="清除搜索" ${query.query?'':'hidden'}>${uiIcon('close')}</button></label>
-    <div class="bill-filter-row"><label><span class="sr-only">记录类型</span><select id="bill-scope"><option value="personal" ${query.scope==='personal'?'selected':''}>个人消费</option><option value="structural" ${query.scope==='structural'?'selected':''}>结构性支出</option><option value="income" ${query.scope==='income'?'selected':''}>收入</option></select></label><label><span class="sr-only">分类</span><select id="bill-category"><option value="">全部分类</option>${categories.map(c=>`<option value="${e(c)}" ${query.category===c?'selected':''}>${e(c)}</option>`).join('')}</select></label><label><span class="sr-only">资金池</span><select id="bill-pool" ${pooled?'':'disabled'}><option value="">全部资金池</option>${Object.entries(poolNames).map(([id,name])=>`<option value="${id}" ${query.pool===id?'selected':''}>${name}</option>`).join('')}</select></label></div>
+    <div class="bill-filter-row"><label><span class="sr-only">记录类型</span><select id="bill-scope"><option value="personal" ${query.scope==='personal'?'selected':''}>个人消费</option><option value="structural" ${query.scope==='structural'?'selected':''}>结构性支出</option>${showIncome ? `<option value="income" ${query.scope==='income'?'selected':''}>收入</option>` : ''}</select></label><label><span class="sr-only">分类</span><select id="bill-category"><option value="">全部分类</option>${categories.map(c=>`<option value="${e(c)}" ${query.category===c?'selected':''}>${e(c)}</option>`).join('')}</select></label><label><span class="sr-only">资金池</span><select id="bill-pool" ${pooled?'':'disabled'}><option value="">全部资金池</option>${Object.entries(poolNames).map(([id,name])=>`<option value="${id}" ${query.pool===id?'selected':''}>${name}</option>`).join('')}</select></label></div>
     ${query.date?`<div class="active-filters"><span>${e(dateTitle(query.date))}</span><button type="button" class="quiet-button" data-action="clear-date">取消日期 ×</button></div>`:''}
     <div class="bill-result-heading"><p class="bill-count">${records.length} 笔 · ${totalLabel} ¥ ${money(records.reduce((s,r)=>s+r.amountCents,0))}</p><button type="button" class="quiet-button" data-action="clear-filters">重置筛选</button></div></div>
     <div class="record-list">${records.length?groupedRecords(records,!pooled):empty('没有符合条件的记录','试试其他关键词，或重置筛选。')}</div></section>`;

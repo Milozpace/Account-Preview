@@ -28,4 +28,3 @@
 .desktop-month-check svg{width:15px;height:15px;}
 html[data-motion-preference=reduce] :is(.desktop-startup-ring,.desktop-month-chevron){animation:none;transition:none;}
 @keyframes desktop-loading{to{transform:rotate(360deg);}}
-@media(prefers-reduced-motion:reduce){.desktop-startup-ring{animation:none;}.desktop-month-chevron{transition:none;}}

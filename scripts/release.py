@@ -125,8 +125,12 @@ def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, 
         conf = json.loads(conf_path.read_text(encoding='utf-8'))
         if conf['identifier'] != selected['identifier'] or conf['version'] != data['nativeVersion']:
             raise ValueError('构建目录的身份/版本与包档案不符；先 prepare build profile。')
-        mismatches=product_version.check(root)
+        mismatches=product_version.check(root, data)
         if mismatches: raise ValueError('构建生成版本尚未统一：'+','.join(mismatches))
+        display_path = Path(root)/'app/src/delivery-profile.ts'
+        expected_display = 'export const showIncome = ' + ('false' if profile == 'personal' else 'true') + ';'
+        if not display_path.is_file() or expected_display not in display_path.read_text(encoding='utf-8'):
+            raise ValueError('构建目录的展示策略与交付档案不符；先 prepare build profile。')
     commit = commit or git(root, 'rev-parse', 'HEAD')
     if not re.fullmatch('[0-9a-f]{40}', commit): raise ValueError('构建须绑定完整 commit。')
     suffix = '.exe' if platform == 'windows-x64' else ''
@@ -137,7 +141,7 @@ def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, 
     expected_suffix = '.apk' if platform == 'android-arm64' else '.exe' if platform == 'windows-x64' else '.dmg'
     if Path(installer).suffix.lower() != expected_suffix: raise ValueError('安装程序格式与平台不符。')
     manifest = {'format': 1, 'version': data['version'], 'nativeVersion': data['nativeVersion'],
-                'versionPolicy': 'unified', 'androidVersionCode': data['androidVersionCode'],
+                'versionPolicy': data.get('versionPolicy', 'unified'), 'androidVersionCode': data['androidVersionCode'],
                 'platform': platform, 'profile': profile, 'identifier': selected['identifier'], 'commit': commit,
                 'files': {name: sha(p) for name, p in files.items()}}
     if profile == 'personal':
@@ -159,7 +163,7 @@ def verify_bundle(path, data, profile, platform, commit):
         if archive.getinfo('manifest.json').file_size > 128*1024: raise ValueError('组件清单过大。')
         manifest = json.loads(archive.read('manifest.json'))
         expected = dict(format=1, version=data['version'], nativeVersion=data['nativeVersion'],
-                        versionPolicy='unified', androidVersionCode=data['androidVersionCode'],
+                        versionPolicy=data.get('versionPolicy', 'unified'), androidVersionCode=data['androidVersionCode'],
                         profile=profile, platform=platform, commit=commit,
                         identifier=data['profiles'][profile]['identifier'])
         if data.get('distribution') == 'personal-local':
@@ -210,7 +214,7 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
     # Notes are only used as the Release body; a mixed staging directory must never become an upload list.
     if notes.is_relative_to(directory) or any(p.name not in allowed or not p.is_file() or p.is_symlink() for p in directory.iterdir()):
         raise ValueError('发布目录含非允许附件；公开包不得混入个人包或 Markdown 说明附件。')
-    manifest = dict(format=1, versionPolicy='unified', version=data['version'], tag=data['tag'], channel=data['channel'],
+    manifest = dict(format=1, versionPolicy=data.get('versionPolicy', 'unified'), version=data['version'], tag=data['tag'], channel=data['channel'],
                     androidVersionCode=data['androidVersionCode'],
                     commit=commit, nativeVersion=data['nativeVersion'], ledgerSchema=1,
                     profiles={}, notesSha256=sha(notes), distribution=distribution)
