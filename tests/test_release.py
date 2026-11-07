@@ -16,6 +16,12 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_bundle_rejects_commit_other_than_build_head(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder); root=parent/'repo'; self.repository(root)
+            installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
+            with self.assertRaisesRegex(ValueError,'HEAD'):
+                release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit='a'*40)
     def repository(self, root, skill=True):
         root.mkdir(exist_ok=True)
         shutil.copyfile(ROOT/'release.json', root/'release.json')

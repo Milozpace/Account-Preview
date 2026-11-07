@@ -8,6 +8,7 @@ const snapshot=fixture as unknown as DashboardSnapshot;
 describe('export entry and save state',()=>{
   it('offers only available months and exact current detail counts',()=>{
     const html=exportFormHtml(snapshot,'2026-10');
+    expect(exportFormHtml(snapshot,'2026-10',false)).not.toContain('笔收入');
     expect(html).toContain('value="2026-10" selected');
     expect(html).toContain('value="2026-09"');
     expect(html).not.toContain('2026-08');

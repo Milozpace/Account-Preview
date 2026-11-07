@@ -817,7 +817,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
                 raise ValueError('拒绝降级旧个人基线记录的产品版本。')
         if old_version and old_native is None:
             raise ValueError('缺少先前原生安装版本基线；请恢复已校验的旧索引或安装回执。')
-        if old_version and old_code is None and manifest.get('versionPolicy')=='unified':
+        if old_version and old_code is None and manifest.get('versionPolicy') in {'unified','independent-personal'}:
             raise ValueError('缺少先前 Android 安装序号基线；请恢复可信归档索引及其源码 ZIP。')
         if ((old_native is not None and tuple(map(int,manifest['nativeVersion'].split('.')))<=tuple(map(int,old_native.split('.'))))
                 or (old_code is not None and (type(manifest.get('androidVersionCode')) is not int

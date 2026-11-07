@@ -8,6 +8,19 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class BillImportTest {
+    @Test fun timeoutAndCompletionResolveOnlyOnce() {
+        repeat(100) {
+            val gate = BillImport.CompletionGate()
+            val start = CountDownLatch(1)
+            val done = CountDownLatch(2)
+            val winners = java.util.concurrent.atomic.AtomicInteger(0)
+            repeat(2) { Thread { start.await(); if (gate.claim()) winners.incrementAndGet(); done.countDown() }.start() }
+            start.countDown()
+            assertTrue(done.await(2, TimeUnit.SECONDS))
+            assertEquals(1, winners.get())
+            assertFalse(gate.claim())
+        }
+    }
     @Test fun selectionPreservesOrderDeduplicatesAndBoundsBatch() {
         assertEquals(listOf("one", "two"), BillImport.selectItems(listOf("one", "two", "one")))
         assertThrows(IllegalArgumentException::class.java) { BillImport.selectItems(emptyList<String>()) }
@@ -102,13 +115,30 @@ class BillImportTest {
 
     @Test fun providerWorkerHasBoundedBacklog() {
         val worker = BillImport.newWorker()
-        val started = CountDownLatch(1)
+        val started = CountDownLatch(2)
         val release = CountDownLatch(1)
         try {
             worker.execute { started.countDown(); release.await() }
+            worker.execute { started.countDown(); release.await() }
             assertTrue(started.await(2, TimeUnit.SECONDS))
-            worker.execute { }
             assertThrows(java.util.concurrent.RejectedExecutionException::class.java) { worker.execute { } }
+        } finally {
+            release.countDown()
+            worker.shutdownNow()
+            assertTrue(worker.awaitTermination(2, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test fun blockedProviderDoesNotPreventAnotherRead() {
+        val worker = BillImport.newWorker()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val completed = CountDownLatch(1)
+        try {
+            worker.execute { started.countDown(); release.await() }
+            assertTrue(started.await(2, TimeUnit.SECONDS))
+            worker.execute { completed.countDown() }
+            assertTrue(completed.await(2, TimeUnit.SECONDS))
         } finally {
             release.countDown()
             worker.shutdownNow()

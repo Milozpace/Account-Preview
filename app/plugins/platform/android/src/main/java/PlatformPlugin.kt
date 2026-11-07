@@ -3,6 +3,8 @@ package com.account.platform
 import android.app.Activity
 import android.content.Intent
 import android.provider.OpenableColumns
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
@@ -107,7 +109,13 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
         try {
             val index = invoke.parseArgs(BillIndexArgs::class.java).index
             val uri = selectedBills.getOrNull(index) ?: error("document unavailable")
-            billWorker.execute {
+            val gate = BillImport.CompletionGate()
+            val handler = Handler(Looper.getMainLooper())
+            val timeout = Runnable {
+                if (gate.claim()) invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", "文件 ${index + 1}"))
+            }
+            handler.postDelayed(timeout, 15_000L)
+            try { billWorker.execute {
                 var bytes: ByteArray? = null
                 var displayName = "文件 ${index + 1}"
                 try {
@@ -125,11 +133,22 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
                     }
                     val fileName = name ?: error("document name unavailable")
                     bytes = BillImport.readSelected(fileName, size) { reportActivity.contentResolver.openInputStream(uri) }
-                    invoke.resolve(JSObject().put("cancelled", false).put("fileName", fileName)
-                        .put("contentBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
+                    if (gate.claim()) {
+                        handler.removeCallbacks(timeout)
+                        invoke.resolve(JSObject().put("cancelled", false).put("fileName", fileName)
+                            .put("contentBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
+                    }
                 } catch (_: Exception) {
-                    invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", displayName))
+                    if (gate.claim()) {
+                        handler.removeCallbacks(timeout)
+                        invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", displayName))
+                    }
                 } finally { bytes?.fill(0) }
+            } } catch (_: java.util.concurrent.RejectedExecutionException) {
+                if (gate.claim()) {
+                    handler.removeCallbacks(timeout)
+                    invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", "文件 ${index + 1}"))
+                }
             }
         } catch (_: Exception) { invoke.reject("bill selection failed") }
     }
