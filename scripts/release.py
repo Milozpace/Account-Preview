@@ -133,6 +133,7 @@ def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, 
             raise ValueError('构建目录的展示策略与交付档案不符；先 prepare build profile。')
     commit = commit or git(root, 'rev-parse', 'HEAD')
     if not re.fullmatch('[0-9a-f]{40}', commit): raise ValueError('构建须绑定完整 commit。')
+    if git(root, 'rev-parse', 'HEAD') != commit: raise ValueError('组件提交必须是构建目录当前 HEAD。')
     suffix = '.exe' if platform == 'windows-x64' else ''
     files = {f'bin/{name}{suffix}': Path(binaries) / (name + suffix)
              for name in ('ledger_cli', 'bill_inbox_cli', 'sync_diagnose')} if platform != 'android-arm64' else {}

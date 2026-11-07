@@ -10,6 +10,7 @@ describe('buildAnalysisExport', () => {
     const data = snapshot();
     const before = structuredClone(data);
     const result = buildAnalysisExport(data, '2026-10');
+    expect(buildAnalysisExport(data, '2026-10', false).content).not.toContain('收入');
     expect(result.fileName).toBe('消费复盘_2026-10.md');
     expect(result).toEqual(buildAnalysisExport(data, '2026-10'));
     expect(data).toEqual(before);

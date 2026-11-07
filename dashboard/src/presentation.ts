@@ -298,7 +298,7 @@ export function mountDashboard(options: DashboardOptions): void {
 
   selector.addEventListener('change', () => { state.selectedMonth = selector.value; state.expanded = false; render(); });
   syncButton.addEventListener('click', sync);
-  document.querySelector('#export-button')!.addEventListener('click',()=>{if(state.snapshot)openExportDialog(state.snapshot,state.selectedMonth,options.saveExport??downloadExport);});
+  document.querySelector('#export-button')!.addEventListener('click',()=>{if(state.snapshot)openExportDialog(state.snapshot,state.selectedMonth,options.saveExport??downloadExport,options.showIncome??true);});
   document.querySelector('#app-settings-button')?.addEventListener('click',()=>options.openSettings?.());
   document.querySelector('#back-to-top')!.addEventListener('click', () => {
     window.scrollTo({ top: 0, behavior: reducedMotion() ? 'instant' : 'smooth' });

@@ -171,7 +171,7 @@ function settingsPageHtml():string {
 function viewHtml():string {
   const month=currentMonth();
   if(state.view==='upload')return billUploadHtml(uploadSession,state.android&&isTauri()&&!state.preview);
-  if(state.view==='export')return `<section class="analysis-export-page">${exportFormHtml(state.snapshot,state.exportMonth)}</section>`;
+  if(state.view==='export')return `<section class="analysis-export-page">${exportFormHtml(state.snapshot,state.exportMonth,showIncome)}</section>`;
   if(state.view==='sync')return syncHtml();
   if(state.view==='settings')return settingsPageHtml();
   if(state.view==='diagnostics')return mobile()?settingsPageHtml():diagnosticsHtml();
@@ -376,7 +376,7 @@ async function saveAnalysisExport():Promise<void>{
   const month=document.querySelector<HTMLSelectElement>('#export-month')?.value;
   if(!snapshot||!month||exportSession.busy)return;
   const saving=exportSession.save(async()=>{
-    const report=buildAnalysisExport(snapshot,month);
+    const report=buildAnalysisExport(snapshot,month,showIncome);
     if(state.source==='sample')report.content=report.content.replace('\n','\n\n> 合成预览数据，不是真实账本。\n');
     return isTauri()?invoke<{saved:boolean}>('analysis_export_save',report):downloadExport(report);
   });

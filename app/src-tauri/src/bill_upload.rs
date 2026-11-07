@@ -37,13 +37,16 @@ pub async fn bill_upload_choose(
     {
         use tauri::Manager;
         use tauri_plugin_platform::PlatformExt;
+        let directory = app.path().app_data_dir().map_err(|_| "账单暂存目录不可用".to_string())?;
+        // Keep the whole selection and native read alive if the WebView stops waiting.
+        // The lease must not be released while a provider is still reading.
+        tauri::async_runtime::spawn(async move {
+        let lease = std::sync::Arc::new(lease);
         let count = match app.platform().select_bills().await {
             Ok(Some(count)) => count,
             Ok(None) => return Ok(None),
             Err(_) => return Err("账单选择失败，请选择 CSV 或 XLSX 文件".into()),
         };
-        let directory = app.path().app_data_dir().map_err(|_| "账单暂存目录不可用".to_string())?;
-        let lease = std::sync::Arc::new(lease);
         let mut items = Vec::new();
         let mut failed = 0;
         let mut failures = Vec::new();
@@ -87,6 +90,7 @@ pub async fn bill_upload_choose(
             }).await { items.extend(saved); }
         }
         Ok(Some(BatchResult { items, failed, completed: count - failed, failures }))
+        }).await.map_err(|_| "账单选择或上传失败，请稍后重试".to_string())?
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -157,6 +161,27 @@ pub async fn bill_upload_retry(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn detached_native_work_keeps_lease_when_caller_stops_waiting() {
+        static TEST_ACTIVE: AtomicBool = AtomicBool::new(false);
+        let lease = acquire(&TEST_ACTIVE).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let task = tauri::async_runtime::spawn(async move {
+            started_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            drop(lease);
+            done_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        drop(task);
+        assert!(acquire(&TEST_ACTIVE).is_err());
+        finish_tx.send(()).unwrap();
+        done_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(acquire(&TEST_ACTIVE).is_ok());
+    }
 
     #[test]
     fn one_operation_at_a_time_and_cancellation_releases_the_gate() {
