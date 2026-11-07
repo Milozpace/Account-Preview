@@ -211,7 +211,7 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
             network.assert_not_called()
 
     def test_personal_local_update_tracks_own_version_independently_of_source(self):
-        self.adopt();self.release()
+        self.adopt();self.release(version='0.4.0-preview.4')
         manifest_path=self.assets/'release-manifest.json'
         manifest=json.loads(manifest_path.read_text());source_version=manifest['version']
         bundle=self.assets/'bundle.zip'
@@ -250,6 +250,34 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
 
 
 class UnifiedProductVersionTests(ProductUpdateFixture, unittest.TestCase):
+    def test_personal_0318_updates_independent_0319(self):
+        self.adopt()
+        state_path=self.root/updater.STATE
+        state=json.loads(state_path.read_text()); state.update(version='0.3.18',sourceVersion='0.4.0-preview.4',androidVersionCode=3018)
+        state_path.write_text(json.dumps(state))
+        source_version='0.4.0-preview.5'
+        product=dict(version=source_version,tag='v'+source_version,channel='private-preview')
+        manifest=self.release(version='0.3.19',native_version='0.3.19',
+            source={'scripts/shared.py':b'new code','release.json':json.dumps(product).encode(),'scripts/app_export.py':b'SCHEMA_VERSION = 3\n'},
+            versionPolicy='independent-personal',distribution='personal-local',sourceVersion=source_version,
+            tag=None,channel='personal-local',androidVersionCode=3019,snapshotSchema=3)
+        bundle=self.assets/'bundle.zip'
+        with zipfile.ZipFile(bundle) as archive: contents={n:archive.read(n) for n in archive.namelist()}
+        inner=json.loads(contents['manifest.json']); inner.update(versionPolicy='independent-personal',distribution='personal-local',sourceVersion=source_version,androidVersionCode=3019)
+        contents['manifest.json']=json.dumps(inner).encode()
+        with zipfile.ZipFile(bundle,'w') as archive:
+            for name,data in contents.items(): archive.writestr(name,data)
+        manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+        (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+        self.assertTrue(self.update(apply=True)['ok'])
+        saved=json.loads(state_path.read_text())
+        self.assertEqual((saved['version'],saved['sourceVersion'],saved['androidVersionCode']),('0.3.19',source_version,3019))
+        inner.pop('versionPolicy'); contents['manifest.json']=json.dumps(inner).encode()
+        with zipfile.ZipFile(bundle,'w') as archive:
+            for name,data in contents.items(): archive.writestr(name,data)
+        manifest.pop('versionPolicy'); manifest['profiles']['personal']['platforms']['windows-x64']['sha256']=sha(bundle.read_bytes())
+        (self.assets/'release-manifest.json').write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError,'策略'): updater.validate_release(self.assets,'personal','windows-x64')
     def archive_old_preview(self):
         self.adopt()
         stage=self.root/'.runtime/product/releases/0.4.0-preview.4';stage.mkdir(parents=True)
