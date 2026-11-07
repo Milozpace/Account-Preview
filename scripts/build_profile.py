@@ -27,6 +27,13 @@ def inactive_android_build_sources(root, profiles, selected):
     return [path for profile, files in paths.items() if profile != selected for path in files if path.is_file()]
 
 
+def android_gradle_text(text, identifier, native_version, version_code):
+    text = re.sub(r'((?:namespace|applicationId) = ")com\.account\.(?:preview|probe)(")',
+                  lambda match: match[1]+identifier+match[2], text)
+    text = re.sub(r'(?m)^(\s*)versionCode = .*$', lambda match: match[1]+f'versionCode = {version_code}', text)
+    return re.sub(r'(?m)^(\s*)versionName = .*$', lambda match: match[1]+f'versionName = "{native_version}"', text)
+
+
 def prepare(root, profile, platform, apply=False, isolated_build=False, personal_version_file=None):
     root = Path(root).resolve(); data = product_version.load(root)
     if profile not in data['profiles']: raise ValueError('未知构建档案。')
@@ -67,12 +74,7 @@ def prepare(root, profile, platform, apply=False, isolated_build=False, personal
                 if backup.exists():
                     text = backup.read_text(encoding='utf-8')
                     if name.endswith('.kts'):
-                        text = re.sub(r'((?:namespace|applicationId) = ")com\.account\.(?:preview|probe)(")',
-                                      lambda match: match[1]+selected['identifier']+match[2], text)
-                        text = re.sub(r'(?m)^(\s*)versionCode = .*$',
-                                      lambda match: match[1]+f"versionCode = {data['androidVersionCode']}", text)
-                        text = re.sub(r'(?m)^(\s*)versionName = .*$',
-                                      lambda match: match[1]+f"versionName = \"{data['nativeVersion']}\"", text)
+                        text = android_gradle_text(text, selected['identifier'], data['nativeVersion'], data['androidVersionCode'])
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(text, encoding='utf-8', newline='\n')
             java = android/'src/main/java'

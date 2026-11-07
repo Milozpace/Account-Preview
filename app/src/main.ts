@@ -391,6 +391,7 @@ main.addEventListener('click',event=>{
   if(!button)return;
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
+  if(data.action==='clear-upload-failures'){uploadSession.clearFailures();render();return;}
   if(data.action==='retry-setup'){void retryPhoneSetup();return;}
   if(data.settingsTab){selectSettingsSection(data.settingsTab as SettingsSection);return;}
   if(data.action==='retry-connection-status'){void refreshDesktopSettings();return;}

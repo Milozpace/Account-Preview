@@ -9,7 +9,14 @@ describe('bill batches',()=>{
   expect(s.failures).toHaveLength(1);expect(s.items[0].status).toBe('uploaded');
   expect(billUploadHtml(s,true)).toContain('上次选择的失败记录');
   await s.choose(async()=>({items:[],completed:0,failed:1,failures:[{fileName:'bad.csv',reason:'读取失败'}]}));
-  await s.choose(async()=>null);expect(s.failures).toHaveLength(1);
+  await s.choose(async()=>null);expect(s.failures).toHaveLength(2);
+ });
+ it('retains other unsubmitted failures after a partial reselection until explicitly cleared',async()=>{
+  const s=new BillUploadSession();
+  await s.choose(async()=>({items:[],failed:2,failures:[{fileName:'a.csv',reason:'读取失败'},{fileName:'b.csv',reason:'读取失败'}]}));
+  await s.choose(async()=>({items:[entry],failed:0,completed:1}));
+  expect(s.failures.map(item=>item.fileName)).toEqual(['a.csv','b.csv']);
+  s.clearFailures();expect(s.failures).toEqual([]);
  });
  it('retains successes and reports each failure safely',async()=>{
   const s=new BillUploadSession();

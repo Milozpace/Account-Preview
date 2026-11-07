@@ -116,6 +116,7 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
             }
             handler.postDelayed(timeout, 15_000L)
             try { billWorker.execute {
+                if (gate.isComplete()) return@execute
                 var bytes: ByteArray? = null
                 var displayName = "文件 ${index + 1}"
                 try {
@@ -135,8 +136,11 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
                     bytes = BillImport.readSelected(fileName, size) { reportActivity.contentResolver.openInputStream(uri) }
                     if (gate.claim()) {
                         handler.removeCallbacks(timeout)
+                        val contentBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                        bytes?.fill(0)
+                        bytes = null
                         invoke.resolve(JSObject().put("cancelled", false).put("fileName", fileName)
-                            .put("contentBase64", Base64.encodeToString(bytes, Base64.NO_WRAP)))
+                            .put("contentBase64", contentBase64))
                     }
                 } catch (_: Exception) {
                     if (gate.claim()) {
