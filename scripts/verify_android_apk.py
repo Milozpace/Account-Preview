@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import struct
+import zipfile
 
 
 REGISTRARS = (
@@ -15,6 +17,25 @@ REGISTRARS = (
     'com.google.mlkit.vision.common.internal.VisionCommonRegistrar',
     'com.google.mlkit.vision.barcode.internal.BarcodeRegistrar',
 )
+
+
+def verify_native_alignment(apk: Path):
+    """Check all arm64 ELF PT_LOAD segments, not just APK ZIP alignment."""
+    results = []
+    with zipfile.ZipFile(apk) as archive:
+        names = [name for name in archive.namelist() if name.startswith('lib/arm64-v8a/') and name.endswith('.so')]
+        for name in names:
+            info = archive.getinfo(name)
+            if info.file_size > 100 * 1024 * 1024: raise ValueError('native library too large')
+            data = archive.read(name)
+            if len(data) < 64 or data[:6] != b'\x7fELF\x02\x01': raise ValueError('invalid arm64 ELF')
+            offset = struct.unpack_from('<Q', data, 32)[0]
+            entry_size, count = struct.unpack_from('<HH', data, 54)
+            if entry_size < 56 or not count or offset + entry_size * count > len(data): raise ValueError('invalid ELF program headers')
+            alignments = [struct.unpack_from('<Q', data, offset + i * entry_size + 48)[0]
+                          for i in range(count) if struct.unpack_from('<I', data, offset + i * entry_size)[0] == 1]
+            results.append({'library': name, 'ok': bool(alignments) and all(value >= 16384 and value % 16384 == 0 for value in alignments)})
+    return {'ok': bool(results) and all(item['ok'] for item in results), 'libraries': results}
 
 
 def find_apkanalyzer():
@@ -46,8 +67,9 @@ def verify(apk: Path, apkanalyzer: str):
             r'(?m)^\.method (?=[^\n]*\bpublic\b)[^\n]*<init>\(\)V\s*$', output,
         ))
         results.append({'class': registrar, 'publicNoArgConstructor': constructor})
-    return {'ok': all(item['publicNoArgConstructor'] for item in results),
-            'registrars': results}
+    alignment = verify_native_alignment(apk)
+    return {'ok': all(item['publicNoArgConstructor'] for item in results) and alignment['ok'],
+            'registrars': results, 'nativeAlignment': alignment}
 
 
 def main():
