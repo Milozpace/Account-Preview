@@ -15,7 +15,7 @@ class PersonalVersionTests(unittest.TestCase):
             path=root/'personal.json'; path.write_text('{"version":"0.3.19","androidVersionCode":3019}')
             value=module.build_data(root,path)
             self.assertEqual((value['version'],value['nativeVersion'],value['androidVersionCode']),('0.3.19','0.3.19',3019))
-            self.assertEqual(value['sourceVersion'],'0.4.0-preview.5')
+            self.assertEqual(value['sourceVersion'],json.loads((root/'release.json').read_text())['version'])
             self.assertEqual(value['versionPolicy'],'independent-personal')
     def module(self):
         path=ROOT/'scripts/personal_version.py'

@@ -204,6 +204,12 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
                     {'tag_name':'v99.0.0','draft':False,'prerelease':False}]
         self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.10-preview.2')
 
+    def test_matching_rc_follows_preview_without_switching_series(self):
+        candidates=[{'tag_name':'v0.4.0-preview.5','draft':False},
+                    {'tag_name':'v0.4.0-rc.1','draft':False},
+                    {'tag_name':'v9.0.0-rc.1','draft':False}]
+        self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.0-rc.1')
+
     def test_personal_remote_route_stops_before_network_and_requires_local_package(self):
         with patch.object(updater,'gh_json') as network:
             with self.assertRaisesRegex(ValueError,'本地|release-dir'):

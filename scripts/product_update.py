@@ -501,16 +501,17 @@ def installation_baseline(root, state, *, require_android=True):
 
 def select_release(releases):
     candidates=[]
+    release_candidates=[]
     for item in releases:
         tag=item.get('tag_name','')
         if item.get('draft') is not False or not tag.startswith('v'): continue
-        # Existing subscribers stay on legacy preview; accepting local SemVer does
-        # not subscribe them to stable, alpha, beta, or rc remote deliveries.
-        if not VERSION.fullmatch(tag[1:]): continue
+        if not VERSION.fullmatch(tag[1:]) and not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.([1-9]\d*)',tag[1:]): continue
         try: key=version_tuple(tag[1:])
         except ValueError: continue
-        candidates.append((key,item))
+        (candidates if VERSION.fullmatch(tag[1:]) else release_candidates).append((key,item))
     if not candidates: raise ValueError('没有已发布的 private-preview 版本；draft/candidate 不可更新。')
+    series=max(candidates,key=lambda item:item[0])[0][:3]
+    candidates.extend(item for item in release_candidates if item[0][:3]==series)
     return max(candidates,key=lambda item:item[0])[1]
 
 
