@@ -27,7 +27,7 @@ export class BillUploadSession {
  }
  async choose(action:()=>Promise<BillUploadBatch|BillUploadItem|null>):Promise<void>{
   await this.run(async()=>{
-   const result=await action();if(!result){this.failures=[];this.message='已取消选择';return;}
+   const result=await action();if(!result){this.message='已取消选择';return;}
    if ('items' in result) {
     this.merge(result.items);this.failures=result.failures??[];this.error=result.failed>0;
     this.message=result.failed?`已处理 ${result.completed??result.items.length} 份，${result.failed} 份未完成；可重试待处理文件，未列出的文件请重新选择。`:`已处理 ${result.completed??result.items.length} 份账单`;

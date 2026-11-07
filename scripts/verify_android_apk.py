@@ -32,9 +32,21 @@ def verify_native_alignment(apk: Path):
             offset = struct.unpack_from('<Q', data, 32)[0]
             entry_size, count = struct.unpack_from('<HH', data, 54)
             if entry_size < 56 or not count or offset + entry_size * count > len(data): raise ValueError('invalid ELF program headers')
-            alignments = [struct.unpack_from('<Q', data, offset + i * entry_size + 48)[0]
-                          for i in range(count) if struct.unpack_from('<I', data, offset + i * entry_size)[0] == 1]
-            results.append({'library': name, 'ok': bool(alignments) and all(value >= 16384 and value % 16384 == 0 for value in alignments)})
+            segments = [offset + i * entry_size for i in range(count)
+                        if struct.unpack_from('<I', data, offset + i * entry_size)[0] == 1]
+            aligned = all(struct.unpack_from('<Q', data, entry + 48)[0] >= 16384
+                          and struct.unpack_from('<Q', data, entry + 48)[0] % 16384 == 0
+                          and struct.unpack_from('<Q', data, entry + 8)[0] % 16384 == struct.unpack_from('<Q', data, entry + 16)[0] % 16384
+                          for entry in segments)
+            zip_aligned = True
+            if info.compress_type == zipfile.ZIP_STORED:
+                with apk.open('rb') as stream:
+                    stream.seek(info.header_offset)
+                    local = stream.read(30)
+                if len(local) != 30 or local[:4] != b'PK\x03\x04': raise ValueError('invalid ZIP local header')
+                name_length, extra_length = struct.unpack_from('<HH', local, 26)
+                zip_aligned = (info.header_offset + 30 + name_length + extra_length) % 16384 == 0
+            results.append({'library': name, 'ok': bool(segments) and aligned and zip_aligned})
     return {'ok': bool(results) and all(item['ok'] for item in results), 'libraries': results}
 
 

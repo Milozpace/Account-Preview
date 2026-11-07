@@ -29,6 +29,31 @@ class ReleaseTests(unittest.TestCase):
             installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
             with self.assertRaisesRegex(ValueError,'改动|源码'):
                 release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit=commit)
+    def test_bundle_rejects_nonversion_changes_in_generated_version_files(self):
+        from scripts import product_version
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder); root=parent/'repo'; self.repository(root)
+            for name in product_version.VERSION_FILES + ['app/src-tauri/src/desktop_bridge.rs','app/src/delivery-profile.ts']:
+                path=root/name; path.parent.mkdir(parents=True,exist_ok=True); shutil.copyfile(ROOT/name,path)
+            subprocess.run(['git','-C',str(root),'add','.'],check=True,capture_output=True)
+            subprocess.run(['git','-C',str(root),'commit','-m','include source'],check=True,capture_output=True)
+            commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+            package=root/'app/package.json'; content=json.loads(package.read_text(encoding='utf-8'))
+            content['dependencies']['unexpected-dependency']='1.0.0'; package.write_text(json.dumps(content),encoding='utf-8')
+            installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
+            with self.assertRaisesRegex(ValueError,'源码|改动'):
+                release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit=commit)
+    def test_bundle_rejects_rename_from_generated_path_to_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder); root=parent/'repo'; self.repository(root)
+            original=root/'app/src-tauri/gen/schemas/test.json'; original.parent.mkdir(parents=True); original.write_text('{}')
+            subprocess.run(['git','-C',str(root),'add','.'],check=True,capture_output=True)
+            subprocess.run(['git','-C',str(root),'commit','-m','include generated'],check=True,capture_output=True)
+            commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+            subprocess.run(['git','-C',str(root),'mv','app/src-tauri/gen/schemas/test.json','scripts/unexpected.json'],check=True,capture_output=True)
+            installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
+            with self.assertRaisesRegex(ValueError,'改动|源码'):
+                release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit=commit)
     def repository(self, root, skill=True):
         root.mkdir(exist_ok=True)
         shutil.copyfile(ROOT/'release.json', root/'release.json')
