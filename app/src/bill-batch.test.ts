@@ -2,11 +2,12 @@ import {describe,it,expect} from 'vitest';
 import {BillUploadSession,billUploadHtml} from './bill-upload';
 const entry={id:'a',fileName:'a.csv',byteCount:10,status:'uploaded' as const};
 describe('bill batches',()=>{
- it('clears old batch failures after a confirmed retry or a cancelled new selection',async()=>{
+ it('preserves ambiguous same-name failures after retry and clears them on a new cancellation',async()=>{
   const s=new BillUploadSession();
   await s.choose(async()=>({items:[{...entry,status:'pending' as const}],completed:0,failed:1,failures:[{fileName:'a.csv',reason:'上传未确认'}]}));
   await s.retry(async()=>entry);
-  expect(s.failures).toEqual([]);expect(s.items[0].status).toBe('uploaded');
+  expect(s.failures).toHaveLength(1);expect(s.items[0].status).toBe('uploaded');
+  expect(billUploadHtml(s,true)).toContain('上次选择的失败记录');
   await s.choose(async()=>({items:[],completed:0,failed:1,failures:[{fileName:'bad.csv',reason:'读取失败'}]}));
   await s.choose(async()=>null);expect(s.failures).toEqual([]);
  });

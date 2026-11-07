@@ -147,7 +147,7 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
             } } catch (_: java.util.concurrent.RejectedExecutionException) {
                 if (gate.claim()) {
                     handler.removeCallbacks(timeout)
-                    invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("fileName", "文件 ${index + 1}"))
+                    invoke.resolve(JSObject().put("cancelled", false).put("failed", true).put("workerExhausted", true).put("fileName", "文件 ${index + 1}"))
                 }
             }
         } catch (_: Exception) { invoke.reject("bill selection failed") }

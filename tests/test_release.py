@@ -22,6 +22,13 @@ class ReleaseTests(unittest.TestCase):
             installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
             with self.assertRaisesRegex(ValueError,'HEAD'):
                 release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit='a'*40)
+    def test_bundle_rejects_modified_source_at_same_head(self):
+        with tempfile.TemporaryDirectory() as folder:
+            parent=Path(folder); root=parent/'repo'; commit=self.repository(root)
+            (root/'README.md').write_text('modified source',encoding='utf-8')
+            installer=parent/'fixture.apk'; installer.write_bytes(b'fixture')
+            with self.assertRaisesRegex(ValueError,'改动|源码'):
+                release.bundle('android-arm64',parent,installer,parent/'bundle.zip',root=root,commit=commit)
     def repository(self, root, skill=True):
         root.mkdir(exist_ok=True)
         shutil.copyfile(ROOT/'release.json', root/'release.json')
