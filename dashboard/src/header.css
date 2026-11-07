@@ -19,4 +19,4 @@
 .header-action:hover:not(:disabled)::after,.header-action:focus-visible::after{opacity:1;transform:translate(-50%,0);}
 @media(max-width:600px){.app-toolbar-header{flex-wrap:wrap;padding:22px 0 19px;gap:17px;}.app-toolbar-header .header-controls{margin-left:auto;gap:8px;}.app-toolbar-header .brand{font-size:18px;}.app-toolbar-header .month-select>.ui-icon{display:none;}.app-toolbar-header .month-select{padding-left:3px;}.app-toolbar-header .month-select select{font-size:12px;}}
 @media(pointer:coarse){.header-actions .header-action,.app-toolbar-header .month-select{min-height:44px;min-width:44px;}}
-@media(prefers-reduced-motion:reduce){.header-actions .header-action,.header-action::after{transition:none;}.header-actions .header-action:active:not(:disabled){transform:none;}}
+@media(prefers-reduced-motion:reduce){html:not([data-layout]) .header-actions .header-action,html:not([data-layout]) .header-action::after{transition:none;}html:not([data-layout]) .header-actions .header-action:active:not(:disabled){transform:none;}}

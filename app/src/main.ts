@@ -35,6 +35,7 @@ const budgetSession=new BudgetSession(invoke);
 import {BillUploadSession,billUploadHtml,type BillUploadItem} from './bill-upload';
 import './bill-upload.css';
 import {BillUploadRefresh} from './bill-upload-refresh';
+import {showIncome} from './delivery-profile';
 
 interface LedgerStatusSummary { initialized:boolean;publishEnabled:boolean;cachedRevision:number|null;pendingRevision:number|null;lastPublishedRevision:number|null }
 interface LedgerCacheOutcome { revision:number;snapshot:AppSnapshot }
@@ -177,11 +178,11 @@ function viewHtml():string {
   if(state.view==='about')return `<section class="about"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>生活账本</h1><p>让数字回到生活里。</p><dl class="detail-list"><dt>版本</dt><dd>${escapeHtml(state.version||'开发预览')}</dd><dt>查看范围</dt><dd>当前快照中的近两个月</dd><dt>数据来源</dt><dd>已校验的 SQLite 账本展示快照</dd></dl></section>`;
   if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady());
   if(!month)return state.loading?empty('正在打开生活账本','正在读取本地数据。'):onboardingHtml(state.ledger?.initialized??null,state.probeConfigured,state.probeSummaryLoaded,state.view==='analysis',state.checkingCloud);
-  if(state.view==='bills')return mobileBills(month,nav.current.query??emptyQuery());
+  if(state.view==='bills')return mobileBills(month,nav.current.query??emptyQuery(),showIncome);
   if(state.view==='pool')return poolHtml(month,nav.current.poolId??'');
   if(state.view==='detail')return detailHtml();
   if(state.view==='analysis')return analysisHtml(month,state.analysisTab,state.analysisDate,shanghaiToday(),state.expanded);
-  return mobile()?mobileHome(month):dashboardHtml(month,shanghaiToday(),state.expanded,isTauri()&&!state.preview);
+  return mobile()?mobileHome(month,showIncome):dashboardHtml(month,shanghaiToday(),state.expanded,isTauri()&&!state.preview,showIncome);
 }
 let charts:typeof import('../../dashboard/src/charts')|undefined;
 let renderRevision=0;
@@ -248,7 +249,7 @@ function renderCurrentCharts(revision=renderRevision):void {
   if(currentMonth()&&((!mobile()&&state.view==='home')||(state.view==='analysis'&&state.analysisTab==='trend'))&&typeof document.getElementById==='function'){
     void import('../../dashboard/src/charts').then(module=>{
       if(revision!==renderRevision)return;charts=module;
-      module.renderCharts(currentMonth()!,shanghaiToday(),date=>{if(mobile()){state.chartDate=date;renderChartSelection();}else openBills({date});},record=>{if(mobile()){state.chartRecord=record.id;renderChartSelection();}else open({view:'detail',recordId:record.id});},{touch:mobile(),reduceMotion:mobile()?prefersReducedMotion():undefined,dark:document.documentElement.dataset.theme==='dark'});
+      module.renderCharts(currentMonth()!,shanghaiToday(),date=>{if(mobile()){state.chartDate=date;renderChartSelection();}else openBills({date});},record=>{if(mobile()){state.chartRecord=record.id;renderChartSelection();}else open({view:'detail',recordId:record.id});},{touch:mobile(),reduceMotion:false,dark:document.documentElement.dataset.theme==='dark'});
       const highlighted=document.querySelector<HTMLElement>('.scatter-legend button[aria-pressed="true"]')?.dataset.highlightPool;
       if(highlighted)module.highlightPool(highlighted);
     }).catch(()=>{if(revision===renderRevision){state.message='图表暂时未能显示，可重新打开页面。';state.messageTone='tone-warn';renderStatusBar();}});

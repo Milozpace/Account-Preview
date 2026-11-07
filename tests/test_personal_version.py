@@ -8,6 +8,15 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 
 class PersonalVersionTests(unittest.TestCase):
+    def test_independent_personal_version_is_distinct_from_source(self):
+        module=self.module()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); shutil.copyfile(ROOT/'release.json',root/'release.json')
+            path=root/'personal.json'; path.write_text('{"version":"0.3.19","androidVersionCode":3019}')
+            value=module.build_data(root,path)
+            self.assertEqual((value['version'],value['nativeVersion'],value['androidVersionCode']),('0.3.19','0.3.19',3019))
+            self.assertEqual(value['sourceVersion'],'0.4.0-preview.5')
+            self.assertEqual(value['versionPolicy'],'independent-personal')
     def module(self):
         path=ROOT/'scripts/personal_version.py'
         self.assertTrue(path.is_file(),'independent local personal version support missing')
@@ -32,9 +41,8 @@ class PersonalVersionTests(unittest.TestCase):
             path=root/'local/personal-version.json';path.parent.mkdir();path.write_text(json.dumps(fresh))
             data=module.build_data(root)
             source=json.loads(before)
-            for key in ('version','nativeVersion','androidVersionCode'):
-                self.assertEqual(data[key],source[key])
-            self.assertEqual(data['versionPolicy'],'unified')
+            self.assertEqual((data['version'],data['nativeVersion'],data['androidVersionCode']),('0.3.16','0.3.16',3016))
+            self.assertEqual(data['versionPolicy'],'independent-personal')
             self.assertEqual(data['sourceVersion'],json.loads(before)['version'])
             self.assertEqual((root/'release.json').read_bytes(),before)
 
@@ -43,11 +51,7 @@ class PersonalVersionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);shutil.copyfile(ROOT/'release.json',root/'release.json')
             source=json.loads((root/'release.json').read_text())
-            data=module.build_data(root)
-            for key in ('version','nativeVersion','androidVersionCode'):
-                self.assertEqual(data[key],source[key])
-            self.assertIsNone(data['tag'])
-            self.assertEqual(data['distribution'],'personal-local')
+            with self.assertRaises(ValueError): module.build_data(root)
 
     def test_shared_product_must_exceed_legacy_personal_installation_numbers(self):
         module=self.module()
@@ -58,8 +62,8 @@ class PersonalVersionTests(unittest.TestCase):
             for value in ({'version':'9.0.0','androidVersionCode':1},
                           {'version':'0.3.18','androidVersionCode':source['androidVersionCode']+1}):
                 path.write_text(json.dumps(value))
-                with self.subTest(value=value), self.assertRaisesRegex(ValueError,'递增|降级'):
-                    module.build_data(root,path)
+                with self.subTest(value=value):
+                    self.assertEqual(module.build_data(root,path)['version'],value['version'])
 
     def test_explicit_missing_legacy_baseline_is_rejected(self):
         module=self.module()

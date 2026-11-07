@@ -42,6 +42,3 @@ html[data-layout="mobile"] .picker-option[aria-selected="true"] { background: #e
 html[data-layout="mobile"] .picker-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html[data-layout="mobile"] .picker-check { flex: 0 0 20px; text-align: center; font-size: 17px; }
 html[data-layout="mobile"] .picker-option:active { background: #e8ede3; }
-@media (prefers-reduced-motion: reduce) {
-  html[data-layout="mobile"] .mobile-picker { animation: none; transition: none; }
-}

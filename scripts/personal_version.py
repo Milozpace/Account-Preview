@@ -1,4 +1,4 @@
-"""Read legacy owner-local version baselines; new builds use release.json for both profiles."""
+"""Manage the independent local personal delivery version."""
 import argparse
 import json
 from pathlib import Path
@@ -38,14 +38,8 @@ def load(root, path=None):
 
 def build_data(root, path=None):
     source = product_version.load(root)
-    baseline = location(root, path)
-    if path is not None or baseline.exists():
-        personal = load(root, path)
-        if (product_version.version_key(source['version']) <= product_version.version_key(personal['version'])
-                or product_version.native_key(source['nativeVersion']) <= product_version.native_key(personal['version'])
-                or source['androidVersionCode'] <= personal['androidVersionCode']):
-            raise ValueError('统一产品及安装版本必须超过旧个人基线并严格递增；拒绝降级。')
-    return {**source, 'versionPolicy': 'unified',
+    personal = load(root, path)
+    return {**source, **personal, 'nativeVersion': personal['version'], 'versionPolicy': 'independent-personal',
             'sourceVersion': source['version'], 'tag': None,
             'channel': 'personal-local', 'distribution': 'personal-local'}
 

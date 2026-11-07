@@ -4,10 +4,11 @@ import {invoke,isTauri} from '@tauri-apps/api/core';
 import {createDesktopData} from './desktop-data';
 import {sampleSnapshot} from './sample';
 import {downloadExport} from '../../dashboard/src/export-ui';
+import {showIncome} from './delivery-profile';
 
 export function startDesktop(preview:boolean){
   const data=createDesktopData({invoke,previewSnapshot:preview||!isTauri()?sampleSnapshot:undefined});
-  mountDashboard({api:data.api,subscribe:data.subscribe,readOnly:preview||!isTauri(),desktopApp:true,retryLocal:data.retry,
+  mountDashboard({api:data.api,subscribe:data.subscribe,readOnly:preview||!isTauri(),desktopApp:true,retryLocal:data.retry,showIncome,
     isDark:()=>document.documentElement.dataset.theme==='dark',
     subscribeTheme:changed=>{window.addEventListener('account-theme-change',changed);return()=>window.removeEventListener('account-theme-change',changed);},
     openSettings:()=>location.assign(location.pathname+'?panel=settings'),

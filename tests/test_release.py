@@ -130,19 +130,18 @@ class ReleaseTests(unittest.TestCase):
             for name in ['ledger_cli','bill_inbox_cli','sync_diagnose']:(binary/(name+'.exe')).write_bytes(b'fixture')
             for platform,suffix in [('windows-x64','.exe'),('android-arm64','.apk')]:
                 installer=parent/('fixture'+suffix);installer.write_bytes(b'fixture')
-                release.bundle(platform,binary,installer,assets/f"Account-Personal-{source['version']}-{platform}.zip",
+                release.bundle(platform,binary,installer,assets/f"Account-Personal-0.3.16-{platform}.zip",
                                profile='personal',root=root,commit=commit,personal_version_file=version_file)
             notes=parent/'notes.md';notes.write_text('User local update notes')
             result=release.prepare_release(root,assets,commit,notes,'personal-local',version_file)
             manifest=json.loads((assets/'release-manifest.json').read_text())
-            for key in ('version','nativeVersion','androidVersionCode'):
-                self.assertEqual(manifest[key],source[key])
-            self.assertEqual(manifest['versionPolicy'],'unified')
+            self.assertEqual((manifest['version'],manifest['nativeVersion'],manifest['androidVersionCode']),('0.3.16','0.3.16',3016))
+            self.assertEqual(manifest['versionPolicy'],'independent-personal')
             self.assertEqual(manifest['sourceVersion'],json.loads((root/'release.json').read_text())['version'])
             self.assertEqual(set(manifest['profiles']),{'personal'});self.assertEqual(len(result['assets']),5)
             self.assertIsNone(manifest['tag'])
             validated=product_update.validate_release(assets,'personal','windows-x64')
-            self.assertEqual(validated[0]['version'],source['version'])
+            self.assertEqual(validated[0]['version'],'0.3.16')
             with self.assertRaises(ValueError):product_update.validate_release(assets,'preview','windows-x64')
             with self.assertRaises(ValueError):release.public_assets(root,assets,commit,notes)
 

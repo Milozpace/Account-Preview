@@ -48,7 +48,11 @@ def prepare(root, profile, platform, apply=False, isolated_build=False, personal
                              bridge_path.read_text(encoding='utf-8'))
     if count != 1: raise ValueError('桌面绑定路径无法唯一定位。')
     if apply:
-        for name, text in product_version.generated(root, data).items():
+        display_profile = root/'app/src/delivery-profile.ts'
+        if not display_profile.is_file(): raise ValueError('缺少交付展示配置。')
+        generated_files = product_version.generated(root, data)
+        display_profile.write_text('// Generated for isolated delivery builds.\nexport const showIncome = '+('false' if profile == 'personal' else 'true')+';\n', encoding='utf-8')
+        for name, text in generated_files.items():
             (root/name).write_text(text, encoding='utf-8', newline='\n')
         conf_path.write_text(json.dumps(conf, ensure_ascii=False, indent=2)+'\n', encoding='utf-8', newline='\n')
         bridge_path.write_text(content, encoding='utf-8', newline='\n')

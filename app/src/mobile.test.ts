@@ -6,6 +6,11 @@ import type { AppMonth } from './bills';
 
 const month = fixture.months[0] as unknown as AppMonth;
 describe('mobile presentation', () => {
+  it('keeps personal budget overview and hides income entry',()=>{
+    expect(homeHtml(month,false)).toContain('本月新增额度');
+    expect(homeHtml(month,false)).not.toContain('本月收入');
+    expect(billsHtml(month,emptyQuery(),false)).not.toContain('value="income"');
+  });
   it('keeps export in My and preserves the overview layout',()=>{
     expect(myHtml(fixture as never,'已同步')).toContain('data-open="export"');
     expect(homeHtml(month)).not.toContain('data-open="export"');

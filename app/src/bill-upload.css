@@ -25,5 +25,5 @@
 .bill-upload-empty {margin:40px 0;text-align:center;font-size:13px;color:var(--muted)}
 .bill-upload-page button:disabled {opacity:.55;cursor:default}
 .bill-upload-dropzone[data-checking=true]:disabled {opacity:1}
-@media(prefers-reduced-motion:reduce){.bill-upload-dropzone {transition:none}}
+
 html[data-motion-preference=reduce] .bill-upload-dropzone {transition:none}

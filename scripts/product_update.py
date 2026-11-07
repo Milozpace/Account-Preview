@@ -562,15 +562,17 @@ def validate_release(directory, profile, target):
     manifest=json.loads(raw)
     version=manifest.get('version')
     local=manifest.get('distribution')=='personal-local'
-    if manifest.get('versionPolicy') not in {None,'unified'}: raise ValueError('未知产品版本策略。')
+    if manifest.get('versionPolicy') not in {None,'unified','independent-personal'}: raise ValueError('未知产品版本策略。')
     unified=manifest.get('versionPolicy')=='unified'
+    independent=manifest.get('versionPolicy')=='independent-personal'
+    if independent and not local: raise ValueError('独立个人版本仅允许本地个人交付。')
     if manifest.get('distribution') not in {None,'public','personal-local'}: raise ValueError('未知发布范围。')
     if local:
         if profile!='personal' or (not unified and (not isinstance(version,str) or not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)',version))):
             raise ValueError('个人本地包须使用 personal 身份及受支持的版本策略。')
         version_tuple(version)
         source_version=manifest.get('sourceVersion');version_tuple(source_version)
-        if not unified and not VERSION.fullmatch(source_version):
+        if not unified and not independent and not VERSION.fullmatch(source_version):
             raise ValueError('旧个人索引的共享源码须为历史 preview 版本；新包须声明统一版本策略。')
         if unified and source_version!=version: raise ValueError('统一产品版本须与源码版本一致。')
         if manifest.get('tag') is not None or manifest.get('channel')!='personal-local':
@@ -591,6 +593,8 @@ def validate_release(directory, profile, target):
         code=manifest.get('androidVersionCode');major,minor,patch=version_tuple(version)[:3]
         if type(code) is not int or not max(1,major*1_000_000+minor*1_000+patch)<=code<=2_100_000_000:
             raise ValueError('统一 Android 安装序号无效。')
+    elif independent and (type(manifest.get('androidVersionCode')) is not int or not 0<manifest['androidVersionCode']<=2_100_000_000):
+        raise ValueError('独立个人版本缺少有效 Android 安装序号。')
     elif 'androidVersionCode' in manifest and (type(manifest['androidVersionCode']) is not int or not 0<manifest['androidVersionCode']<=2_100_000_000):
         raise ValueError('旧索引 Android 安装序号无效。')
     selected=manifest.get('profiles',{}).get(profile)
@@ -606,7 +610,7 @@ def validate_release(directory, profile, target):
         assets.append(path)
     source=zip_contents(assets[0],source=True)
     official_skill_source(source)
-    if source_snapshot_schema(source,required=unified)!=manifest['snapshotSchema']:
+    if source_snapshot_schema(source,required=unified or independent)!=manifest['snapshotSchema']:
         raise ValueError('发布快照 schema 与固定源码生产端不一致。')
     try: source_version=json.loads(source['release.json'])
     except (KeyError,ValueError): raise ValueError('源码缺少产品版本清单。') from None
@@ -634,7 +638,7 @@ def validate_release(directory, profile, target):
         raise ValueError('组件与索引的产品版本策略不一致；不能将统一版本包伪装成旧格式。')
     if local and (inner.get('distribution')!='personal-local' or inner.get('sourceVersion')!=manifest['sourceVersion']):
         raise ValueError('个人安装包的共享源码版本或本地范围与索引不匹配。')
-    if unified and (inner.get('versionPolicy')!='unified' or inner.get('androidVersionCode')!=manifest['androidVersionCode']):
+    if (unified or independent) and inner.get('androidVersionCode')!=manifest['androidVersionCode']:
         raise ValueError('组件产品版本策略或 Android 安装序号与索引不匹配。')
     if 'androidVersionCode' in inner and (type(inner['androidVersionCode']) is not int or inner['androidVersionCode']!=manifest.get('androidVersionCode')):
         raise ValueError('组件与索引的 Android 安装序号不一致。')

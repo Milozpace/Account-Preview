@@ -89,5 +89,5 @@ html[data-layout=mobile] .export-file-meta{border-top-color:transparent;}
 html[data-layout=desktop][data-theme=dark] .page-shell :is(.overview-card,.pool-band,.surface),html[data-layout=desktop][data-theme=dark] .page-shell .overview-card:hover{border-color:transparent;}
 html[data-layout=desktop][data-theme=dark] .page-shell :is(.pool+.pool,.pool-budget-details,.record-row),html[data-layout=desktop][data-theme=dark] .detail-drawer .drawer-record{border-color:var(--ui-divider);}
 html[data-layout=mobile][data-theme=dark] .app-frame :is(.record-row,.menu-row,.detail-hero){border-color:var(--ui-divider);}
-@media(prefers-reduced-motion:reduce){html[data-layout] .header-actions .header-action{transition:none;}}
+
 @media(pointer:coarse){html[data-layout=desktop] .app-header .toolbar-button{min-width:44px;min-height:44px;}}
