@@ -56,6 +56,7 @@ const MAX_BILL_BYTES: usize = 4 * 1024 * 1024;
 struct SelectBillResponse {
     cancelled: bool,
     failed: Option<bool>,
+    worker_exhausted: Option<bool>,
     file_name: Option<String>,
     content_base64: Option<String>,
 }
@@ -93,18 +94,18 @@ impl<R: Runtime> Platform<R> {
             .await.map_err(|_| Error::NativeBridge)?;
         Ok(())
     }
-    pub async fn read_selected_bill(&self, index: usize) -> Result<(Option<SelectedBill>, Option<String>)> {
+    pub async fn read_selected_bill(&self, index: usize) -> Result<(Option<SelectedBill>, Option<String>, bool)> {
         let response: SelectBillResponse = self
             .0
             .run_mobile_plugin_async("readSelectedBill", BillIndexRequest { index })
             .await
             .map_err(|_| Error::NativeBridge)?;
         let encoded = response.content_base64.map(Zeroizing::new);
-        if response.cancelled { return Ok((None, None)); }
+        if response.cancelled { return Ok((None, None, false)); }
         let name = response.file_name.ok_or(Error::NativeBridge)?;
         if response.failed.unwrap_or(false) {
             let safe: String = name.chars().filter(|c| !c.is_control() && *c != '/' && *c != '\\').take(200).collect();
-            return Ok((None, Some(safe)));
+            return Ok((None, Some(safe), response.worker_exhausted.unwrap_or(false)));
         }
         let encoded = encoded.ok_or(Error::NativeBridge)?;
         let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -135,7 +136,7 @@ impl<R: Runtime> Platform<R> {
                 Ok((Some(SelectedBill {
                     file_name: name,
                     bytes,
-                }), None))
+                }), None, false))
             }
             _ => {
                 bytes.zeroize();

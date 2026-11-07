@@ -52,10 +52,10 @@ pub async fn bill_upload_choose(
         let mut failures = Vec::new();
         for index in 0..count {
             let selected = match app.platform().read_selected_bill(index).await {
-                Ok((Some(value), _)) => value,
-                Ok((None, name)) => {
+                Ok((Some(value), _, _)) => value,
+                Ok((None, name, worker_exhausted)) => {
                     failed += 1;
-                    failures.push(BatchFailure { file_name: name.unwrap_or_else(|| format!("文件 {}", index + 1)), reason: "文件无效或读取失败" });
+                    failures.push(BatchFailure { file_name: name.unwrap_or_else(|| format!("文件 {}", index + 1)), reason: if worker_exhausted { "文件读取服务被占用，请关闭并重启 App 后重新选择" } else { "文件无效或读取超时，请重新选择" } });
                     continue;
                 },
                 Err(_) => {
