@@ -16,6 +16,35 @@ if spec.loader and spec.origin and Path(spec.origin).exists(): spec.loader.exec_
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_android_build_inputs_allow_only_the_profile_transform(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'repo'; self.repository(root)
+            base='app/src-tauri/gen/android'
+            names=['app/build.gradle.kts', 'app/src/main/AndroidManifest.xml',
+                   'app/src/main/java/com/account/preview/MainActivity.kt',
+                   'buildSrc/src/main/java/com/account/preview/kotlin/BuildTask.kt',
+                   'buildSrc/src/main/java/com/account/preview/kotlin/RustPlugin.kt']
+            for name in names:
+                target=root/base/name; target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(ROOT/base/name,target)
+            subprocess.run(['git','-C',str(root),'add','.'],check=True,capture_output=True)
+            subprocess.run(['git','-C',str(root),'commit','-m','include Android inputs'],check=True,capture_output=True)
+            commit=release.git(root,'rev-parse','HEAD')
+            data=release.product_version.load(root)
+            gradle=root/base/names[0]
+            gradle.write_text(release.android_gradle_text(gradle.read_text(encoding='utf-8'),
+                              'com.account.probe',data['nativeVersion'],data['androidVersionCode']),encoding='utf-8')
+            for name in names[2:]:
+                original=root/base/name
+                target=root/base/name.replace('/preview/','/probe/')
+                target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_text(original.read_text(encoding='utf-8').replace('package com.account.preview\n','package com.account.probe\n'),encoding='utf-8')
+                original.unlink()
+            self.assertEqual(len(release.verify_android_build_inputs(root,commit,data,'personal')),8)
+            gradle.write_text(gradle.read_text(encoding='utf-8').replace('minSdk = 24','minSdk = 23'),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'Android.*改动'):
+                release.verify_android_build_inputs(root,commit,data,'personal')
+
     def test_bundle_rejects_commit_other_than_build_head(self):
         with tempfile.TemporaryDirectory() as folder:
             parent=Path(folder); root=parent/'repo'; self.repository(root)

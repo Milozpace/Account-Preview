@@ -51,7 +51,7 @@ internal object BillImport {
 
     fun newWorker(): java.util.concurrent.ExecutorService = java.util.concurrent.ThreadPoolExecutor(
         2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
-        java.util.concurrent.SynchronousQueue<Runnable>(),
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(1),
         { task -> Thread(task, "Account-bill-select").apply { isDaemon = true } },
         java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
@@ -59,6 +59,7 @@ internal object BillImport {
     class CompletionGate {
         private val complete = java.util.concurrent.atomic.AtomicBoolean(false)
         fun claim(): Boolean = complete.compareAndSet(false, true)
+        fun isComplete(): Boolean = complete.get()
     }
 
     /** Identity-bound phases prevent a late callback from releasing a newer selection. */

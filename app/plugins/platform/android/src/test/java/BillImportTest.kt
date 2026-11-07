@@ -121,6 +121,7 @@ class BillImportTest {
             worker.execute { started.countDown(); release.await() }
             worker.execute { started.countDown(); release.await() }
             assertTrue(started.await(2, TimeUnit.SECONDS))
+            worker.execute { }
             assertThrows(java.util.concurrent.RejectedExecutionException::class.java) { worker.execute { } }
         } finally {
             release.countDown()
@@ -142,6 +143,27 @@ class BillImportTest {
         } finally {
             release.countDown()
             worker.shutdownNow()
+            assertTrue(worker.awaitTermination(2, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test fun queuedRequestThatTimedOutNeverStartsReading() {
+        val worker = BillImport.newWorker()
+        val started = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        val done = CountDownLatch(1)
+        val reads = java.util.concurrent.atomic.AtomicInteger(0)
+        val gate = BillImport.CompletionGate()
+        try {
+            repeat(2) { worker.execute { started.countDown(); release.await() } }
+            assertTrue(started.await(2, TimeUnit.SECONDS))
+            worker.execute { if (!gate.isComplete()) reads.incrementAndGet(); done.countDown() }
+            assertTrue(gate.claim())
+            release.countDown()
+            assertTrue(done.await(2, TimeUnit.SECONDS))
+            assertEquals(0, reads.get())
+        } finally {
+            release.countDown(); worker.shutdownNow()
             assertTrue(worker.awaitTermination(2, TimeUnit.SECONDS))
         }
     }
