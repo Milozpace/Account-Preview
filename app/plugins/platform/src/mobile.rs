@@ -55,9 +55,15 @@ const MAX_BILL_BYTES: usize = 4 * 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 struct SelectBillResponse {
     cancelled: bool,
+    failed: Option<bool>,
     file_name: Option<String>,
     content_base64: Option<String>,
 }
+
+#[derive(Deserialize)]
+struct SelectBatchResponse { cancelled: bool, count: usize }
+#[derive(Serialize)]
+struct BillIndexRequest { index: usize }
 
 /// Raw bytes stay on the native side and are erased after the upload attempt.
 /// Deliberately has no Serialize or Debug implementation.
@@ -75,17 +81,31 @@ impl Drop for SelectedBill {
 pub struct Platform<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Platform<R> {
-    pub async fn select_bill(&self) -> Result<Option<SelectedBill>> {
+    pub async fn select_bills(&self) -> Result<Option<usize>> {
+        let response: SelectBatchResponse = self.0.run_mobile_plugin_async("selectBill", ())
+            .await.map_err(|_| Error::NativeBridge)?;
+        if response.cancelled { return Ok(None); }
+        if response.count == 0 || response.count > 128 { return Err(Error::NativeBridge); }
+        Ok(Some(response.count))
+    }
+    pub async fn clear_selected_bills(&self) -> Result<()> {
+        let _: EmptyResponse = self.0.run_mobile_plugin_async("clearSelectedBills", ())
+            .await.map_err(|_| Error::NativeBridge)?;
+        Ok(())
+    }
+    pub async fn read_selected_bill(&self, index: usize) -> Result<(Option<SelectedBill>, Option<String>)> {
         let response: SelectBillResponse = self
             .0
-            .run_mobile_plugin_async("selectBill", ())
+            .run_mobile_plugin_async("readSelectedBill", BillIndexRequest { index })
             .await
             .map_err(|_| Error::NativeBridge)?;
         let encoded = response.content_base64.map(Zeroizing::new);
-        if response.cancelled {
-            return Ok(None);
-        }
+        if response.cancelled { return Ok((None, None)); }
         let name = response.file_name.ok_or(Error::NativeBridge)?;
+        if response.failed.unwrap_or(false) {
+            let safe: String = name.chars().filter(|c| !c.is_control() && *c != '/' && *c != '\\').take(200).collect();
+            return Ok((None, Some(safe)));
+        }
         let encoded = encoded.ok_or(Error::NativeBridge)?;
         let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
         let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
@@ -112,10 +132,10 @@ impl<R: Runtime> Platform<R> {
         match STANDARD.decode_slice(encoded.as_bytes(), &mut bytes) {
             Ok(count) if (1..=MAX_BILL_BYTES).contains(&count) => {
                 bytes.truncate(count);
-                Ok(Some(SelectedBill {
+                Ok((Some(SelectedBill {
                     file_name: name,
                     bytes,
-                }))
+                }), None))
             }
             _ => {
                 bytes.zeroize();

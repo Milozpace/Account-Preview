@@ -4,6 +4,11 @@ package com.account.platform
 internal object BillImport {
     const val MAX_BYTES = 4 * 1024 * 1024
 
+    fun <T> selectItems(items: List<T>): List<T> {
+        require(items.isNotEmpty() && items.size <= 128)
+        return items.distinct()
+    }
+
     fun validateName(name: String): String {
         require(name.isNotEmpty() && name.toByteArray(Charsets.UTF_8).size <= 200 && name == name.trim())
         require(name.none { it.isISOControl() || it in "/\\:<>\"|?*" })
