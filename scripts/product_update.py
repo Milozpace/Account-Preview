@@ -612,6 +612,8 @@ def validate_release(directory, profile, target):
             safe_name(name)
             if not isinstance(value,dict) or value.get('status') not in {'signed','adhoc','unsigned','unknown'}:
                 raise ValueError('签名信息无效。')
+    if manifest.get('updateDocSha256') is not None and not SHA.fullmatch(manifest['updateDocSha256']):
+        raise ValueError('更新流程文档哈希无效。')
     if manifest.get('ledgerSchema')!=1 or type(manifest.get('snapshotSchema')) is not int or manifest['snapshotSchema'] not in {2,3}: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')

@@ -49,7 +49,7 @@ def signing_record(value):
     for key in ('identity', 'team', 'publisher', 'certificateSha256'):
         item = value.get(key)
         if item is None: continue
-        if not isinstance(item, str) or len(item) > 200: raise ValueError('签名信息字段无效。')
+        if not isinstance(item, str) or len(item) > 200 or not item.isascii(): raise ValueError('签名信息字段无效。')
         record[key] = item
     return record
 
@@ -357,8 +357,8 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
         elif not published_skill:
             raise ValueError('新发布源码必须包含核心记账 Skill 及其完整引用文件。')
         if 'docs/更新与恢复.md' in source_contents:
-            manifest['updateDoc']={'asset':'docs/更新与恢复.md',
-                                   'sha256':hashlib.sha256(source_contents['docs/更新与恢复.md']).hexdigest()}
+            # Keep the manifest ASCII: older readers open it without an explicit encoding.
+            manifest['updateDocSha256']=hashlib.sha256(source_contents['docs/更新与恢复.md']).hexdigest()
         manifest['snapshotSchema']=product_update.source_snapshot_schema(source_contents,required=True)
         source = directory/source_name
         if source.exists():
