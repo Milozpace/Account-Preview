@@ -903,7 +903,12 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         expected_helpers={name:f'.runtime/bin/{version}-{target}/bin/{name}{suffix}' for name in ('ledger_cli','bill_inbox_cli','sync_diagnose')}
         if not helper_manifest.is_file() or read_json(helper_manifest)!={'version':1,'release':version,'helpers':expected_helpers}:
             raise ValueError('本机原生组件选择清单已改变；保留现场并停止。')
-    if conflicts: raise ValueError('本机程序与采用基线冲突；保留现场：'+', '.join(sorted(set(conflicts))))
+    if conflicts:
+        skill_conflicts=[name for name in conflicts if official_skill_name(name)]
+        if skill_conflicts:
+            raise ValueError('官方 Skill 或引用与已记录基线不一致；先按《更新与恢复》备份并处理 Skill 冲突，再重试。涉及：'
+                             + ', '.join(sorted(set(skill_conflicts))))
+        raise ValueError('本机程序与采用基线冲突；保留现场：'+', '.join(sorted(set(conflicts))))
     if old_version==version and state.get('manifestSha256')!=manifest_hash: raise ValueError('同版本发布清单发生变化；保留原版本并停止。')
     binding=desktop_plan(root,state['profile'],desktop_config,prepare_environment=prepare_environment)
     skill_provenance=saved_skill or {}

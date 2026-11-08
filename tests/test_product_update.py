@@ -788,6 +788,13 @@ class ProductUpdateOfficialSkillTests(ProductUpdateFixture, unittest.TestCase):
                 self.assertEqual(self.files(),before)
                 (self.root/name).write_bytes(previous)
 
+    def test_skill_conflict_message_points_to_documented_procedure(self):
+        self.adopt(); self.release(source=self.skill_source()); self.update(apply=True)
+        (self.root/self.entry).write_bytes(b'owner modification')
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',source=self.skill_source(b'v2'))
+        with self.assertRaisesRegex(ValueError,'《更新与恢复》'):
+            self.update(apply=True)
+
     def test_legacy_baseline_accepts_identical_new_bytes_but_preserves_unknown_skill(self):
         source=self.skill_source()
         self.adopt()
