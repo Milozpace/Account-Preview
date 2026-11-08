@@ -43,6 +43,7 @@ STATE = '.runtime/product/state.json'
 SKILL_ROOT = '.agents/skills/account-maintenance'
 SKILL_ENTRY = SKILL_ROOT+'/SKILL.md'
 SKILL_POLICIES = {None, 'local-only'}
+UPDATE_DOC = 'docs/更新与恢复.md'
 GUIDANCE = 'docs/版本衔接指引.md'
 
 
@@ -195,7 +196,9 @@ def skill_next(skill):
         return f"记账前读取个人维护的 Skill：{skill['path']}；公开 Skill 不随个人交付安装，个人内容留在使用目录。"
     if skill['state'] in {'synchronized','pending'}:
         return f"记账前必须读取官方 Skill：{skill['path']}；通用说明读取 releaseDocs 的本版本副本，本机所有者确认继续保留。"
-    if skill['state']=='modified': return '官方 Skill 有本地变化；先保留并处理冲突，不将其视为已同步。'
+    if skill['state']=='modified': return ('官方 Skill 与已记录基线不一致：先把入口和 references 备份到 '
+        '.runtime/product/skill-conflict-<日期>/，再按《更新与恢复》处理：只有官方差异就用同版字节恢复；'
+        '含本人规则先转入 local/个人规则.md；原因不明停止报告，不覆盖、不合并两套文本。')
     return '此状态尚无已同步的官方 Skill；旧版不支持时不得声称新版记账流程已就绪。'
 
 
@@ -602,6 +605,13 @@ def validate_release(directory, profile, target):
     if skill_policy not in SKILL_POLICIES: raise ValueError('未知的 Skill 管理策略。')
     if skill_policy=='local-only' and not local:
         raise ValueError('本地自管 Skill 策略只用于个人本地交付。')
+    signing=manifest.get('signing')
+    if signing is not None:
+        if not isinstance(signing,dict): raise ValueError('签名信息无效。')
+        for name,value in signing.items():
+            safe_name(name)
+            if not isinstance(value,dict) or value.get('status') not in {'signed','adhoc','unsigned','unknown'}:
+                raise ValueError('签名信息无效。')
     if manifest.get('ledgerSchema')!=1 or type(manifest.get('snapshotSchema')) is not int or manifest['snapshotSchema'] not in {2,3}: raise ValueError('发布 schema 不兼容；不自动迁移。')
     if not re.fullmatch(r'[0-9a-f]{40}',manifest.get('commit','')) or not SHA.fullmatch(manifest.get('notesSha256','')):
         raise ValueError('发布来源提交或说明哈希无效。')
@@ -928,6 +938,31 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     skill_final={**skill_report,'state':'synchronized' if skill_files else skill_report['state']}
     guidance_hash=digest(source[GUIDANCE]) if GUIDANCE in source else None
     guidance=guidance_status(root,version,guidance_hash,pending=old_version!=version)
+    update_doc_hash=digest(source[UPDATE_DOC]) if UPDATE_DOC in source else None
+    previous_doc_hash=state.get('updateDocSha256')
+    procedure_changed=None
+    if old_version and update_doc_hash and previous_doc_hash:
+        procedure_changed=update_doc_hash!=previous_doc_hash
+    changed_docs=[]
+    if old_version:
+        previous_source=root/f'.runtime/product/releases/{old_version}/source'
+        if previous_source.is_dir():
+            for name,data in source.items():
+                if not name.startswith('docs/') or not name.endswith('.md'): continue
+                previous=previous_source/name
+                if not previous.is_file() or previous.read_bytes()!=data: changed_docs.append(name)
+    release_docs=str(root/f'.runtime/product/releases/{version}/source')
+    current_signing=(manifest.get('signing') or {}).get(target)
+    previous_signing=(state.get('signing') or {}).get(target)
+    signing_changed=bool(previous_signing and current_signing and previous_signing!=current_signing)
+    procedure_note=(f'本版《更新与恢复》有变化：先读 {release_docs}/{UPDATE_DOC} 再按新版执行；'
+                    '旧流程不能指导新版，也不能因为以前这样更新过就跳过。 ') if procedure_changed else ''
+    docs_note=(' 本版变化的共享文档：'+', '.join(sorted(changed_docs))+'；更新后逐份重读。') if changed_docs else ''
+    signing_note=(' 签名状态或身份与上次安装不同（'+str((previous_signing or {}).get('status'))+' → '
+                  +str((current_signing or {}).get('status'))+'）：系统可能要求重新确认或重新授权，'
+                  '凭据、配对与原安装身份仍保留。') if signing_changed else ''
+    def next_with(base):
+        return procedure_note+base+signing_note+docs_note
     report={'ok':True,'dryRun':not apply,'root':str(root),'profile':state['profile'],'version':version,
             'changed':changed,'removed':removed,'retained':sorted(set(state['managed'])-set(desired)),
             'officialSkill':skill_report,
@@ -935,8 +970,12 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
             'binaryInstall':'not-attempted','requiresEnvironment':requires_environment,
             'environment':'requested' if prepare_environment else ('requires-preparation' if requires_environment else 'preserved'),
             'agentGuidance':guidance,
-            'releaseDocs':str(root/f'.runtime/product/releases/{version}/source'),
-            'next':update_next(skill_report,guidance)}
+            'updateDoc':{'path':f'{release_docs}/{UPDATE_DOC}' if update_doc_hash else None,
+                         'sha256':update_doc_hash,'changed':procedure_changed},
+            'changedDocs':sorted(changed_docs),
+            'signing':current_signing,
+            'releaseDocs':release_docs,
+            'next':next_with(update_next(skill_report,guidance))}
     skill_record={'path':SKILL_ENTRY,'supported':bool(skill_files),
                   'version':skill_report['version'],'sourceVersion':skill_report['sourceVersion'],'commit':skill_report['commit'],
                   'files':{name:digest(data) for name,data in skill_files.items()} if skill_files else skill_baseline}
@@ -1031,11 +1070,13 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         if any(checked_path(root,name).exists() for name in removed): raise ValueError('更新后官方 Skill 引用文件冲突。')
         new_state={**state,'version':version,'manifestSha256':manifest_hash,'commit':manifest['commit'],
                    'distribution':manifest.get('distribution','public'),'sourceVersion':manifest.get('sourceVersion',version),
-                   'officialSkill':skill_record,'guidanceSha256':guidance_hash,
+                   'officialSkill':skill_record,'guidanceSha256':guidance_hash,'updateDocSha256':update_doc_hash,
                    'managed':{**state['managed'],**{name:digest(data) for name,data in desired.items() if managed_name(name)}}}
         new_state['nativeVersion']=manifest['nativeVersion']
         if 'androidVersionCode' in manifest: new_state['androidVersionCode']=manifest['androidVersionCode']
         else: new_state.pop('androidVersionCode',None)
+        if current_signing:
+            new_state['signing']={**(state.get('signing') or {}),target:current_signing}
         atomic_json(root/STATE,new_state)
         outcome='installed' if attempted else 'not-attempted'
         journal.update(phase='complete',binaryInstall=outcome)
@@ -1043,7 +1084,7 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
         pending.unlink()
         guidance=guidance_status(root,version,guidance_hash)
         return {**report,'unchanged':False,'binaryInstall':outcome,'recovery':str(recovery),
-                'agentGuidance':guidance,'next':update_next(skill_report,guidance),
+                'agentGuidance':guidance,'next':next_with(update_next(skill_report,guidance)),
                 'officialSkill':skill_final,
                 'releaseDocs':str(release_parent),'ledgerBackup':str(ledger_backup) if ledger['initialized'] else None}
     except Exception as error:

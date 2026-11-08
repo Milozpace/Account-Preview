@@ -91,6 +91,8 @@ class ReleaseTests(unittest.TestCase):
         (root/'scripts/app_export.py').write_text('SCHEMA_VERSION = 3\n',encoding='utf-8')
         (root/'templates').mkdir()
         (root/'templates/notes.md').write_text('Release heading with empty sections.', encoding='utf-8')
+        (root/'docs').mkdir()
+        (root/'docs/更新与恢复.md').write_text('# 更新与恢复\n\nfixture update flow\n', encoding='utf-8')
         if skill:
             entry = root/'.agents/skills/account-maintenance/SKILL.md'
             entry.parent.mkdir(parents=True)
@@ -113,7 +115,8 @@ class ReleaseTests(unittest.TestCase):
                 installer = directory/('fixture.apk' if platform.startswith('android') else 'fixture'+('.exe' if ext else '.dmg'))
                 installer.write_bytes(b'fixture-installer')
                 output = directory/f"Account-{profile.title()}-{manifest['version']}-{platform}.zip"
-                release.bundle(platform, binary, installer, output, profile=profile, root=root, commit=commit)
+                signing = {'status':'adhoc','identity':'-'} if platform.startswith('macos') else {'status':'unsigned'}
+                release.bundle(platform, binary, installer, output, profile=profile, root=root, commit=commit, signing=signing)
         shutil.rmtree(directory/'binaries')
         for path in directory.glob('fixture*'): path.unlink()
 
@@ -127,6 +130,8 @@ class ReleaseTests(unittest.TestCase):
             manifest = json.loads((assets/'release-manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['commit'], commit)
             self.assertEqual(manifest['snapshotSchema'],3)
+            self.assertEqual(manifest['updateDoc']['asset'],'docs/更新与恢复.md')
+            self.assertEqual(manifest['signing']['macos-arm64']['status'],'adhoc')
             self.assertEqual(set(manifest['profiles']), {'preview'})
             self.assertEqual(len(result['assets']), 6)
             self.assertEqual(manifest['source']['sha256'], release.sha(assets/manifest['source']['asset']))

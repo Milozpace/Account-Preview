@@ -37,6 +37,23 @@ def excluded_name(relative, exclude=()):
     return any(relative == item or relative.startswith(item.rstrip('/') + '/') for item in exclude)
 
 
+SIGNING_STATUS = {'signed', 'adhoc', 'unsigned', 'unknown'}
+
+
+def signing_record(value):
+    """Validate the optional signing summary a platform build reports."""
+    if not isinstance(value, dict): raise ValueError('签名信息须为对象。')
+    status = value.get('status')
+    if status not in SIGNING_STATUS: raise ValueError('未知的签名状态。')
+    record = {'status': status}
+    for key in ('identity', 'team', 'publisher', 'certificateSha256'):
+        item = value.get(key)
+        if item is None: continue
+        if not isinstance(item, str) or len(item) > 200: raise ValueError('签名信息字段无效。')
+        record[key] = item
+    return record
+
+
 def source_files(root, exclude=()):
     root = Path(root).resolve()
     for directory, dirs, names in os.walk(root):
@@ -156,7 +173,7 @@ def verify_android_build_inputs(root, commit, data, profile):
     return set(expected)
 
 
-def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, commit=None, personal_version_file=None):
+def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, commit=None, personal_version_file=None, signing=None):
     data = personal_version.build_data(root, personal_version_file) if profile == 'personal' else product_version.load(root)
     if profile not in data['profiles'] or platform not in data['profiles'][profile]['platforms']:
         raise ValueError('发布平台或安装档案无效。')
@@ -232,6 +249,7 @@ def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, 
                 'files': {name: sha(p) for name, p in files.items()}}
     if profile == 'personal':
         manifest.update(distribution='personal-local', sourceVersion=data['sourceVersion'])
+    if signing is not None: manifest['signing'] = signing_record(signing)
     output = Path(output)
     if output.exists(): raise ValueError('输出已存在，拒绝覆盖。')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -317,6 +335,10 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
             if not path.is_file() or path.is_symlink(): raise ValueError('缺少候选平台组件：' + name)
             verify_bundle(path, data, profile, platform, commit)
             platforms[platform] = {'asset': name, 'sha256': sha(path)}
+            with zipfile.ZipFile(path) as archive:
+                component = json.loads(archive.read('manifest.json'))
+            if component.get('signing') is not None:
+                manifest.setdefault('signing', {})[platform] = signing_record(component['signing'])
         manifest['profiles'][profile] = dict(identifier=config['identifier'], desktopConfig=config['desktopConfig'], platforms=platforms)
     # Compare an existing source asset against a fresh deterministic export; refuse stale archives.
     with tempfile.TemporaryDirectory() as folder:
@@ -334,6 +356,9 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
                 raise ValueError('本地自管个人源码仍包含公开 Skill；拒绝生成。')
         elif not published_skill:
             raise ValueError('新发布源码必须包含核心记账 Skill 及其完整引用文件。')
+        if 'docs/更新与恢复.md' in source_contents:
+            manifest['updateDoc']={'asset':'docs/更新与恢复.md',
+                                   'sha256':hashlib.sha256(source_contents['docs/更新与恢复.md']).hexdigest()}
         manifest['snapshotSchema']=product_update.source_snapshot_schema(source_contents,required=True)
         source = directory/source_name
         if source.exists():
@@ -365,6 +390,7 @@ def main():
     for option in ('platform', 'binaries', 'installer', 'output'): pack.add_argument('--' + option, required=True)
     pack.add_argument('--profile', choices=['preview', 'personal'], default='preview')
     pack.add_argument('--personal-version-file', type=Path)
+    pack.add_argument('--signing', help='JSON signing summary reported by the platform build')
     sums = commands.add_parser('checksums'); sums.add_argument('--directory', type=Path, required=True)
     prepare = commands.add_parser('prepare')
     prepare.add_argument('--directory', required=True, type=Path)
@@ -379,7 +405,7 @@ def main():
     elif args.command == 'source': result = source_archive(ROOT, args.output, commit=args.commit)
     elif args.command == 'version-check':
         mismatches = product_version.check(ROOT); result = {'ok': not mismatches, 'mismatches': mismatches}
-    elif args.command == 'bundle': result = bundle(args.platform, args.binaries, args.installer, args.output, profile=args.profile, personal_version_file=args.personal_version_file)
+    elif args.command == 'bundle': result = bundle(args.platform, args.binaries, args.installer, args.output, profile=args.profile, personal_version_file=args.personal_version_file, signing=json.loads(args.signing) if args.signing else None)
     elif args.command == 'prepare': result = prepare_release(ROOT, args.directory, args.commit, args.notes, args.distribution, args.personal_version_file, args.omit_skill)
     else: result = checksums(args.directory)
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -43,7 +43,7 @@ class ProductUpdateFixture:
     def adopt(self, profile='personal'):
         return updater.adopt(self.root, profile=profile, apply=True)
 
-    def release(self, profile='personal', version='0.4.1-preview.1', source=None, native_version='0.4.1', **changes):
+    def release(self, profile='personal', version='0.4.1-preview.1', source=None, native_version='0.4.1', signing=None, **changes):
         source = source or {'scripts/shared.py': b'new code', 'scripts/new.py': b'new tool',
                             'docs/记账规则.md': b'new shared instructions', 'AGENTS.md': b'new shared entry'}
         source = dict(source)
@@ -55,6 +55,7 @@ class ProductUpdateFixture:
                  'install/Account.exe':b'installer'}
         inner = dict(format=1, version=version, nativeVersion=native_version, platform='windows-x64', profile=profile,
                      identifier=identifier, commit='a'*40, files={name:sha(data) for name,data in files.items()})
+        if signing is not None: inner['signing'] = signing
         with zipfile.ZipFile(self.assets / 'bundle.zip', 'w') as z:
             z.writestr(zipfile.ZipInfo('manifest.json'), json.dumps(inner))
             for name,data in files.items(): z.writestr(zipfile.ZipInfo(name),data)
@@ -64,6 +65,7 @@ class ProductUpdateFixture:
                         profiles={profile:dict(identifier=identifier,desktopConfig='AccountDesktop' if profile=='personal' else 'AccountPreview',
                             platforms={'windows-x64':{'asset':'bundle.zip','sha256':sha((self.assets/'bundle.zip').read_bytes())}})})
         manifest.update(changes)
+        if signing is not None: manifest['signing'] = {'windows-x64': signing}
         (self.assets/'release-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
         return manifest
 
@@ -1043,6 +1045,53 @@ class ProductUpdateOfficialSkillTests(ProductUpdateFixture, unittest.TestCase):
         self.assertNotIn(updater.SKILL_ENTRY,result['changed'])
         self.assertFalse((self.root/updater.SKILL_ENTRY).exists())
         self.assertEqual(result['officialSkill']['state'],'owner-managed')
+
+    def test_update_doc_change_is_reported_before_applying(self):
+        self.adopt()
+        doc=b'# update flow v1\n'
+        self.release(version='0.4.1-preview.1',
+                     source={'scripts/shared.py':b'new code','docs/更新与恢复.md':doc})
+        first=self.update(apply=True)
+        self.assertTrue(first['ok'])
+        self.assertIsNone(first['updateDoc']['changed'])
+        state=json.loads((self.root/updater.STATE).read_text())
+        self.assertEqual(state['updateDocSha256'],sha(doc))
+        doc2=b'# update flow v2\n'
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',
+                     source={'scripts/shared.py':b'newer code','docs/更新与恢复.md':doc2,
+                             'docs/记账规则.md':b'# rules v2\n'})
+        preflight=self.update()
+        self.assertTrue(preflight['updateDoc']['changed'])
+        self.assertIn('先读',preflight['next'])
+        self.assertIn('docs/更新与恢复.md',preflight['next'])
+        self.assertIn('docs/更新与恢复.md',preflight['changedDocs'])
+        self.assertIn('docs/记账规则.md',preflight['changedDocs'])
+        applied=self.update(apply=True)
+        self.assertTrue(applied['ok'])
+        self.assertEqual(json.loads((self.root/updater.STATE).read_text())['updateDocSha256'],sha(doc2))
+        untouched=self.update(apply=True)
+        self.assertTrue(untouched['unchanged'])
+        self.assertEqual(untouched['changedDocs'],[])
+
+    def test_signing_summary_is_recorded_and_changes_are_reported(self):
+        self.adopt()
+        self.release(signing={'status':'adhoc','identity':'-'})
+        first=self.update(apply=True)
+        self.assertTrue(first['ok'])
+        self.assertEqual(first['signing'],{'status':'adhoc','identity':'-'})
+        state=json.loads((self.root/updater.STATE).read_text())
+        self.assertEqual(state['signing']['windows-x64']['status'],'adhoc')
+        self.release(version='0.4.2-preview.1',native_version='0.4.2',
+                     signing={'status':'signed','identity':'Developer ID Application'})
+        plan=self.update()
+        self.assertEqual(plan['signing']['status'],'signed')
+        self.assertIn('签名',plan['next'])
+
+    def test_modified_skill_next_points_to_backup_and_owner_rules(self):
+        message=updater.skill_next({'path':str(self.root/updater.SKILL_ENTRY),'state':'modified'})
+        self.assertIn('skill-conflict',message)
+        self.assertIn('local/个人规则.md',message)
+        self.assertIn('不覆盖',message)
 
     def test_legacy_owner_managed_state_still_reports_owner_managed(self):
         self.adopt()
