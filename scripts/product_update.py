@@ -505,16 +505,24 @@ def installation_baseline(root, state, *, require_android=True):
     return native,code
 
 
-def select_release(releases):
+def select_release(releases, *, installed_version=None):
     candidates=[]
     release_candidates=[]
+    stable_candidates=[]
     for item in releases:
         tag=item.get('tag_name','')
         if item.get('draft') is not False or not tag.startswith('v'): continue
-        if not VERSION.fullmatch(tag[1:]) and not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.([1-9]\d*)',tag[1:]): continue
         try: key=version_tuple(tag[1:])
         except ValueError: continue
-        (candidates if VERSION.fullmatch(tag[1:]) else release_candidates).append((key,item))
+        if key[3]==4 and item.get('prerelease') is not True:
+            stable_candidates.append((key,item))
+        elif VERSION.fullmatch(tag[1:]): candidates.append((key,item))
+        elif re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.([1-9]\d*)',tag[1:]):
+            release_candidates.append((key,item))
+    installed=version_tuple(installed_version) if installed_version else None
+    stable=max(stable_candidates,key=lambda item:item[0]) if stable_candidates else None
+    if stable and (installed is None or stable[0]>=installed): return stable[1]
+    if installed and installed[3]==4: raise ValueError('没有可升级的已发布正式版；保留当前正式安装。')
     if not candidates: raise ValueError('没有已发布的 private-preview 版本；draft/candidate 不可更新。')
     series=max(candidates,key=lambda item:item[0])[0][:3]
     candidates.extend(item for item in release_candidates if item[0][:3]==series)
@@ -702,7 +710,7 @@ def gh_json(endpoint):
 
 
 @contextmanager
-def remote_release(target, profile):
+def remote_release(target, profile, *, installed_version=None):
     if profile=='personal':
         raise ValueError('个人版仅使用本地发布包；请提供 --release-dir 本地个人版本目录，不从公开 Release 下载。')
     releases=[]
@@ -711,7 +719,7 @@ def remote_release(target, profile):
         if not isinstance(batch,list): raise ValueError('远端发布列表无效。')
         releases.extend(batch)
         if len(batch)<100: break
-    release=select_release(releases)
+    release=select_release(releases,installed_version=installed_version)
     with tempfile.TemporaryDirectory(prefix='account-product-download-') as temporary:
         folder=Path(temporary)
         assets={entry.get('name'):entry for entry in release.get('assets',[])}
@@ -828,7 +836,14 @@ def update(root, *, release_dir=None, target=None, apply=False, installer=None,
     if target == 'macos-x64': raise ValueError('从 preview.5 起停止支持 Intel Mac。')
     if target not in {'windows-x64','macos-arm64'}: raise ValueError('更新入口只安装桌面；Android 另行按相同 profile 安装。')
     if release_dir is None:
-        with remote_release(target,state['profile']) as folder:
+        discovery_version=state.get('version')
+        if discovery_version is None and 'release.json' in state['managed']:
+            source_manifest=checked_path(root,'release.json')
+            if not source_manifest.is_file() or digest(source_manifest.read_bytes())!=state['managed']['release.json']:
+                raise ValueError('本机版本清单与采用基线冲突；保留现场并核对。')
+            discovery_version=read_json(source_manifest).get('version')
+            version_tuple(discovery_version)
+        with remote_release(target,state['profile'],installed_version=discovery_version) as folder:
             return update(root,release_dir=folder,target=target,apply=apply,installer=installer,
                           prepare_environment=prepare_environment,desktop_config=desktop_config)
     manifest,source,bundle,manifest_hash,inner=validate_release(release_dir,state['profile'],target)

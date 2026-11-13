@@ -1,5 +1,6 @@
 """Owner-preserving product updates, using synthetic roots and release assets only."""
 import hashlib
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import sqlite3
@@ -199,12 +200,72 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
         self.assertEqual(ledger_store.source_hash(Path(report['ledgerBackup'])),before)
         self.assertTrue(ledger_store.verify(db)['ok'])
 
-    def test_semantic_selection_ignores_drafts_and_nonpreview_tags(self):
+    def test_semantic_selection_prefers_published_stable_over_preview(self):
         candidates=[{'tag_name':'v0.4.9-preview.9','draft':False,'prerelease':True},
                     {'tag_name':'v0.4.10-preview.2','draft':False,'prerelease':True},
                     {'tag_name':'v9.0.0-preview.1','draft':True,'prerelease':True},
                     {'tag_name':'v99.0.0','draft':False,'prerelease':False}]
-        self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.10-preview.2')
+        self.assertEqual(updater.select_release(candidates)['tag_name'],'v99.0.0')
+
+    def test_stable_selection_works_without_preview_history_and_sorts_numerically(self):
+        candidates=[{'tag_name':'v0.4.9','draft':False,'prerelease':False},
+                    {'tag_name':'v0.4.10','draft':False,'prerelease':False},
+                    {'tag_name':'v9.0.0','draft':True,'prerelease':False},
+                    {'tag_name':'v8.0.0','draft':False,'prerelease':True},
+                    {'tag_name':'v7.0.0-beta.1','draft':False,'prerelease':True},
+                    {'tag_name':'v06.0.0','draft':False,'prerelease':False}]
+        self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.10')
+
+    def test_stable_installation_does_not_follow_newer_preview_or_rc(self):
+        candidates=[{'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                    {'tag_name':'v0.5.0-preview.1','draft':False,'prerelease':True},
+                    {'tag_name':'v0.5.0-rc.1','draft':False,'prerelease':True}]
+        self.assertEqual(updater.select_release(candidates,installed_version='0.4.0')['tag_name'],'v0.4.0')
+
+    def test_higher_preview_installation_retains_its_matching_rc_path(self):
+        candidates=[{'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                    {'tag_name':'v0.5.0-preview.1','draft':False},
+                    {'tag_name':'v0.5.0-rc.1','draft':False},
+                    {'tag_name':'v9.0.0-rc.1','draft':False}]
+        self.assertEqual(updater.select_release(candidates,installed_version='0.5.0-preview.1')['tag_name'],'v0.5.0-rc.1')
+
+    def test_rc_installation_discovers_same_series_stable(self):
+        candidates=[{'tag_name':'v0.4.0-rc.1','draft':False},
+                    {'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                    {'tag_name':'v0.5.0-preview.1','draft':False}]
+        self.assertEqual(updater.select_release(candidates,installed_version='0.4.0-rc.1')['tag_name'],'v0.4.0')
+
+    def test_stable_installation_without_stable_release_has_no_preview_fallback(self):
+        with self.assertRaisesRegex(ValueError,'正式版'):
+            updater.select_release([{'tag_name':'v0.5.0-preview.1','draft':False}],installed_version='0.4.0')
+
+    def test_stable_discovery_rejects_only_older_stable_releases(self):
+        with self.assertRaisesRegex(ValueError,'正式版'):
+            updater.select_release([{'tag_name':'v0.3.0','draft':False,'prerelease':False}],installed_version='0.4.0')
+
+    def test_remote_check_passes_installed_version_to_release_discovery(self):
+        self.adopt('preview'); self.release('preview'); self.update(apply=True)
+        with patch.object(updater,'remote_release',return_value=nullcontext(self.assets)) as remote:
+            updater.update(self.root,target='windows-x64')
+        remote.assert_called_once_with('windows-x64','preview',installed_version='0.4.1-preview.1')
+
+    def test_newly_adopted_stable_source_has_no_preview_fallback(self):
+        (self.root/'release.json').write_text(json.dumps({'version':'0.4.0'}))
+        self.adopt('preview')
+        candidates=[{'tag_name':'v0.5.0-preview.1','draft':False}]
+        with patch.object(updater,'gh_json',return_value=candidates):
+            with self.assertRaisesRegex(ValueError,'正式版'):
+                updater.update(self.root,target='windows-x64')
+        self.assertIsNone(updater.status(self.root)['version'])
+
+    def test_unversioned_adoption_checks_source_baseline_before_remote_discovery(self):
+        source=self.root/'release.json'
+        source.write_text(json.dumps({'version':'0.4.0'})); self.adopt('preview')
+        source.write_text(json.dumps({'version':'0.5.0-preview.1'}))
+        with patch.object(updater,'gh_json') as network:
+            with self.assertRaisesRegex(ValueError,'基线'):
+                updater.update(self.root,target='windows-x64')
+        network.assert_not_called()
 
     def test_matching_rc_follows_preview_without_switching_series(self):
         candidates=[{'tag_name':'v0.4.0-preview.5','draft':False},
@@ -353,14 +414,14 @@ class UnifiedProductVersionTests(ProductUpdateFixture, unittest.TestCase):
         self.assertEqual(saved['version'],'0.4.0-preview.5')
         self.assertEqual(saved['nativeVersion'],'0.4.5');self.assertEqual(saved['androidVersionCode'],4005)
 
-    def test_manual_local_stable_or_rc_does_not_expand_remote_subscription(self):
+    def test_manual_local_stable_or_rc_keeps_manifest_validation(self):
         for version in ('0.4.0-rc.1','0.4.0'):
             with self.subTest(version=version):
                 self.unified_release(version)
                 self.assertEqual(updater.validate_release(self.assets,'personal','windows-x64')[0]['version'],version)
         choices=[{'tag_name':'v0.4.0-preview.5','draft':False},
                  {'tag_name':'v9.0.0-rc.1','draft':False},{'tag_name':'v9.0.0','draft':False}]
-        self.assertEqual(updater.select_release(choices)['tag_name'],'v0.4.0-preview.5')
+        self.assertEqual(updater.select_release(choices)['tag_name'],'v9.0.0')
 
     def test_unified_index_cannot_lie_about_source_native_or_android_code(self):
         for field,value in (('nativeVersion','0.4.6'),('androidVersionCode',4006),('sourceVersion','0.4.0-preview.4')):

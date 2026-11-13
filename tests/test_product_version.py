@@ -42,6 +42,7 @@ class VersionTests(unittest.TestCase):
 
     def test_stable_version_retains_strict_installer_monotonicity(self):
         module = self.module(); old = copy.deepcopy(module.load(ROOT))
+        old.update(version='0.4.0-rc.1',tag='v0.4.0-rc.1',nativeVersion='0.4.6',androidVersionCode=4006)
         stable='.'.join(map(str,module.version_key(old['version'])[:3]))
         candidate = {**old, 'version':stable, 'tag':'v'+stable}
         with self.assertRaises(ValueError): module.validate(candidate, previous=old)
