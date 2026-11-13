@@ -12,6 +12,7 @@ use crate::probe_cache::{
     PROBE_ACCOUNT, PROBE_LEDGER, SecretVault, SlotVault, Vault, ensure_key, identity, load_key,
     persist_cache, read_cache,
 };
+use crate::sync_issue::SyncIssue;
 use crate::webdav::{PropfindOutcome, WebDavClient};
 use account_app_core::{
     ContentKey, EncryptedEnvelope, RevisionGuard, SnapshotMetadata, decrypt, decrypt_and_advance,
@@ -620,7 +621,7 @@ fn pending_revision<V: SecretVault>(dir: &Path, vault: &V) -> Option<u64> {
 /// remains (both `sync_summary` and `build_client` also refuse either half).
 /// A same-account password change rewrites only the password slot, so the
 /// config and the content key are untouched.
-fn apply_configure<V: SecretVault>(
+fn persist_configure<V: SecretVault>(
     vault: &V,
     account: &str,
     password: &str,
@@ -657,7 +658,7 @@ fn apply_configure<V: SecretVault>(
     let config_bytes =
         serde_json::to_vec(&config).map_err(|_| "无法序列化同步配置。".to_string())?;
     let password_bytes = Zeroizing::new(password.as_bytes().to_vec());
-    let result: Result<(), String> = (|| {
+    let result: Result<SyncStatusSummary, String> = (|| {
         if fresh {
             vault.store_secret(CONFIG_SLOT, &config_bytes)?;
         }
@@ -680,34 +681,101 @@ fn apply_configure<V: SecretVault>(
         if stored != password_bytes.as_slice() {
             return Err("安全存储校验应用密码失败，请重试。".into());
         }
-        Ok(())
+        sync_summary(vault)
     })();
-    if let Err(error) = result {
-        let rollback: Result<(), String> = (|| {
-            if fresh {
-                vault.delete_secret(CONFIG_SLOT)?;
-            }
-            let current = vault.load_secret(PASSWORD_SLOT)?.map(Zeroizing::new);
-            if current.as_deref() != previous_password.as_deref() {
-                match &previous_password {
-                    Some(previous) => vault.store_secret(PASSWORD_SLOT, previous)?,
-                    None => vault.delete_secret(PASSWORD_SLOT)?,
+    match result {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            let rollback: Result<(), String> = (|| {
+                if fresh {
+                    vault.delete_secret(CONFIG_SLOT)?;
                 }
+                let current = vault.load_secret(PASSWORD_SLOT)?.map(Zeroizing::new);
+                if current.as_deref() != previous_password.as_deref() {
+                    match &previous_password {
+                        Some(previous) => vault.store_secret(PASSWORD_SLOT, previous)?,
+                        None => vault.delete_secret(PASSWORD_SLOT)?,
+                    }
+                }
+                let restored = vault.load_secret(PASSWORD_SLOT)?.map(Zeroizing::new);
+                if restored.as_deref() != previous_password.as_deref() {
+                    return Err("旧应用密码恢复校验失败。".into());
+                }
+                Ok(())
+            })();
+            if rollback.is_err() {
+                return Err(
+                    "配置写入失败，旧配置恢复未能确认。密钥和缓存保留，请重新配置应用密码。".into(),
+                );
             }
-            let restored = vault.load_secret(PASSWORD_SLOT)?.map(Zeroizing::new);
-            if restored.as_deref() != previous_password.as_deref() {
-                return Err("旧应用密码恢复校验失败。".into());
-            }
-            Ok(())
-        })();
-        if rollback.is_err() {
-            return Err(
-                "配置写入失败，旧配置恢复未能确认。密钥和缓存保留，请重新配置应用密码。".into(),
-            );
+            Err(error)
         }
-        return Err(error);
     }
-    sync_summary(vault)
+}
+
+fn configure_candidate<V: SecretVault>(
+    vault: &V,
+    account: &str,
+    password: &str,
+    base_url: &str,
+) -> Result<SyncStatusSummary, SyncIssue> {
+    let invalid = |message| SyncIssue::new("configuration-invalid", "configure", message, false);
+    let storage = |message| SyncIssue::new("local-state-unavailable", "configure", message, false);
+    if account.is_empty() || account.len() > 256 || password.is_empty() || password.len() > 256 {
+        return Err(invalid("请输入有效的坚果云账号和应用密码。".into()));
+    }
+    // Reject account adoption or corrupt binding before any request. Candidate
+    // credentials remain in memory until an authenticated read-only check.
+    if let Some(bytes) = vault.load_secret(CONFIG_SLOT).map_err(storage)? {
+        let config: SyncConfig = serde_json::from_slice(&bytes)
+            .map_err(|_| invalid("同步配置损坏，请保留现场检查。".into()))?;
+        if config.username != account {
+            return Err(SyncIssue::new(
+                "configuration-foreign-account",
+                "configure",
+                "本机已配置另一坚果云账号，拒绝替换；已保留原配置与缓存。",
+                false,
+            ));
+        }
+        config.matches_binding().map_err(invalid)?;
+    }
+    let client =
+        WebDavClient::new(base_url, REMOTE_DIRECTORY, account, password).map_err(invalid)?;
+    match client
+        .propfind_url(base_url)
+        .map_err(|error| SyncIssue::dav(error, "credential-check"))?
+    {
+        PropfindOutcome::Collection => {}
+        PropfindOutcome::NotFound => {
+            let mut issue = SyncIssue::new(
+                "cloud-path-missing",
+                "credential-check",
+                "云端服务根目录未找到（404），无法验证凭据，原配置保留。",
+                false,
+            );
+            issue.http_status = Some(404);
+            return Err(issue);
+        }
+        PropfindOutcome::NotCollection => {
+            let mut issue = SyncIssue::new(
+                "cloud-directory-invalid",
+                "credential-check",
+                "云端返回的目录内容无法确认，原配置保留。",
+                false,
+            );
+            issue.http_status = Some(207);
+            return Err(issue);
+        }
+    }
+    persist_configure(vault, account, password).map_err(storage)
+}
+
+fn apply_configure<V: SecretVault>(
+    vault: &V,
+    account: &str,
+    password: &str,
+) -> Result<SyncStatusSummary, SyncIssue> {
+    configure_candidate(vault, account, password, DEFAULT_BASE_URL)
 }
 
 #[tauri::command]
@@ -715,7 +783,7 @@ pub async fn sync_configure(
     app: tauri::AppHandle,
     account: String,
     app_password: String,
-) -> Result<SyncStatusSummary, String> {
+) -> Result<SyncStatusSummary, SyncIssue> {
     // Same serialization boundary as publish/fetch: a configuration change
     // can never land between another command's credential load and its
     // network requests, and old requests can never submit after a
@@ -725,21 +793,39 @@ pub async fn sync_configure(
     let password = Zeroizing::new(app_password);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<crate::probe::ProbeState>();
-        let _guard = state
-            .0
-            .lock()
-            .map_err(|_| "验证操作状态异常，请重启应用。".to_string())?;
-        let directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "无法定位应用数据目录。".to_string())?;
+        let _guard = state.0.lock().map_err(|_| {
+            SyncIssue::new(
+                "local-state-unavailable",
+                "configure",
+                "验证操作状态异常，请重启应用。",
+                false,
+            )
+        })?;
+        let directory = app.path().app_data_dir().map_err(|_| {
+            SyncIssue::new(
+                "local-state-unavailable",
+                "configure",
+                "无法定位应用数据目录。",
+                false,
+            )
+        })?;
         crate::probe_transaction::with_transaction(&directory, || {
             let vault = SyncVault(app.platform());
-            apply_configure(&vault, account.trim(), &password)
+            // Keep the transaction's String contract for existing CLI callers
+            // while carrying the structured network result across it intact.
+            Ok(apply_configure(&vault, account.trim(), &password))
         })
+        .map_err(|error| SyncIssue::new("local-state-unavailable", "configure", error, false))?
     })
     .await
-    .map_err(sync_join_failure)?
+    .map_err(|error| {
+        SyncIssue::new(
+            "native-task-failed",
+            "configure",
+            sync_join_failure(error),
+            true,
+        )
+    })?
 }
 
 #[tauri::command]
@@ -1399,6 +1485,151 @@ fn check_existing_pending<V: SecretVault>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_summary_failure_rolls_back_the_candidate_password() {
+        struct SummaryFailure(MemorySlots);
+        impl SecretVault for SummaryFailure {
+            fn load_secret(&self, slot: &str) -> Result<Option<Vec<u8>>, String> {
+                if slot == PROBE_KEY_SLOT {
+                    return Err("synthetic summary failure".into());
+                }
+                self.0.load_secret(slot)
+            }
+            fn store_secret(&self, slot: &str, value: &[u8]) -> Result<(), String> {
+                self.0.store_secret(slot, value)
+            }
+            fn delete_secret(&self, slot: &str) -> Result<(), String> {
+                self.0.delete_secret(slot)
+            }
+        }
+        let inner = MemorySlots::default();
+        persist_configure(&inner, "tester@example.test", "old-working-password").unwrap();
+        let vault = SummaryFailure(inner);
+        assert!(persist_configure(&vault, "tester@example.test", "candidate").is_err());
+        assert_eq!(
+            vault.0.load_secret(PASSWORD_SLOT).unwrap().unwrap(),
+            b"old-working-password"
+        );
+    }
+
+    #[test]
+    fn candidate_verification_failures_never_create_configuration_or_remote_files() {
+        for (status, code) in [
+            (403, "access-forbidden"),
+            (404, "cloud-path-missing"),
+            (409, "cloud-path-conflict"),
+            (429, "rate-limited"),
+            (503, "service-unavailable"),
+        ] {
+            let (base, seen) = spawn_server(Arc::new(move |_| MockResponse {
+                status,
+                headers: vec![],
+                body: vec![],
+                truncate_body_after: None,
+            }));
+            let vault = MemorySlots::default();
+            let issue =
+                configure_candidate(&vault, "tester@example.test", "candidate", &base).unwrap_err();
+            assert_eq!((issue.code, issue.http_status), (code, Some(status)));
+            assert!(vault.load_secret(CONFIG_SLOT).unwrap().is_none());
+            assert!(vault.load_secret(PASSWORD_SLOT).unwrap().is_none());
+            assert!(seen.lock().unwrap().iter().all(|r| r.method == "PROPFIND"));
+        }
+    }
+
+    #[test]
+    fn candidate_invalid_dav_collection_preserves_status_and_existing_credentials() {
+        let vault = MemorySlots::default();
+        persist_configure(&vault, "tester@example.test", "old-working-password").unwrap();
+        let (base, seen) = spawn_server(Arc::new(|_| MockResponse {
+            status: 207,
+            headers: vec![],
+            body: b"not a DAV collection".to_vec(),
+            truncate_body_after: None,
+        }));
+        let issue =
+            configure_candidate(&vault, "tester@example.test", "candidate", &base).unwrap_err();
+        assert_eq!(issue.code, "cloud-directory-invalid");
+        assert_eq!(issue.http_status, Some(207));
+        assert_eq!(
+            vault.load_secret(PASSWORD_SLOT).unwrap().unwrap(),
+            b"old-working-password"
+        );
+        let foreign =
+            configure_candidate(&vault, "foreign@example.test", "candidate", &base).unwrap_err();
+        assert_eq!(foreign.code, "configuration-foreign-account");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "foreign-account rejection must make no request"
+        );
+    }
+
+    #[test]
+    fn candidate_verification_success_stores_after_read_only_collection_check() {
+        let vault = MemorySlots::default();
+        let (base, seen) = spawn_server(Arc::new(|_| {
+            MockResponse {
+            status: 207, headers: vec![],
+            body: br#"<D:multistatus xmlns:D="DAV:"><D:response><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"#.to_vec(),
+            truncate_body_after: None,
+        }
+        }));
+        configure_candidate(&vault, "tester@example.test", "verified-candidate", &base).unwrap();
+        assert_eq!(
+            vault.load_secret(PASSWORD_SLOT).unwrap().unwrap(),
+            b"verified-candidate"
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "PROPFIND");
+        assert_eq!(seen[0].path, "/");
+        use base64::Engine;
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD
+                .encode("tester@example.test:verified-candidate")
+        );
+        assert!(
+            seen[0]
+                .headers
+                .iter()
+                .any(|(name, value)| name == "authorization" && value == &expected)
+        );
+    }
+
+    #[test]
+    fn candidate_credentials_are_verified_read_only_before_existing_password_is_replaced() {
+        let vault = MemorySlots::default();
+        persist_configure(&vault, "tester@example.test", "old-working-password").unwrap();
+        let before = vault.load_secret(CONFIG_SLOT).unwrap();
+        let (base, seen) = spawn_server(Arc::new(|_| MockResponse {
+            status: 401,
+            headers: vec![],
+            body: vec![],
+            truncate_body_after: None,
+        }));
+        let result = configure_candidate(
+            &vault,
+            "tester@example.test",
+            "wrong-candidate-password",
+            &base,
+        );
+        assert!(result.is_err(), "unverified credentials must not be stored");
+        let issue = result.unwrap_err();
+        assert_eq!(issue.code, "auth-unauthorized");
+        assert_eq!(issue.http_status, Some(401));
+        assert_eq!(vault.load_secret(CONFIG_SLOT).unwrap(), before);
+        assert_eq!(
+            vault.load_secret(PASSWORD_SLOT).unwrap().unwrap(),
+            b"old-working-password"
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "PROPFIND");
+        assert_eq!(seen[0].path, "/");
+    }
     #[test]
     fn setup_status_read_errors_are_not_unconfigured() {
         struct Unreadable;
@@ -2894,14 +3125,14 @@ mod tests {
             }
         }
         let inner = MemorySlots::default();
-        apply_configure(&inner, "tester@example.test", "old-password").unwrap();
+        persist_configure(&inner, "tester@example.test", "old-password").unwrap();
         let config_before = inner.load_secret(CONFIG_SLOT).unwrap();
         let vault = FailReadOnce {
             inner,
             written: std::sync::atomic::AtomicBool::new(false),
             failed: std::sync::atomic::AtomicBool::new(false),
         };
-        assert!(apply_configure(&vault, "tester@example.test", "new-password").is_err());
+        assert!(persist_configure(&vault, "tester@example.test", "new-password").is_err());
         assert_eq!(
             vault.inner.load_secret(PASSWORD_SLOT).unwrap().unwrap(),
             b"old-password"
@@ -2932,7 +3163,7 @@ mod tests {
     fn apply_configure_fresh_same_account_and_foreign_rejection() {
         let vault = MemorySlots::default();
         // Fresh configuration succeeds and reports unpaired.
-        let summary = apply_configure(&vault, "tester@example.test", "pw-one").unwrap();
+        let summary = persist_configure(&vault, "tester@example.test", "pw-one").unwrap();
         assert_eq!(
             summary,
             SyncStatusSummary {
@@ -2952,7 +3183,7 @@ mod tests {
             &key,
         )
         .unwrap();
-        let summary = apply_configure(&vault, "tester@example.test", "pw-two").unwrap();
+        let summary = persist_configure(&vault, "tester@example.test", "pw-two").unwrap();
         assert!(summary.configured);
         assert_eq!(config_before, vault.load_secret(CONFIG_SLOT).unwrap());
         assert_eq!(
@@ -2965,7 +3196,7 @@ mod tests {
             "a password change must keep the content key"
         );
         // A different account is rejected before any write.
-        let error = apply_configure(&vault, "someone@else.test", "pw-three").unwrap_err();
+        let error = persist_configure(&vault, "someone@else.test", "pw-three").unwrap_err();
         assert!(
             error.contains("另一坚果云账号"),
             "unexpected error: {error}"
@@ -2985,7 +3216,7 @@ mod tests {
             inner: MemorySlots::default(),
             fail_slots: vec![CONFIG_SLOT],
         };
-        let error = apply_configure(&vault, "tester@example.test", "pw").unwrap_err();
+        let error = persist_configure(&vault, "tester@example.test", "pw").unwrap_err();
         assert!(error.contains("写入失败"), "unexpected error: {error}");
         assert!(vault.load_secret(CONFIG_SLOT).unwrap().is_none());
         assert!(vault.load_secret(PASSWORD_SLOT).unwrap().is_none());
@@ -2995,14 +3226,14 @@ mod tests {
             inner: MemorySlots::default(),
             fail_slots: vec![PASSWORD_SLOT],
         };
-        let error = apply_configure(&vault, "tester@example.test", "pw").unwrap_err();
+        let error = persist_configure(&vault, "tester@example.test", "pw").unwrap_err();
         assert!(error.contains("写入失败"), "unexpected error: {error}");
         assert!(vault.load_secret(CONFIG_SLOT).unwrap().is_none());
         assert!(vault.load_secret(PASSWORD_SLOT).unwrap().is_none());
         assert!(!sync_summary(&vault).unwrap().configured);
         // Once the storage works again, the same configuration succeeds.
         let healthy = vault.inner.clone();
-        let summary = apply_configure(&healthy, "tester@example.test", "pw").unwrap();
+        let summary = persist_configure(&healthy, "tester@example.test", "pw").unwrap();
         assert!(summary.configured);
     }
 
@@ -3011,13 +3242,13 @@ mod tests {
         // A failed password change on an existing configuration must leave
         // the previous credentials usable (same account, same config).
         let inner = MemorySlots::default();
-        apply_configure(&inner, "tester@example.test", "old-pw").unwrap();
+        persist_configure(&inner, "tester@example.test", "old-pw").unwrap();
         let config_before = inner.load_secret(CONFIG_SLOT).unwrap();
         let vault = FailOnStore {
             inner,
             fail_slots: vec![PASSWORD_SLOT],
         };
-        let error = apply_configure(&vault, "tester@example.test", "new-pw").unwrap_err();
+        let error = persist_configure(&vault, "tester@example.test", "new-pw").unwrap_err();
         assert!(error.contains("写入失败"), "unexpected error: {error}");
         // The failed attempt must not roll back the pre-existing config.
         assert_eq!(
@@ -3031,7 +3262,7 @@ mod tests {
     fn apply_configure_rejects_corrupt_existing_config_before_writes() {
         let vault = MemorySlots::default();
         vault.store_secret(CONFIG_SLOT, b"not-json-at-all").unwrap();
-        let error = apply_configure(&vault, "tester@example.test", "pw").unwrap_err();
+        let error = persist_configure(&vault, "tester@example.test", "pw").unwrap_err();
         assert!(error.contains("同步配置损坏"), "unexpected error: {error}");
         assert!(vault.load_secret(PASSWORD_SLOT).unwrap().is_none());
     }

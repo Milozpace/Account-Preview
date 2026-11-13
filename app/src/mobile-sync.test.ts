@@ -2,6 +2,27 @@ import {describe,it,expect} from 'vitest';
 import {mobileSyncHtml,type MobileSyncState} from './mobile-sync';
 const connected:MobileSyncState={initialized:true,configured:true,connectionKnown:true,hasData:true,source:'cloud',revision:2,checking:false,warning:'',editingConnection:false,editingPairing:false};
 describe('mobile sync has progressive connection controls',()=>{
+ it('never diagnoses a 409 contract-stage failure as a password error',()=>{
+  const html=mobileSyncHtml({...connected,source:'cache',warning:'【认证/契约/版本检查】部分云端文件检查未完成：【槽位下载 · GET · 409】云端服务返回异常状态（409）。'},'','');
+  expect(html).not.toContain('请检查账号和应用密码');
+  expect(html).toContain('同步位置');
+ });
+ it('gives an actionable first-publication notice without an error severity',()=>{
+  const html=mobileSyncHtml({...connected,hasData:false,source:'none',revision:null,issue:{code:'cloud-empty',stage:'fetch',message:'云端没有账单',retryable:false}},'','');
+  expect(html).toContain('等待电脑首次同步');expect(html).toContain('电脑 Agent');
+  expect(html).toContain('data-severity="info"');expect(html).not.toContain('role="alert"');
+ });
+ it('shows an upgrade action and keeps offline data for unsupported newer data',()=>{
+  const html=mobileSyncHtml({...connected,source:'cache',issue:{code:'snapshot-newer-schema',stage:'snapshot',message:'数据格式不支持',retryable:false}},'','');
+  expect(html).toContain('请更新手机版 Account');expect(html).toContain('已有账单仍可查看');
+  expect(html).toContain('data-action="sync-update-help"');expect(html).toContain('data-severity="error"');
+  expect(html).not.toContain('请检查账号');
+ });
+ it('keeps credential and pair failures specific and escapes technical details',()=>{
+  const html=mobileSyncHtml({...connected,issue:{code:'auth-unauthorized',stage:'connection',message:'<script>bad</script>',httpStatus:401,retryable:false}},'','');
+  expect(html).toContain('坚果云账号或应用密码未通过验证');expect(html).toContain('data-action="sync-edit-connection"');
+  expect(html).not.toContain('<script>');expect(html).toContain('&lt;script&gt;');
+ });
  it('starts with pairing only, without fetch or credential forms',()=>{
   const html=mobileSyncHtml({...connected,initialized:false,configured:false,hasData:false,source:'none',revision:null},'<form id="sync-form"></form>','<button id="scan-pairing">扫码配对</button>');
   expect(html).toContain('id="scan-pairing"');expect(html).not.toContain('id="fetch-button"');expect(html).not.toContain('id="sync-form"');

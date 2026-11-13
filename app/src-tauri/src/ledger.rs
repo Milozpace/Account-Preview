@@ -33,7 +33,7 @@ pub const SAMPLE_PLAINTEXT: &[u8] = b"account-ledger-pairing-sample-v1";
 pub const PAIRING_KIND: &str = "account-ledger-pairing-v1";
 pub const MAX_PAIRING_BYTES: usize = 4096;
 
-const SNAPSHOT_KIND: &str = "account-ledger-view";
+pub(crate) const SNAPSHOT_KIND: &str = "account-ledger-view";
 const COVERAGE_KIND: &str = "tracked-months";
 const LEGACY_COVERAGE_KIND: &str = "recent-months";
 const MAX_TITLE_BYTES: usize = 72 * 4;

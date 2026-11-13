@@ -15,6 +15,7 @@ use crate::ledger::{
 };
 use crate::probe_cache::SecretVault;
 use crate::probe_sync::{Transaction, step_err};
+use crate::sync_issue::SyncIssue;
 use account_app_core::{
     ContentKey, EncryptedEnvelope, RevisionGuard, SnapshotMetadata, decrypt, decrypt_and_advance,
     encrypt,
@@ -85,12 +86,16 @@ pub enum LedgerFetchOutcome {
         snapshot: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         warning: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue: Option<SyncIssue>,
     },
     Latest {
         revision: u64,
         snapshot: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         warning: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue: Option<SyncIssue>,
     },
     CloudEmpty {
         has_cache: bool,
@@ -696,91 +701,275 @@ pub fn prepare_and_publish<V: SecretVault + Sync, T: Transaction>(
 }
 
 /// Download and accept the newest valid slot, cache-first caller.
+#[allow(dead_code)] // Keep the String interface for internal callers; Tauri uses diagnostics.
 pub fn fetch_flow<V: SecretVault + Sync, T: Transaction>(
     vault: &V,
     dir: &Path,
     tx: &T,
 ) -> Result<LedgerFetchOutcome, String> {
-    let (identity, key, baseline) = tx.run(|| {
-        let (identity, key) = ensure_configured(vault).map_err(|e| step_err(STEP_CONFIG, e))?;
-        let baseline = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity)
-            .map_err(|error| step_err(STEP_KEY_CACHE, error))?
-            .map(|envelope| envelope.metadata.revision)
-            .unwrap_or(0);
-        Ok((identity, key, baseline))
-    })?;
-    let client = build_client(vault)?;
+    fetch_flow_diagnostic(vault, dir, tx).map_err(String::from)
+}
+
+enum FetchRead {
+    Missing,
+    Valid(EncryptedEnvelope),
+    Failed {
+        revision: Option<u64>,
+        issue: SyncIssue,
+    },
+}
+
+fn fetch_read(
+    client: &crate::webdav::WebDavClient,
+    file: &str,
+    key: &ContentKey,
+    identity: &LedgerIdentity,
+) -> FetchRead {
+    let bytes = match client.get(file) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return FetchRead::Missing,
+        Err(error) => {
+            return FetchRead::Failed {
+                revision: None,
+                issue: SyncIssue::dav(error, "download"),
+            };
+        }
+    };
+    let invalid = || {
+        SyncIssue::new(
+            "snapshot-invalid",
+            "snapshot",
+            "云端快照损坏或未通过完整性校验，已保留本地缓存。",
+            false,
+        )
+    };
+    let envelope = match EncryptedEnvelope::from_json(&bytes) {
+        Ok(envelope) => envelope,
+        Err(_) => {
+            return FetchRead::Failed {
+                revision: None,
+                issue: invalid(),
+            };
+        }
+    };
+    let plaintext = match decrypt(&envelope, key, identity.expected()) {
+        Ok(bytes) => ZeroizingVec(bytes),
+        Err(_) => {
+            return FetchRead::Failed {
+                revision: None,
+                issue: SyncIssue::new(
+                    "snapshot-authentication-failed",
+                    "authenticate",
+                    "云端文件不属于本配对或无法通过认证，已保留本地缓存。",
+                    false,
+                ),
+            };
+        }
+    };
+    let revision = Some(envelope.metadata.revision);
+    let value: serde_json::Value = match serde_json::from_slice(&plaintext) {
+        Ok(value) => value,
+        Err(_) => {
+            return FetchRead::Failed {
+                revision,
+                issue: invalid(),
+            };
+        }
+    };
+    let issue = if value["snapshotKind"] != ledger::SNAPSHOT_KIND {
+        Some(invalid())
+    } else if value["schemaVersion"]
+        .as_u64()
+        .is_some_and(|schema| schema > 3)
+    {
+        Some(SyncIssue::new(
+            "snapshot-newer-schema",
+            "snapshot",
+            "云端快照需要更新手机 App 后读取，已保留本地缓存。",
+            false,
+        ))
+    } else if value["schemaVersion"] == 2
+        && ledger::validate_publication_payload(&plaintext).is_ok()
+    {
+        Some(SyncIssue::new(
+            "snapshot-older-schema",
+            "snapshot",
+            "云端仍是旧版快照，请在电脑更新后重新发布，已保留本地缓存。",
+            false,
+        ))
+    } else if ledger::parse_payload(&plaintext).is_err() {
+        Some(invalid())
+    } else {
+        None
+    };
+    match issue {
+        Some(issue) => FetchRead::Failed { revision, issue },
+        None => FetchRead::Valid(envelope),
+    }
+}
+
+pub fn fetch_flow_diagnostic<V: SecretVault + Sync, T: Transaction>(
+    vault: &V,
+    dir: &Path,
+    tx: &T,
+) -> Result<LedgerFetchOutcome, SyncIssue> {
+    let (identity, key, baseline) = tx
+        .run(|| {
+            let (identity, key) = ensure_configured(vault).map_err(|e| step_err(STEP_CONFIG, e))?;
+            let baseline = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity)
+                .map_err(|error| step_err(STEP_KEY_CACHE, error))?
+                .map(|envelope| envelope.metadata.revision)
+                .unwrap_or(0);
+            Ok((identity, key, baseline))
+        })
+        .map_err(|error| SyncIssue::new("local-state-unavailable", "local-cache", error, false))?;
+    let client = build_client(vault)
+        .map_err(|error| SyncIssue::new("sync-not-configured", "configure", error, false))?;
     let reads: Vec<_> = LEDGER_FILES
         .iter()
-        .map(|file| read_slot(&client, file, &key, &identity))
+        .map(|file| fetch_read(&client, file, &key, &identity))
         .collect();
-    let best = highest(&reads)?.map(|(_, e)| e.clone());
-    let warning = reads.iter().find_map(|r| match r {
-        Read::Unavailable(message) | Read::Invalid { message, .. } => {
-            Some(format!("部分云端文件检查未完成：{message}可重试。"))
-        }
+    let valid: Vec<_> = reads
+        .iter()
+        .filter_map(|read| match read {
+            FetchRead::Valid(envelope) => Some(envelope),
+            _ => None,
+        })
+        .collect();
+    if valid.len() == 2
+        && valid[0].metadata.revision == valid[1].metadata.revision
+        && valid[0] != valid[1]
+    {
+        return Err(SyncIssue::new(
+            "snapshot-revision-conflict",
+            "snapshot",
+            "云端同版本内容不一致，已保留本地缓存。",
+            false,
+        ));
+    }
+    let best = valid
+        .into_iter()
+        .max_by_key(|envelope| envelope.metadata.revision)
+        .cloned();
+    // An authenticated, newer incompatible payload is authoritative evidence;
+    // never silently adopt an older readable slot in its place.
+    if let Some(issue) = reads
+        .iter()
+        .filter_map(|read| match read {
+            FetchRead::Failed {
+                revision: Some(revision),
+                issue,
+            } if best
+                .as_ref()
+                .is_none_or(|best| *revision >= best.metadata.revision) =>
+            {
+                Some((*revision, issue))
+            }
+            _ => None,
+        })
+        .max_by_key(|(revision, _)| *revision)
+        .map(|(_, issue)| issue)
+    {
+        return Err(issue.clone());
+    }
+    let issue = reads.iter().find_map(|read| match read {
+        FetchRead::Failed { issue, .. } => Some(issue.clone()),
         _ => None,
     });
+    let warning = issue
+        .as_ref()
+        .map(|issue| format!("部分云端文件检查未完成：{}", issue.message));
     let Some(incoming) = best else {
-        if let Some(message) = warning {
-            return Err(step_err(STEP_CONTRACT, message));
+        if let Some(issue) = issue {
+            return Err(issue);
         }
         return Ok(LedgerFetchOutcome::CloudEmpty {
             has_cache: baseline > 0,
         });
     };
     tx.run(move || {
-        let local = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity)
-            .map_err(|error| step_err(STEP_KEY_CACHE, error))?;
-        if let Some(local_envelope) = &local {
-            if incoming.metadata.revision == local_envelope.metadata.revision {
-                if &incoming == local_envelope {
-                    let snapshot = snapshot_value(&incoming, &key, &identity)?;
-                    return Ok(LedgerFetchOutcome::Latest {
-                        revision: local_envelope.metadata.revision,
-                        snapshot,
-                        warning: warning.clone(),
-                    });
+        Ok((|| {
+            let local = ledger::read_cache(&dir.join(LEDGER_CACHE_FILE), &key, &identity).map_err(
+                |error| SyncIssue::new("local-state-unavailable", "local-cache", error, false),
+            )?;
+            if let Some(local_envelope) = &local {
+                if incoming.metadata.revision == local_envelope.metadata.revision {
+                    if &incoming == local_envelope {
+                        let snapshot =
+                            snapshot_value(&incoming, &key, &identity).map_err(|error| {
+                                SyncIssue::new("snapshot-invalid", "snapshot", error, false)
+                            })?;
+                        return Ok(LedgerFetchOutcome::Latest {
+                            revision: local_envelope.metadata.revision,
+                            snapshot,
+                            warning: warning.clone(),
+                            issue: issue.clone(),
+                        });
+                    }
+                    return Err(SyncIssue::new(
+                        "snapshot-revision-conflict",
+                        "accept",
+                        "云端同版本内容与本地缓存不一致，已保留本地缓存。",
+                        false,
+                    ));
                 }
-                return Err(step_err(
-                    STEP_CONTRACT,
-                    "云端同版本内容与本地缓存不一致，已保留本地缓存。".into(),
-                ));
+                if incoming.metadata.revision < local_envelope.metadata.revision {
+                    return Err(SyncIssue::new(
+                        "snapshot-rollback",
+                        "accept",
+                        "云端版本低于本地缓存，已保留本地缓存。",
+                        false,
+                    ));
+                }
             }
-            if incoming.metadata.revision < local_envelope.metadata.revision {
-                return Err(step_err(
-                    STEP_CONTRACT,
-                    "云端版本低于本地缓存，已保留本地缓存。".into(),
-                ));
-            }
-        }
-        let local_revision = local
-            .as_ref()
-            .map(|envelope| envelope.metadata.revision)
-            .unwrap_or(0);
-        let mut guard = RevisionGuard::from_trusted_checkpoint(identity.expected(), local_revision)
-            .map_err(|_| step_err(STEP_CONTRACT, "本地版本状态异常，请保留现场检查。".into()))?;
-        let plaintext = ZeroizingVec(
-            decrypt_and_advance(&incoming, &key, identity.expected(), &mut guard).map_err(
-                |_| {
-                    step_err(
-                        STEP_CONTRACT,
-                        "云端文件无法通过本配对认证，已保留本地缓存。".into(),
-                    )
-                },
-            )?,
-        );
-        ledger::parse_payload(&plaintext)
-            .map_err(|error| format!("【{STEP_CONTRACT}】{error}已保留本地缓存。"))?;
-        ledger::persist_cache(&dir.join(LEDGER_CACHE_FILE), &incoming)
-            .map_err(|error| step_err(STEP_LOCAL_SAVE, error))?;
-        let snapshot = snapshot_value(&incoming, &key, &identity)?;
-        Ok(LedgerFetchOutcome::Updated {
-            revision: incoming.metadata.revision,
-            snapshot,
-            warning,
-        })
+            let local_revision = local
+                .as_ref()
+                .map(|envelope| envelope.metadata.revision)
+                .unwrap_or(0);
+            let mut guard =
+                RevisionGuard::from_trusted_checkpoint(identity.expected(), local_revision)
+                    .map_err(|_| {
+                        SyncIssue::new(
+                            "local-state-unavailable",
+                            "local-cache",
+                            "本地版本状态异常，请保留现场检查。",
+                            false,
+                        )
+                    })?;
+            let plaintext = ZeroizingVec(
+                decrypt_and_advance(&incoming, &key, identity.expected(), &mut guard).map_err(
+                    |_| {
+                        SyncIssue::new(
+                            "snapshot-authentication-failed",
+                            "authenticate",
+                            "云端文件无法通过本配对认证，已保留本地缓存。",
+                            false,
+                        )
+                    },
+                )?,
+            );
+            ledger::parse_payload(&plaintext).map_err(|error| {
+                SyncIssue::new(
+                    "snapshot-invalid",
+                    "snapshot",
+                    format!("{error}已保留本地缓存。"),
+                    false,
+                )
+            })?;
+            ledger::persist_cache(&dir.join(LEDGER_CACHE_FILE), &incoming).map_err(|error| {
+                SyncIssue::new("local-state-unavailable", "cache-save", error, false)
+            })?;
+            let snapshot = snapshot_value(&incoming, &key, &identity)
+                .map_err(|error| SyncIssue::new("snapshot-invalid", "snapshot", error, false))?;
+            Ok(LedgerFetchOutcome::Updated {
+                revision: incoming.metadata.revision,
+                snapshot,
+                warning,
+                issue,
+            })
+        })())
     })
+    .map_err(|error| SyncIssue::new("local-state-unavailable", "transaction", error, false))?
 }
 
 /// Parse an authenticated envelope into the display JSON value.
@@ -840,24 +1029,45 @@ struct PairingQr {
     key: String,
 }
 
+#[allow(dead_code)] // String compatibility interface; native commands use diagnostics.
 pub fn accept_pairing<V: SecretVault>(
     vault: &V,
     payload: &str,
 ) -> Result<LedgerStatusSummary, String> {
+    accept_pairing_diagnostic(vault, payload).map_err(String::from)
+}
+
+pub fn accept_pairing_diagnostic<V: SecretVault>(
+    vault: &V,
+    payload: &str,
+) -> Result<LedgerStatusSummary, SyncIssue> {
+    let invalid = |message| SyncIssue::new("pairing-invalid", "pairing", message, false);
+    let storage =
+        |message| SyncIssue::new("local-state-unavailable", "pairing-storage", message, false);
     if payload.len() > ledger::MAX_PAIRING_BYTES {
-        return Err("配对内容过大。".into());
+        return Err(invalid("配对内容过大。".to_string()));
     }
-    let qr: PairingQr =
-        serde_json::from_str(payload).map_err(|_| "无法识别正式账本配对二维码。".to_string())?;
+    let kind: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|_| invalid("无法识别正式账本配对二维码。".into()))?;
+    if kind["kind"] != ledger::PAIRING_KIND {
+        return Err(SyncIssue::new(
+            "pairing-unsupported",
+            "pairing",
+            "二维码不是当前支持的正式账本配对，请在电脑显示配对码后重试。",
+            false,
+        ));
+    }
+    let qr: PairingQr = serde_json::from_str(payload)
+        .map_err(|_| invalid("无法识别正式账本配对二维码。".into()))?;
     if qr.kind != ledger::PAIRING_KIND {
-        return Err("二维码不属于正式账本配对。".into());
+        return Err(invalid("二维码不属于正式账本配对。".into()));
     }
     let identity = LedgerIdentity {
         ledger_id: qr.ledger_id,
         account_id: qr.account_id,
         key_generation: qr.key_generation,
     };
-    identity.validate()?;
+    identity.validate().map_err(invalid)?;
     let bytes = ZeroizingVec(
         STANDARD
             .decode(&qr.key)
@@ -866,37 +1076,54 @@ pub fn accept_pairing<V: SecretVault>(
                 (bytes.len() == 32)
                     .then_some(bytes)
                     .ok_or("配对密钥无效。".to_string())
-            })?,
+            })
+            .map_err(invalid)?,
     );
     let mut key_bytes = zeroize::Zeroizing::new([0u8; 32]);
     key_bytes.copy_from_slice(&bytes);
     let imported = ContentKey::from_bytes(*key_bytes);
     // Authenticate the fixed sample against the QR identity before any write.
-    let sample_plain = ZeroizingVec(
-        decrypt(&qr.sample, &imported, identity.expected())
-            .map_err(|_| "配对样例认证失败。".to_string())?,
-    );
+    let sample_plain = ZeroizingVec(decrypt(&qr.sample, &imported, identity.expected()).map_err(
+        |_| {
+            SyncIssue::new(
+                "pairing-authentication-failed",
+                "pairing",
+                "配对样例认证失败。",
+                false,
+            )
+        },
+    )?);
     if sample_plain.0.as_slice() != ledger::SAMPLE_PLAINTEXT {
-        return Err("配对样例不属于正式账本配对。".into());
+        return Err(invalid("配对样例不属于正式账本配对。".into()));
     }
     // Existing local identity/key are never replaced or reset.
-    if let Some(existing) = ledger::load_identity(vault)?
+    if let Some(existing) = ledger::load_identity(vault).map_err(storage)?
         && existing != identity
     {
-        return Err("本机已有另一组正式账本配对，拒绝覆盖。".into());
+        return Err(SyncIssue::new(
+            "pairing-foreign-identity",
+            "pairing",
+            "本机已有另一组正式账本配对，拒绝覆盖。",
+            false,
+        ));
     }
-    match ledger::load_key(vault)? {
+    match ledger::load_key(vault).map_err(storage)? {
         Some(existing) => {
             if existing.as_bytes() != imported.as_bytes() {
-                return Err("本机已有另一组正式账本密钥，拒绝覆盖。".into());
+                return Err(SyncIssue::new(
+                    "pairing-foreign-identity",
+                    "pairing",
+                    "本机已有另一组正式账本密钥，拒绝覆盖。",
+                    false,
+                ));
             }
         }
-        None => ledger::persist_key(vault, &imported)?,
+        None => ledger::persist_key(vault, &imported).map_err(storage)?,
     }
-    if ledger::load_identity(vault)?.is_none() {
-        ledger::persist_identity(vault, &identity)?;
+    if ledger::load_identity(vault).map_err(storage)?.is_none() {
+        ledger::persist_identity(vault, &identity).map_err(storage)?;
     }
-    summarize_ledger(vault, None)
+    summarize_ledger(vault, None).map_err(storage)
 }
 
 pub fn summarize_ledger<V: SecretVault>(
@@ -1038,30 +1265,48 @@ pub async fn ledger_create_pairing(app: tauri::AppHandle) -> Result<String, Stri
 pub async fn ledger_import_pairing(
     app: tauri::AppHandle,
     payload: String,
-) -> Result<LedgerStatusSummary, String> {
+) -> Result<LedgerStatusSummary, SyncIssue> {
     let payload = zeroize::Zeroizing::new(payload);
     tauri::async_runtime::spawn_blocking(move || {
         let vault = SyncVault(app.platform());
-        accept_pairing(&vault, &payload)
+        accept_pairing_diagnostic(&vault, &payload)
     })
     .await
-    .map_err(|_| "正式账本配对导入未能完成。".to_string())?
+    .map_err(|_| {
+        SyncIssue::new(
+            "native-task-failed",
+            "pairing",
+            "正式账本配对导入未能完成。",
+            true,
+        )
+    })?
 }
 
 #[tauri::command]
-pub async fn ledger_fetch(app: tauri::AppHandle) -> Result<LedgerFetchOutcome, String> {
+pub async fn ledger_fetch(app: tauri::AppHandle) -> Result<LedgerFetchOutcome, SyncIssue> {
     let network = app.state::<LedgerState>().network.clone();
     let _network = network.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
-        let directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "无法定位应用数据目录。".to_string())?;
+        let directory = app.path().app_data_dir().map_err(|_| {
+            SyncIssue::new(
+                "local-state-unavailable",
+                "local-cache",
+                "无法定位应用数据目录。",
+                false,
+            )
+        })?;
         let tx = LedgerAppTransaction(&app);
-        fetch_flow(&SyncVault(app.platform()), &directory, &tx)
+        fetch_flow_diagnostic(&SyncVault(app.platform()), &directory, &tx)
     })
     .await
-    .map_err(crate::probe_sync::sync_join_failure)?
+    .map_err(|error| {
+        SyncIssue::new(
+            "native-task-failed",
+            "download",
+            crate::probe_sync::sync_join_failure(error),
+            true,
+        )
+    })?
 }
 
 #[derive(Debug, Serialize)]
@@ -1987,6 +2232,202 @@ mod tests {
             again,
             LedgerFetchOutcome::Latest { revision: 5, .. }
         ));
+    }
+
+    #[test]
+    fn fetch_rollback_has_its_own_diagnostic_and_preserves_cache() {
+        let (files, _, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let cached = seal(&vault, &valid_payload(), 5);
+        ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &cached).unwrap();
+        let before = fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap();
+        files.lock().unwrap().insert(
+            format!("/{LEDGER_REMOTE_DIRECTORY}/{}", LEDGER_FILES[0]),
+            seal(&vault, &valid_payload(), 4).to_json().unwrap(),
+        );
+        let issue = fetch_flow_diagnostic(&vault, dir.path(), &InlineTx).unwrap_err();
+        assert_eq!(issue.code, "snapshot-rollback");
+        assert_eq!(issue.stage, "accept");
+        assert_eq!(
+            before,
+            fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap()
+        );
+    }
+
+    #[test]
+    fn fetch_http_failures_keep_status_and_do_not_claim_cloud_empty() {
+        for (status, code, retryable) in [
+            (401, "auth-unauthorized", false),
+            (403, "access-forbidden", false),
+            (409, "cloud-path-conflict", false),
+            (429, "rate-limited", true),
+            (500, "service-unavailable", true),
+            (503, "service-unavailable", true),
+        ] {
+            let (base, seen) = spawn_server(Arc::new(move |_| MockResponse {
+                status,
+                headers: vec![],
+                body: vec![],
+                truncate_body_after: None,
+            }));
+            let vault = seeded_vault(&base);
+            let dir = tempfile::tempdir().unwrap();
+            let key = ledger::load_key(&vault).unwrap().unwrap();
+            let identity = ledger::load_identity(&vault).unwrap().unwrap();
+            let cached = encrypt(
+                &valid_payload(),
+                &key,
+                SnapshotMetadata {
+                    format_version: 1,
+                    ledger_id: identity.ledger_id.clone(),
+                    account_id: identity.account_id.clone(),
+                    key_generation: identity.key_generation,
+                    revision: 7,
+                },
+            )
+            .unwrap();
+            ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &cached).unwrap();
+            let before = fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap();
+            let error = fetch_flow_diagnostic(&vault, dir.path(), &InlineTx).unwrap_err();
+            assert_eq!(
+                (error.code, error.http_status, error.retryable),
+                (code, Some(status), retryable)
+            );
+            let serialized = serde_json::to_value(&error).unwrap();
+            assert_eq!(serialized["httpStatus"], status);
+            assert!(serialized.get("http_status").is_none());
+            assert_eq!(
+                before,
+                fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap()
+            );
+            assert!(seen.lock().unwrap().iter().all(|r| r.method == "GET"));
+            if status == 403 || status == 409 {
+                assert!(!error.message.contains("密码"));
+                assert!(!error.message.contains("首次发布"));
+            }
+        }
+    }
+
+    #[test]
+    fn fetch_both_404_are_cloud_empty_with_existing_cache_preserved() {
+        let (_, seen, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let cached = seal(&vault, &valid_payload(), 3);
+        ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &cached).unwrap();
+        let before = fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap();
+        assert!(matches!(
+            fetch_flow_diagnostic(&vault, dir.path(), &InlineTx).unwrap(),
+            LedgerFetchOutcome::CloudEmpty { has_cache: true }
+        ));
+        assert_eq!(
+            before,
+            fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap()
+        );
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn fetch_old_snapshot_requires_computer_publish_and_corruption_is_separate() {
+        for (payload, code) in [
+            (legacy_payload(), "snapshot-older-schema"),
+            (
+                br#"{"schemaVersion":3,"snapshotKind":"account-ledger-view"}"#.to_vec(),
+                "snapshot-invalid",
+            ),
+        ] {
+            let (files, _, base) = slot_server(Arc::default());
+            let vault = seeded_vault(&base);
+            let dir = tempfile::tempdir().unwrap();
+            let good = seal(&vault, &valid_payload(), 4);
+            ledger::persist_cache(&dir.path().join(LEDGER_CACHE_FILE), &good).unwrap();
+            let before = fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap();
+            for (file, envelope) in [
+                (LEDGER_FILES[0], good),
+                (LEDGER_FILES[1], seal(&vault, &payload, 5)),
+            ] {
+                files.lock().unwrap().insert(
+                    format!("/{LEDGER_REMOTE_DIRECTORY}/{file}"),
+                    envelope.to_json().unwrap(),
+                );
+            }
+            assert_eq!(
+                fetch_flow_diagnostic(&vault, dir.path(), &InlineTx)
+                    .unwrap_err()
+                    .code,
+                code
+            );
+            assert_eq!(
+                before,
+                fs::read(dir.path().join(LEDGER_CACHE_FILE)).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn pairing_diagnostics_reject_unsupported_and_foreign_without_writes() {
+        let creator = MemorySlots::default();
+        initialize(&creator).unwrap();
+        let receiver = MemorySlots::default();
+        initialize(&receiver).unwrap();
+        let before = create_pairing_payload(&receiver).unwrap();
+        let identity = ledger::load_identity(&receiver).unwrap();
+        let key = ledger::load_key(&receiver).unwrap().unwrap();
+        assert_eq!(
+            accept_pairing_diagnostic(&receiver, r#"{"kind":"future-pairing-v9"}"#)
+                .unwrap_err()
+                .code,
+            "pairing-unsupported"
+        );
+        assert_eq!(
+            accept_pairing_diagnostic(&receiver, &create_pairing_payload(&creator).unwrap())
+                .unwrap_err()
+                .code,
+            "pairing-foreign-identity"
+        );
+        assert_eq!(ledger::load_identity(&receiver).unwrap(), identity);
+        assert_eq!(
+            ledger::load_key(&receiver).unwrap().unwrap().as_bytes(),
+            key.as_bytes()
+        );
+        assert!(accept_pairing_diagnostic(&receiver, &before).is_ok());
+    }
+
+    #[test]
+    fn fetch_never_accepts_stale_slot_when_newer_authenticated_schema_is_unsupported() {
+        let (files, _, base) = slot_server(Arc::default());
+        let vault = seeded_vault(&base);
+        let dir = tempfile::tempdir().unwrap();
+        let identity = ledger::load_identity(&vault).unwrap().unwrap();
+        let key = ledger::load_key(&vault).unwrap().unwrap();
+        let mut newer: serde_json::Value = serde_json::from_slice(&valid_payload()).unwrap();
+        newer["schemaVersion"] = serde_json::json!(4);
+        for (file, revision, payload) in [
+            (LEDGER_FILES[0], 4, valid_payload()),
+            (LEDGER_FILES[1], 5, newer.to_string().into_bytes()),
+        ] {
+            let envelope = encrypt(
+                &payload,
+                &key,
+                SnapshotMetadata {
+                    format_version: 1,
+                    ledger_id: identity.ledger_id.clone(),
+                    account_id: identity.account_id.clone(),
+                    key_generation: identity.key_generation,
+                    revision,
+                },
+            )
+            .unwrap();
+            files.lock().unwrap().insert(
+                format!("/{LEDGER_REMOTE_DIRECTORY}/{file}"),
+                envelope.to_json().unwrap(),
+            );
+        }
+        let error = fetch_flow(&vault, dir.path(), &InlineTx)
+            .expect_err("newer schema must block stale-slot acceptance");
+        assert!(error.contains("更新手机"), "{error}");
+        assert_eq!(cached_revision(&vault, dir.path()), 0);
     }
 
     #[test]

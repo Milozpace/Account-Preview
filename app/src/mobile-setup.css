@@ -1,4 +1,21 @@
 /* First-use surfaces share the phone palette, with one aligned primary action. */
+.connection-feedback{--issue-color:var(--accent);margin:8px 0 22px;padding:16px;border:1px solid var(--line);border-inline-start:3px solid var(--issue-color);border-radius:12px;font-size:13px;line-height:1.75;min-width:0;}
+.connection-feedback[data-severity=warning]{--issue-color:#9c7738;}
+.connection-feedback[data-severity=error]{--issue-color:#b65d50;}
+.connection-feedback p{margin:0;overflow-wrap:anywhere;}
+.connection-feedback .issue-heading{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+#main .connection-feedback .issue-heading h3{margin:0;font-size:15px;line-height:1.6;font-weight:550;}
+.connection-feedback .issue-severity{color:var(--issue-color);font-size:11px;font-weight:600;white-space:nowrap;}
+.connection-feedback .issue-cache{margin-top:8px;color:var(--muted);}
+.connection-feedback .issue-action{min-height:44px;margin:8px 0 0;padding:6px 0;color:var(--accent);text-align:start;}
+.connection-feedback details{margin-top:8px;color:var(--muted);}
+.connection-feedback summary{min-height:44px;display:list-item;cursor:pointer;padding:8px 0;box-sizing:border-box;}
+.connection-feedback dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:4px 0 10px;font-size:12px;}
+.connection-feedback dd{margin:0;overflow-wrap:anywhere;}
+.connection-feedback .issue-update-help{margin:4px 0 12px;padding:12px;border-radius:8px;background:var(--ui-hover);}
+.connection-feedback .issue-release-address{font-size:12px;margin-top:6px;user-select:text;}
+html[data-theme=dark] .connection-feedback[data-severity=warning]{--issue-color:#d5b36f;}
+html[data-theme=dark] .connection-feedback[data-severity=error]{--issue-color:#e49a8f;}
 html[data-layout=mobile] .setup-welcome{padding:52px 20px 38px;text-align:center;min-height:340px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
 html[data-layout=mobile] .setup-emblem{display:grid;place-items:center;width:56px;height:56px;margin:0 auto 22px;border-radius:18px;background:var(--ui-hover,#e9ede6);color:var(--accent);}
 html[data-layout=mobile] .setup-emblem .ui-icon{width:27px;height:27px;stroke-width:1.5;}
@@ -26,10 +43,10 @@ html[data-layout=mobile] .setup-help{max-width:360px;margin:22px auto 0;color:va
 html[data-layout=mobile] .setup-help summary{cursor:pointer;min-height:44px;padding:8px 0;box-sizing:border-box;}
 html[data-layout=mobile] .setup-help p{margin:0 0 10px;}
 html[data-layout=mobile] .setup-complete{text-align:center;color:var(--muted);font-size:12px;margin:0 0 24px;}
-html[data-layout=mobile] .connection-feedback{margin:8px 0 22px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;font-size:13px;line-height:1.7;}
+html[data-layout=mobile] .connection-feedback{padding:14px 16px;}
 html[data-layout=mobile] .connection-feedback p{margin:0;overflow-wrap:anywhere;}
 html[data-layout=mobile] .connection-feedback details{margin-top:8px;color:var(--muted);}
-html[data-layout=mobile] .connection-feedback summary{min-height:32px;cursor:pointer;}
+html[data-layout=mobile] .connection-feedback summary{min-height:44px;}
 html[data-layout=mobile] .status-connection{margin-left:auto;min-height:36px;padding:0 4px;color:var(--muted);font-size:11px;}
 html[data-layout=mobile] #status-bar{align-items:center;flex-wrap:nowrap;}
 html[data-layout=mobile][data-theme=dark] .setup-primary{background:#9bb2a4;color:#17211b;}

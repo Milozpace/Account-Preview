@@ -12,6 +12,7 @@ mod probe;
 mod probe_cache;
 mod probe_sync;
 mod probe_transaction;
+mod sync_issue;
 mod tls;
 mod webdav;
 

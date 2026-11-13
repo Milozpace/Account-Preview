@@ -47,12 +47,12 @@ export function homeHtml(month: AppMonth, showIncome = true): string {
     <div class="hero-summary"><span class="eyebrow">月度观察</span><button type="button" class="hero-amount" data-action="all-bills"><span>个人净消费</span><strong><small>¥</small> ${money(summary.personalCents)}</strong><span class="hero-detail">查看消费明细 ${arrow}</span></button>
     <div class="hero-secondary"><div><span>${showIncome ? '本月收入' : '本月新增额度'}</span><strong>¥ ${showIncome ? money(summary.incomeCents) : value(summary.monthlyBudgetCents)}</strong></div><div><span>各池可用合计</span><strong>¥ ${value(summary.availableCents)}</strong></div></div></div>
     ${!active?'<p class="mechanism-note">该月未设预算，仍按用途统计消费；可在电脑版“四池预算”设置额度。</p>':''}
+    ${leads}
     ${sectionHeading('四个资金池')}<div class="mobile-pools">${month.pools.filter(pool=>['operation','free','travel','growth'].includes(pool.id)).map(pool=>{
       const over=active&&pool.overrunCents>0;
       return `<button type="button" class="mobile-pool ${over?'is-overrun':''}" data-pool="${pool.id}" style="--pool-color:${poolColors[pool.id]}"><div class="pool-row-top"><span class="mobile-pool-name"><i></i>${e(pool.name)}池</span><span class="pool-balance"><small>${over?'超支':'剩余额度'}</small><strong>¥ ${value(over?pool.overrunCents:pool.availableCents)}</strong>${arrow}</span></div><div class="pool-track ${over?'is-overrun':''}" aria-hidden="true"><i style="width:${boundedWidth(active?pool.usageRatio:null)}%"></i></div><div class="pool-row-bottom"><span>已用 ¥ ${money(pool.spentCents)}${pool.spentCents<0?' · 负调整':''}</span><span>${percent(active?pool.usageRatio:null)}</span></div></button>`;
     }).join('')}</div>
     <div class="safety-row"><span><i class="safety-mark" aria-hidden="true">◇</i> 安全积累</span><strong>¥ ${value(summary.safetyCents)}</strong></div>
-    ${leads}
     ${sectionHeading('最近消费',more)}<div class="recent-records">${recent.length?recent.map(record=>dashboardRecordRow(record)).join(''):empty('这个月还没有消费记录','同步后会在这里显示。')}</div>
   </section>`;
 }

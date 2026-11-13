@@ -273,6 +273,29 @@ class ProductUpdateTests(ProductUpdateFixture, unittest.TestCase):
                     {'tag_name':'v9.0.0-rc.1','draft':False}]
         self.assertEqual(updater.select_release(candidates)['tag_name'],'v0.4.0-rc.1')
 
+    def test_stable_prefers_latest_published_series_and_ignores_drafts(self):
+        choices=[{'tag_name':'v0.4.0-preview.5','draft':False},
+                 {'tag_name':'v0.4.0-rc.1','draft':False},
+                 {'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                 {'tag_name':'v0.4.1','draft':True,'prerelease':False},
+                 {'tag_name':'v9.0.0','draft':False,'prerelease':False}]
+        self.assertEqual(updater.select_release(choices)['tag_name'],'v9.0.0')
+
+    def test_stable_discovery_works_without_historical_preview_and_rejects_mislabeled_release(self):
+        choices=[{'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                 {'tag_name':'v0.4.1','draft':False,'prerelease':False},
+                 {'tag_name':'v9.0.0','draft':False,'prerelease':True}]
+        self.assertEqual(updater.select_release(choices)['tag_name'],'v0.4.1')
+
+    def test_historical_preview_does_not_hide_later_stable_patches(self):
+        choices=[{'tag_name':'v0.4.0-preview.5','draft':False},
+                 {'tag_name':'v0.4.0','draft':False,'prerelease':False},
+                 {'tag_name':'v0.4.1','draft':False,'prerelease':False},
+                 {'tag_name':'v0.5.0','draft':False,'prerelease':False},
+                 {'tag_name':'v0.4.2-rc.1','draft':False,'prerelease':True},
+                 {'tag_name':'v9.0.0','draft':False,'prerelease':False}]
+        self.assertEqual(updater.select_release(choices)['tag_name'],'v9.0.0')
+
     def test_personal_remote_route_stops_before_network_and_requires_local_package(self):
         with patch.object(updater,'gh_json') as network:
             with self.assertRaisesRegex(ValueError,'本地|release-dir'):

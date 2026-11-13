@@ -22,6 +22,7 @@ import { mountMobileMotion, type MobileTransition } from './mobile-motion';
 import { loadMotionPreference, saveMotionPreference, prefersReducedMotion, type MotionPreference } from './mobile-preferences';
 import {mobileSyncHtml} from './mobile-sync';
 import {setupPhase} from './mobile-setup';
+import {syncIssue,issueView,syncIssueHtml,type SyncIssue} from './sync-issue';
 import {MobilePickers} from './mobile-picker';
 import './mobile-picker.css';
 import './mobile-setup.css';
@@ -39,7 +40,7 @@ import {showIncome} from './delivery-profile';
 
 interface LedgerStatusSummary { initialized:boolean;publishEnabled:boolean;cachedRevision:number|null;pendingRevision:number|null;lastPublishedRevision:number|null }
 interface LedgerCacheOutcome { revision:number;snapshot:AppSnapshot }
-type LedgerFetchOutcome = {kind:'updated'|'latest';revision:number;snapshot:AppSnapshot;warning?:string}|{kind:'cloud-empty';hasCache:boolean};
+type LedgerFetchOutcome = {kind:'updated'|'latest';revision:number;snapshot:AppSnapshot;warning?:string;issue?:SyncIssue}|{kind:'cloud-empty';hasCache:boolean};
 interface ProbeSyncSummary {configured:boolean;paired:boolean;pendingRevision:number|null}
 interface ProbeStatus {platform:string;cached:boolean;revision:number|null;syntheticRecords:number;storage:string;records:{id:string;label:string;amountMinor:number}[]|null}
 type SnapshotSource='none'|'cache'|'cloud'|'sample'|'file'|'local';
@@ -59,6 +60,7 @@ const state={
   chartDate:null as string|null,chartRecord:null as string|null,
   editingConnection:false,editingPairing:false,probeSummaryLoaded:false,checkingCloud:false,exportMonth:'',
   setupError:'',connectionReadError:'',
+  syncIssue:null as SyncIssue|null,showUpdateHelp:false,
 };
 const exportSession=new ExportSession();
 const uploadSession=new BillUploadSession();
@@ -164,7 +166,7 @@ function detailHtml():string {
 function poolLabel(id:string):string {return ({operation:'运行',free:'随心',travel:'旅行',growth:'成长',unknown:'待归类'} as Record<string,string>)[id]??id;}
 function settingsPageHtml():string {
   const themePreference=loadThemePreference();
-  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,config:state.desktopConfig,version:state.version,budgetContent:budgetSettingsHtml(budgetSession),syncContent:desktopSyncHtml(ledgerStatusHtml(),credentialsHtml(),pairingHtml(),state.busy||state.checkingCloud,isTauri()&&!state.preview)});
+  if(!mobile())return desktopSettingsHtml({section:state.settingsSection,theme:themePreference,config:state.desktopConfig,version:state.version,budgetContent:budgetSettingsHtml(budgetSession),syncContent:desktopSyncHtml(ledgerStatusHtml()+(state.syncIssue?syncIssueHtml(state.syncIssue,Boolean(state.snapshot),state.showUpdateHelp):''),credentialsHtml(),pairingHtml(),state.busy||state.checkingCloud,isTauri()&&!state.preview)});
   const appearance=`<label for="theme-preference">外观</label><select id="theme-preference">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<option value="${value}" ${themePreference===value?'selected':''}>${label}</option>`).join('')}</select>`;
   return `<section class="settings"><div class="card-block"><h2>显示与操作</h2>${appearance}</div></section>`;
 }
@@ -393,6 +395,9 @@ main.addEventListener('click',event=>{
   const data=button.dataset;
   if(data.action==='clear-upload-failures'){uploadSession.clearFailures();render();return;}
   if(data.action==='retry-setup'){void retryPhoneSetup();return;}
+  if(data.action==='sync-edit-connection'){state.editingConnection=true;render();document.querySelector<HTMLInputElement>('#account')?.focus?.();return;}
+  if(data.action==='sync-edit-pairing'){state.editingPairing=true;render();return;}
+  if(data.action==='sync-update-help'){state.showUpdateHelp=!state.showUpdateHelp;render();return;}
   if(data.settingsTab){selectSettingsSection(data.settingsTab as SettingsSection);return;}
   if(data.action==='retry-connection-status'){void refreshDesktopSettings();return;}
   if(data.record){open({view:'detail',recordId:data.record});return;}
@@ -456,6 +461,7 @@ async function refreshDesktop():Promise<void>{
     state.desktopWarning=[result.sourceChanged?'账本随后有更新，请再次同步展示。':'',result.monthChanged?'月份随后已变化，请再次同步展示。':'',result.warning??''].filter(Boolean).join(' ');
     state.message=result.appPublish.published?'本机展示已更新 · 云端发布已确认':result.appPublish.skipped?'本机展示已更新 · 云端发布未启用':`本机展示已更新 · 云端发布未完成：${result.appPublish.error||result.appPublish.reason||'可稍后重试'}`;
     state.messageTone=result.appPublish.published||result.appPublish.skipped?'':'tone-warn';
+    if(result.appPublish.published){state.syncIssue=null;state.setupError='';state.showUpdateHelp=false;}
   }).catch(error=>{state.message=`${shortError(error,'本机展示更新失败。')} 已保留上次有效数据。`;state.messageTone='tone-error';});render();
 }
 
@@ -486,7 +492,7 @@ function pairingHtml(): string {
 function syncHtml(): string {
   const pairing=pairingHtml();
   if(!mobile()){state.settingsSection='sync';return settingsPageHtml();}
-  if(mobile())return mobileSyncHtml({initialized:state.ledger?.initialized??null,configured:state.probeConfigured,connectionKnown:state.probeSummaryLoaded,hasData:Boolean(state.snapshot),source:state.source,revision:state.revision,checking:state.checkingCloud,warning:[state.messageTone?state.message:'',coverageNote(state.snapshot)].filter(Boolean).join(' '),editingConnection:state.editingConnection,editingPairing:state.editingPairing,setupError:state.setupError},credentialsHtml(),pairing);
+  if(mobile())return mobileSyncHtml({initialized:state.ledger?.initialized??null,configured:state.probeConfigured,connectionKnown:state.probeSummaryLoaded,hasData:Boolean(state.snapshot),source:state.source,revision:state.revision,checking:state.checkingCloud,warning:[state.messageTone?state.message:'',coverageNote(state.snapshot)].filter(Boolean).join(' '),editingConnection:state.editingConnection,editingPairing:state.editingPairing,setupError:state.setupError,issue:state.syncIssue,showUpdateHelp:state.showUpdateHelp},credentialsHtml(),pairing);
   return '';
 }
 
@@ -526,28 +532,33 @@ function applySnapshot(snapshot: AppSnapshot, source: SnapshotSource, revision: 
 }
 
 function shortError(error: unknown, fallback: string): string {
-  return typeof error === 'string' && error.length < 200 ? error : fallback;
+  const message=syncIssue(error).message;
+  return message.length<200?message:fallback;
 }
 
 async function doFetch(operation: string): Promise<void> {
   if(state.preview)return;
   if(state.android&&!phoneReady()){if(state.view==='sync')render();return;}
   state.setupError='';
+  state.syncIssue=null;state.showUpdateHelp=false;
   state.checkingCloud=true;if(state.view==='sync'||state.view==='settings'||state.android)render();
   try {
     const outcome = await invoke<LedgerFetchOutcome>('ledger_fetch');
     if (outcome.kind === 'cloud-empty') {
+      state.syncIssue={code:'cloud-empty',stage:'download',message:'云端尚未找到可用账单文件。',retryable:false};
       if(state.android&&state.snapshot)state.source='cache';
       state.message = outcome.hasCache
         ? `${operation}：云端还没有发布文件，已保留本地缓存。`
         : `${operation}：云端还没有发布文件。请先在电脑上发布，或在手机完成配对。`;
       state.messageTone = state.android?'':'tone-warn';
     } else if (state.source === 'local') {
+      state.syncIssue=outcome.issue||(outcome.warning?syncIssue(outcome.warning):null);
       // A cloud check never replaces the desktop's authoritative local view.
       const matches=sameSnapshotContent(state.snapshot,outcome.snapshot);
       state.message=outcome.warning|| (matches?`云端已确认相同内容 · 第 ${outcome.revision} 版。`:'云端内容与本机不同，继续显示本机快照。');
       state.messageTone=outcome.warning||!matches?'tone-warn':'';
     } else if (outcome.warning) {
+      state.syncIssue=outcome.issue||syncIssue(outcome.warning);
       // A partially verified download is displayed as cache, never as a
       // cloud-confirmed version.
       applySnapshot(outcome.snapshot, 'cache', outcome.revision);
@@ -559,7 +570,8 @@ async function doFetch(operation: string): Promise<void> {
       state.messageTone = '';
     }
   } catch (error) {
-    state.message = `${shortError(error, `${operation}未能完成。`)} ${state.snapshot?'已保留当前数据':'尚未下载账单'}，可重试。`;
+    state.syncIssue=syncIssue(error);
+    state.message = `${issueView(state.syncIssue).title}。${state.snapshot?'已保留当前数据。':'尚未下载账单。'}`;
     state.messageTone = 'tone-error';
   } finally {
     state.checkingCloud=false;
@@ -707,19 +719,21 @@ async function onShowPairing(): Promise<void> {
 async function onScanPairing(): Promise<void> {
   if(state.busy||state.preview||!state.android||!isTauri())return;
   state.setupError='';
+  state.syncIssue=null;
   let paired = false;
   await withBusy(async () => {
     let payload = '';
     try {
       let permission = await checkPermissions();
       if (permission !== 'granted') permission = await requestPermissions();
-      if (permission !== 'granted') throw new Error('camera unavailable');
+      if (permission !== 'granted') throw {code:'camera-permission',stage:'pairing',message:'相机访问权限未获准。',retryable:false};
       const scanned = await pairingScanner.run();
       if(!scanned)return;
       payload = scanned.content;
       scanned.content = '';
-    } catch {
-      throw '扫码未完成。请允许相机访问，或取消后重试。';
+    } catch(error) {
+      if(error&&typeof error==='object'&&'code' in error)throw error;
+      throw {code:'camera-scan-failed',stage:'pairing',message:'相机扫码未能完成，请取消后重试。',retryable:true};
     }
     try {
       state.ledger = await invoke<LedgerStatusSummary>('ledger_import_pairing', { payload });
@@ -728,6 +742,7 @@ async function onScanPairing(): Promise<void> {
       payload = '';
     }
   }).catch((error) => {
+    state.syncIssue=syncIssue(error);
     state.setupError=shortError(error,'扫码配对未能完成。');
     const target = document.querySelector<HTMLElement>('#pair-status');
     if (target) target.textContent = shortError(error, '扫码配对未能完成。');
@@ -746,6 +761,7 @@ async function onSyncSubmit(event: Event): Promise<void> {
   event.preventDefault();
   if(state.busy||state.preview||(state.android&&!state.ledger?.initialized))return;
   state.setupError='';
+  state.syncIssue=null;
   const accountInput = document.querySelector<HTMLInputElement>('#account');
   const passwordInput = document.querySelector<HTMLInputElement>('#password');
   const statusLine = document.querySelector<HTMLElement>('#sync-status');
@@ -767,6 +783,7 @@ async function onSyncSubmit(event: Event): Promise<void> {
     state.connectionReadError='';
     configured = true;
   }).catch((error) => {
+    state.syncIssue=syncIssue(error);
     if(state.android){state.setupError=shortError(error,'同步凭据保存未能完成。');statusLine.textContent=state.setupError;}
     else{state.setupError=shortError(error,'同步凭据保存未能完成。');state.message=state.setupError;state.messageTone='tone-error';statusLine.textContent=state.message;}
   });
