@@ -50,3 +50,10 @@ dashboard/dist/
 
 # Root-level tooling caches (created when running vitest/npx from the repo root).
 /node_modules/
+
+# Internal plans and verification records belong in ignored local/.
+/docs/superpowers/
+/docs/*验收.md
+/docs/*复验.md
+/docs/本轮验证记录.md
+/docs/交付计划.md
