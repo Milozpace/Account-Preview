@@ -1,5 +1,7 @@
 # Bootstrap 输出重定向复验（2026-11-02）
 
+> 历史资料。保留当时的计划、版本和验收范围，后续状态以实际发布/安装证据为准。当前操作入口见[文档导航](README.md)。
+
 结论：当前 `bootstrap.ps1` 已在执行 uv 的局部范围内使用 `ErrorActionPreference=Continue`，无需再修改启动器。Windows PowerShell 5.1 下，`2>&1 | Select-Object -Last 20` 的受控回归与真实全新环境配置均通过。原生命令非零退出仍按原退出码报告，退出后恢复调用方的错误偏好和 uv 环境变量。
 
 ## 原因与回归
@@ -47,7 +49,7 @@ $bootstrapExit = $LASTEXITCODE
 python -m unittest discover -s tests -p "test_bootstrap*.py" -v
 ```
 
-结果：**28 tests，全部通过**（包括 2 个新增专用回归）。本机证据保留于 `C:\Project\Account-Preview-evidence\bootstrap-redirect-20261102`，不提交：
+结果：**28 tests，全部通过**（包括 2 个新增专用回归）。本机证据保留在该轮独立 evidence 目录，具体路径由本机开发记录保存，不提交。
 
 - `bootstrap-tests.log`：相关回归完整结果。
 - `controlled-summary.json`、`controlled-exit-0.log`、`controlled-exit-7.log`、`controlled-no-guard.log`：受控原生 stderr 和负对照的实际输出。

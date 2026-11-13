@@ -1,5 +1,7 @@
 # Preview 开发、同步、发布与更新实施计划
 
+> 历史设计与实施记录。文中的候选编号、约定和勾选反映当时任务，当前操作按[文档导航](../../README.md)选择正式入口。
+
 > **For agentic workers:** 使用 subagent-driven-development，按任务独立实现并在集成后审查。用户已批准本方案，连续实施；不创建 Release，不改变仓库可见性。发布说明由用户撰写。
 
 **Goal:** Preview 成为共享源码来源；现有个人 Account 和新用户由 Agent 更新已发布版本，保护各自数据、规则、凭据和应用身份。

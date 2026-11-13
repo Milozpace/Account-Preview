@@ -1,5 +1,7 @@
 # Cloud namespace isolation implementation plan
 
+> 历史设计与实施记录。文中的候选编号、约定和勾选反映当时任务，当前操作按[文档导航](../../README.md)选择正式入口。
+
 > **For agentic workers:** Execute this authorized repair in the current session; the independent bootstrap redirection verification is delegated separately. Preserve installed identities, owner data, pairing and publication gates. No push, release upload or tag creation.
 
 **Goal:** Allow preview and personal installations to use the same WebDAV account without addressing one another's cloud files.
