@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "生活账本",
+        "title": "Account",
         "width": 1180,
         "height": 800,
         "resizable": true,
@@ -40,8 +40,10 @@
       "debugApplicationIdSuffix": ".debug"
     },
     "macOS": {
+      "infoPlist": "Info.plist",
       "signingIdentity": "-",
       "minimumSystemVersion": "11.0"
-    }
+    },
+    "windows": {"nsis": {"installerHooks": "installer-hooks.nsh"}}
   }
 }

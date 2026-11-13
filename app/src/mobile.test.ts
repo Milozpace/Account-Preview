@@ -6,6 +6,12 @@ import type { AppMonth } from './bills';
 
 const month = fixture.months[0] as unknown as AppMonth;
 describe('mobile presentation', () => {
+  it('places auxiliary spending scopes below the hero and above pools',()=>{
+    const html=homeHtml(month);
+    expect(html.indexOf('overview-secondary')).toBeGreaterThan(html.indexOf('hero-secondary'));
+    expect(html.indexOf('overview-secondary')).toBeLessThan(html.indexOf('四个资金池'));
+    expect(html.indexOf('安全积累')).toBeGreaterThan(html.indexOf('mobile-pools'));
+  });
   it('keeps personal budget overview and hides income entry',()=>{
     expect(homeHtml(month,false)).toContain('本月新增额度');
     expect(homeHtml(month,false)).not.toContain('本月收入');

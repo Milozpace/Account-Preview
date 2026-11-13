@@ -10,6 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuildProfileTests(unittest.TestCase):
+    def test_android_display_name_survives_profile_preparation(self):
+        module=self.module()
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);self.android_fixture(root)
+            strings=root/'app/src-tauri/gen/android/app/src/main/res/values/strings.xml'
+            strings.parent.mkdir(parents=True,exist_ok=True)
+            strings.write_text('<resources><string name="app_name">Account Preview</string><string name="main_activity_title">old</string><string name="owner">retained</string></resources>',encoding='utf-8')
+            module.prepare(root,'preview','android-arm64',apply=True,isolated_build=True)
+            import xml.etree.ElementTree as ET
+            values={item.attrib['name']:item.text for item in ET.parse(strings).getroot()}
+            self.assertEqual(values['app_name'],'Account')
+            self.assertEqual(values['main_activity_title'],'Account')
+            self.assertEqual(values['owner'],'retained')
+            self.assertEqual(json.loads((root/'app/src-tauri/tauri.conf.json').read_text())['identifier'],'com.account.preview')
     def android_fixture(self, root):
         for name in ['app/package.json','app/package-lock.json','app/src-tauri/Cargo.toml','app/src-tauri/Cargo.lock',
                      'dashboard/package.json','dashboard/package-lock.json','pyproject.toml','app/src/delivery-profile.ts']:

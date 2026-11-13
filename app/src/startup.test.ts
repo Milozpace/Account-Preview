@@ -326,6 +326,35 @@ describe('native first run without pairing', () => {
     invokeState.seen = [];
   });
 
+  it('renders a typed incompatible-schema failure and actionable update help without discarding cache',async()=>{
+    invokeState.impl=command=>{
+      if(command==='ledger_status_command')return Promise.resolve(LEDGER_READY);
+      if(command==='sync_status')return Promise.resolve({configured:true,paired:true});
+      if(command==='ledger_cache')return Promise.resolve({revision:2,snapshot:CACHED_SNAPSHOT});
+      if(command==='ledger_fetch')return Promise.reject({code:'snapshot-newer-schema',stage:'snapshot',message:'需要新版消费者',retryable:false});
+      if(command==='app_version')return Promise.resolve('0.4.0-test');
+      return Promise.resolve(null);
+    };
+    await import('./main');await flush(30);goto('sync');await flush();
+    expect(mainHtml()).toContain('请更新手机版 Account');
+    activateRenderedButton('data-action','sync-update-help');
+    expect(mainHtml()).toContain('无需卸载或重新配对');
+    goto('home');expect(mainHtml()).toContain('个人净消费');
+  });
+
+  it('keeps a cloud-empty result visible as a first-sync next step',async()=>{
+    invokeState.impl=command=>{
+      if(command==='ledger_status_command')return Promise.resolve(LEDGER_READY);
+      if(command==='sync_status')return Promise.resolve({configured:true,paired:true});
+      if(command==='ledger_cache')return Promise.resolve(null);
+      if(command==='ledger_fetch')return Promise.resolve({kind:'cloud-empty',hasCache:false});
+      return Promise.resolve(null);
+    };
+    await import('./main');await flush(30);goto('sync');await flush();
+    expect(mainHtml()).toContain('等待电脑首次同步');expect(mainHtml()).toContain('电脑 Agent');
+    expect(mainHtml()).not.toContain('请检查账号');
+  });
+
   it('shows real onboarding when no cache and no pairing exist', async () => {
     invokeState.impl = (command) => {
       if (command === 'ledger_status_command') {
@@ -485,6 +514,18 @@ describe('Windows local presentation and isolated preview',()=>{
     if(command==='app_version')return Promise.resolve('0.3.0-test');
     return Promise.reject(new Error(`unexpected command ${command}`));
   };
+  it('clears a previous cloud error after a newly confirmed desktop publication',async()=>{
+    invokeState.impl=command=>{
+      if(command==='desktop_load_snapshot')return Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false});
+      if(command==='ledger_fetch')return Promise.reject({code:'auth-unauthorized',stage:'download',httpStatus:401,message:'candidate rejected',retryable:false});
+      if(command==='desktop_refresh_snapshot')return Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false,appPublish:{ok:true,published:true}});
+      return common(command);
+    };
+    await import('./main');await flush(30);goto('sync');await flush();click('#fetch-button');await flush(30);
+    expect(mainHtml()).toContain('坚果云账号或应用密码未通过验证');
+    click('#desktop-sync');await flush(30);
+    expect(mainHtml()).toContain('云端发布已确认');expect(mainHtml()).not.toContain('坚果云账号或应用密码未通过验证');
+  });
   it('repaints a settings page when saved connection status arrives after the local view',async()=>{
     let finish:((value:unknown)=>void)|undefined;
     invokeState.impl=command=>command==='desktop_load_snapshot'?Promise.resolve({snapshot:CACHED_SNAPSHOT,sourceChanged:false,monthChanged:false}):command==='sync_status'?new Promise(resolve=>finish=resolve):common(command);

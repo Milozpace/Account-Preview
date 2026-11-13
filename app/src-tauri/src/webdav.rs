@@ -35,10 +35,14 @@ pub struct DavError {
     pub status: Option<u16>,
     /// `(stage label, HTTP method)` attached by the calling flow.
     step: Option<(&'static str, Option<&'static str>)>,
+    timeout: bool,
     message: String,
 }
 
 impl DavError {
+    pub fn is_timeout(&self) -> bool {
+        self.timeout
+    }
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -64,6 +68,7 @@ impl From<String> for DavError {
         DavError {
             status: None,
             step: None,
+            timeout: false,
             message,
         }
     }
@@ -94,8 +99,11 @@ fn valid_file_name(file: &str) -> bool {
 
 fn status_error(status: StatusCode) -> DavError {
     let message = match status.as_u16() {
-        401 | 403 => "云端拒绝访问（401/403），请检查坚果云应用密码是否有效。".into(),
+        401 => "云端认证失败（401），请检查坚果云账号和应用密码。".into(),
+        403 => "云端拒绝访问（403），请检查目录访问权限或服务限制。".into(),
         404 => "云端没有找到该文件（404）。".into(),
+        409 => "云端路径发生冲突（409），请在电脑端只读检查同步目录；未确认原因，已保留本地缓存。"
+            .into(),
         429 => "云端请求过于频繁（429），请稍后再试。".into(),
         502..=504 => "云端服务暂时不可用（5xx），请稍后再试。".into(),
         code if (300..400).contains(&code) => "云端返回重定向，已拒绝执行以保护凭据。".into(),
@@ -104,6 +112,7 @@ fn status_error(status: StatusCode) -> DavError {
     DavError {
         status: Some(status.as_u16()),
         step: None,
+        timeout: false,
         message,
     }
 }
@@ -122,6 +131,7 @@ fn transport_error(error: reqwest::Error) -> DavError {
     DavError {
         status: None,
         step: None,
+        timeout: error.is_timeout(),
         message: message.into(),
     }
 }
@@ -274,6 +284,7 @@ impl WebDavClient {
         let destination = self.file_url(to)?;
         let method = Method::from_bytes(b"MOVE").map_err(|_| DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "无法构造移动请求。".into(),
         })?;
@@ -373,6 +384,7 @@ impl WebDavClient {
         let destination = self.sub_url(to).map_err(DavError::from)?;
         let method = Method::from_bytes(b"MOVE").map_err(|_| DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "无法构造移动请求。".into(),
         })?;
@@ -404,6 +416,7 @@ impl WebDavClient {
     pub(crate) fn mkcol_rel(&self, relative: &str) -> Result<(), DavError> {
         let method = Method::from_bytes(b"MKCOL").map_err(|_| DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "无法构造目录创建请求。".into(),
         })?;
@@ -453,6 +466,7 @@ impl WebDavClient {
     fn mkcol(&self, url: &str) -> Result<(), DavError> {
         let method = Method::from_bytes(b"MKCOL").map_err(|_| DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "无法构造目录创建请求。".into(),
         })?;
@@ -477,6 +491,7 @@ impl WebDavClient {
             _ => Err(DavError {
                 status: None,
                 step: None,
+                timeout: false,
                 message: "云端同名路径已存在但不是可用目录，拒绝在该路径发布。".into(),
             }),
         }
@@ -494,6 +509,7 @@ impl WebDavClient {
     pub(crate) fn propfind_url(&self, url: &str) -> Result<PropfindOutcome, DavError> {
         let method = Method::from_bytes(b"PROPFIND").map_err(|_| DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "无法构造目录检查请求。".into(),
         })?;
@@ -607,20 +623,35 @@ fn read_bounded(response: Response) -> Result<Vec<u8>, DavError> {
     {
         return Err(DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "云端响应过大，拒绝读取。".into(),
         });
     }
     let mut reader = response.take((MAX_RESPONSE_BYTES + 1) as u64);
     let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes).map_err(|_| DavError {
-        status: None,
-        step: None,
-        message: "云端响应读取未完成。".into(),
+    reader.read_to_end(&mut bytes).map_err(|error| {
+        let timeout = error.kind() == std::io::ErrorKind::TimedOut
+            || error
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<reqwest::Error>())
+                .is_some_and(reqwest::Error::is_timeout);
+        DavError {
+            status: None,
+            step: None,
+            timeout,
+            message: if timeout {
+                "读取云端响应超时，请检查网络后重试。"
+            } else {
+                "云端响应读取未完成。"
+            }
+            .into(),
+        }
     })?;
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err(DavError {
             step: None,
+            timeout: false,
             status: None,
             message: "云端响应过大，拒绝读取。".into(),
         });
@@ -977,6 +1008,34 @@ mod tests {
     use super::tests_support::*;
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn structured_diagnostics_distinguish_response_body_timeout_from_network_failure() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = stream.write_all(b"x");
+        });
+        let mut client = client_for(&base);
+        client.agent = Client::builder()
+            .timeout(Duration::from_millis(80))
+            .build()
+            .unwrap();
+        let error = client.get("snapshot-a.enc").unwrap_err();
+        server.join().unwrap();
+        let issue = crate::sync_issue::SyncIssue::dav(error, "download");
+        assert_eq!(issue.code, "request-timeout");
+        assert!(issue.retryable);
+        assert!(!issue.message.contains("app-password"));
+    }
 
     #[test]
     fn collection_verification_requires_successful_dav_resourcetype() {

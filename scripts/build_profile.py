@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import xml.etree.ElementTree as ET
 try:
     import product_version
     import personal_version
@@ -32,6 +33,18 @@ def android_gradle_text(text, identifier, native_version, version_code):
                   lambda match: match[1]+identifier+match[2], text)
     text = re.sub(r'(?m)^(\s*)versionCode = .*$', lambda match: match[1]+f'versionCode = {version_code}', text)
     return re.sub(r'(?m)^(\s*)versionName = .*$', lambda match: match[1]+f'versionName = "{native_version}"', text)
+
+
+def android_display_strings(text):
+    """Keep the launcher label independent from the historical installer name."""
+    resource=ET.fromstring(text)
+    if resource.tag!='resources': raise ValueError('Android 名称资源格式无效。')
+    for name in ('app_name','main_activity_title'):
+        item=resource.find(f"string[@name='{name}']")
+        if item is None: item=ET.SubElement(resource,'string',{'name':name})
+        item.text='Account'
+    ET.indent(resource,space='    ')
+    return ET.tostring(resource,encoding='unicode')+'\n'
 
 
 def prepare(root, profile, platform, apply=False, isolated_build=False, personal_version_file=None):
@@ -67,6 +80,9 @@ def prepare(root, profile, platform, apply=False, isolated_build=False, personal
             # Preserve the project's activity/SDK/privacy customizations across tauri init.
             # Only used inside the explicit build checkout; no device/package data is read.
             android = root/'app/src-tauri/gen/android/app'
+            strings=android/'src/main/res/values/strings.xml'
+            strings.parent.mkdir(parents=True,exist_ok=True)
+            strings.write_text(android_display_strings(strings.read_text(encoding='utf-8') if strings.exists() else '<resources/>'),encoding='utf-8',newline='\n')
             saved = root/'.runtime/build-profile/android'; saved.mkdir(parents=True, exist_ok=True)
             for name in ['build.gradle.kts', 'src/main/AndroidManifest.xml']:
                 path = android/name; backup = saved/Path(name).name

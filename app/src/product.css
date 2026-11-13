@@ -27,6 +27,9 @@ button,input,select{font:inherit;color:inherit;}button{touch-action:manipulation
 @media(max-width:700px){[data-layout=desktop] .app-frame{padding-left:20px;padding-right:20px;}.header-controls{gap:8px;}.toolbar-button{padding:8px;font-size:12px;}}
 
 @media(pointer:coarse){.quiet-button,.back-button,.scope-item{min-height:44px;}.bill-filter-row select,.card-block input{min-height:44px;}button,input,select{-webkit-tap-highlight-color:transparent;}}
+[data-layout=mobile] .mobile-overview>.overview-secondary{display:flex;flex-wrap:wrap;gap:4px 16px;margin:10px 0 24px;min-width:0;}
+[data-layout=mobile] .mobile-overview>.overview-secondary .scope-item{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;max-width:100%;min-height:44px;text-align:start;}
+[data-layout=mobile] .mobile-overview>.overview-secondary .scope-item strong{overflow-wrap:anywhere;}
 [data-layout=mobile] .calendar-day small{font-size:10px;}
 [data-layout=mobile] .record-main small{font-size:11px;}
 

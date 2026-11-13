@@ -186,7 +186,7 @@ mod tests {
         }
     }
     fn seed(vault: &Memory, dir: &Path) -> Vec<u8> {
-        apply_configure(vault, "test@example.test", "test-password").unwrap();
+        persist_configure(vault, "test@example.test", "test-password").unwrap();
         let key = ensure_content_key(vault, &dir.join(CACHE_FILE)).unwrap();
         let envelope = encrypt(
             &build_payload(7),

@@ -14,10 +14,10 @@ import zipfile
 try:
     import product_version
     import personal_version
-    from build_profile import android_gradle_text
+    from build_profile import android_gradle_text, android_display_strings
 except ModuleNotFoundError:
     from scripts import product_version, personal_version
-    from scripts.build_profile import android_gradle_text
+    from scripts.build_profile import android_gradle_text, android_display_strings
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'README.md', 'AGENTS.md', '.gitignore', 'bootstrap.py', 'bootstrap.ps1', 'bootstrap.sh',
@@ -25,7 +25,7 @@ ROOT_FILES = {'README.md', 'AGENTS.md', '.gitignore', 'bootstrap.py', 'bootstrap
 ALLOWED_DIRS = {'scripts', 'tests', 'docs', 'templates', '.agents', '.github', 'dashboard', 'app'}
 EXTENSIONS = {'.py', '.ps1', '.sh', '.md', '.json', '.toml', '.lock', '.ts', '.css', '.html', '.rs',
               '.yml', '.yaml', '.kt', '.kts', '.java', '.gradle', '.properties', '.xml', '.pro', '.png',
-              '.ico', '.icns', '.svg', '.webp'}
+              '.ico', '.icns', '.svg', '.webp', '.nsh', '.plist'}
 EXCLUDED = {'node_modules', 'target', 'dist', 'build', '.runtime', '.gradle', '.idea', '.cxx', '__pycache__',
             '.git', '.venv', '.tauri', 'local', 'data', 'sra', 'exports', 'archive'}
 GENERATED = {'tauri.settings.gradle', 'tauri.properties', 'local.properties', 'key.properties', 'keystore.properties',
@@ -155,6 +155,9 @@ def verify_android_build_inputs(root, commit, data, profile):
     manifest = f'{base}/app/src/main/AndroidManifest.xml'
     expected = {gradle: android_gradle_text(source(gradle), identifier, data['nativeVersion'], data['androidVersionCode']),
                 manifest: source(manifest)}
+    strings=f'{base}/app/src/main/res/values/strings.xml'
+    if git(root,'ls-tree',commit,'--',strings):
+        expected[strings]=android_display_strings(source(strings))
     activities = f'{base}/app/src/main/java'
     build_src = f'{base}/buildSrc/src/main/java'
     for directory, suffix in [(activities, 'MainActivity.kt'),
