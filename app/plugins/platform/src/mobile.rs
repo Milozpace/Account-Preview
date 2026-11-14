@@ -82,6 +82,14 @@ impl Drop for SelectedBill {
 pub struct Platform<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Platform<R> {
+    pub async fn update_status(&self, product_version: &str) -> Result<serde_json::Value> {
+        self.0.run_mobile_plugin_async("updateStatus", serde_json::json!({"productVersion":product_version}))
+            .await.map_err(|_| Error::NativeBridge)
+    }
+    pub async fn update_action(&self, product_version: &str, action: &str) -> Result<serde_json::Value> {
+        self.0.run_mobile_plugin_async("updateAction", serde_json::json!({"productVersion":product_version,"action":action}))
+            .await.map_err(|_| Error::NativeBridge)
+    }
     pub async fn select_bills(&self) -> Result<Option<usize>> {
         let response: SelectBatchResponse = self.0.run_mobile_plugin_async("selectBill", ())
             .await.map_err(|_| Error::NativeBridge)?;

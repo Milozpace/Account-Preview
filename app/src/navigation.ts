@@ -5,7 +5,7 @@ export type RootView = 'home' | 'analysis' | 'my';
 export type AnalysisTab = 'trend' | 'composition' | 'calendar';
 export interface BillQuery { query: string; category: string; pool: string; date: string; scope: 'personal' | 'structural' | 'income' }
 export const emptyQuery = (): BillQuery => ({ query: '', category: '', pool: '', date: '', scope: 'personal' });
-export type View = RootView | 'bills' | 'pool' | 'detail' | 'sync' | 'settings' | 'about' | 'diagnostics' | 'export' | 'upload';
+export type View = RootView | 'bills' | 'pool' | 'detail' | 'sync' | 'settings' | 'about' | 'diagnostics' | 'export' | 'upload' | 'update';
 export interface Screen { view: View; query?: BillQuery; recordId?: string; poolId?: string; scroll?: number; historyKey?:number }
 
 /** Each tab owns its stack; no navigation state contains ledger amounts. */
@@ -44,7 +44,7 @@ export class Navigation {
     const state=value as ReturnType<Navigation['snapshot']>;
     const roots:RootView[]=['home','analysis','my'];
     if(!roots.includes(state.root)||!state.stacks)return false;
-    const views:View[]=[...roots,'bills','pool','detail','sync','settings','about','diagnostics','export','upload'];
+    const views:View[]=[...roots,'bills','pool','detail','sync','settings','about','diagnostics','export','upload','update'];
     for(const root of roots){const stack=state.stacks[root];if(!Array.isArray(stack)||!stack.length||stack[0].view!==root||stack.some(screen=>!screen||!views.includes(screen.view)))return false;}
     this.root=state.root;this.stacks=structuredClone(state.stacks);return true;
   }

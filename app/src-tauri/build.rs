@@ -2,6 +2,11 @@
 mod install_profile;
 
 fn main() {
+    println!("cargo:rerun-if-changed=../../release.json");
+    let release: serde_json::Value = serde_json::from_slice(
+        &std::fs::read("../../release.json").expect("read product version"),
+    ).expect("parse product version");
+    println!("cargo:rustc-env=ACCOUNT_PRODUCT_VERSION={}", release["version"].as_str().expect("product version"));
     println!("cargo:rerun-if-changed=src/install_profile.rs");
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");

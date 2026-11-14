@@ -174,7 +174,7 @@ function activateRenderedButton(attribute:string,value:string,detail=1):void {
   expect(button![1]).not.toMatch(/\b(?:disabled|hidden)\b|tabindex="-1"/);
   const dataset=Object.fromEntries([...button![1].matchAll(/data-([\w-]+)="([^"]*)"/g)]
     .map(([,key,item])=>[key.replace(/-([a-z])/g,(_,letter:string)=>letter.toUpperCase()),item]));
-  const target={closest:()=>({dataset})};
+  const target={closest:(selector:string)=>selector.split(',').some(item=>item.includes(`[${attribute}]`))?{dataset}:null};
   for(const handler of elements.get('#main')!.handlers.click??[])handler({target,detail});
 }
 
@@ -498,6 +498,35 @@ describe('native first run without pairing', () => {
     expect(mainHtml()).toContain('本地数据可用');expect(invokeState.seen).toContain('ledger_cache');
     expect(invokeState.seen).not.toContain('ledger_fetch');
     goto('home');expect(mainHtml()).toContain('个人净消费');
+  });
+});
+
+describe('手机更新真实页面路由',()=>{
+  it('从我的进入检查更新，实际按钮点击依次触发下载和安装原生命令',async()=>{
+    vi.resetModules();elements.clear();for(const button of navButtons)button.handlers={};
+    invokeState.context={platform:'Android',preview:false};invokeState.seen=[];
+    const actions:string[]=[];
+    let update={supported:true,currentVersion:'0.4.0',currentCode:4007,phase:'available',message:'',progress:0,remind:false,target:{version:'0.4.1',nativeVersion:'0.4.8',code:4008,notes:'合成更新说明',size:8000000}};
+    invokeState.impl=(command,args)=>{
+      if(command==='ledger_status_command')return Promise.resolve({...LEDGER_READY,initialized:false});
+      if(command==='sync_status')return Promise.resolve({configured:false,paired:false});
+      if(command==='app_version')return Promise.resolve('0.4.7');
+      if(command==='mobile_update_status')return Promise.resolve(update);
+      if(command==='mobile_update_action'){
+        const action=(args as {action:string}).action;actions.push(action);
+        if(action==='download')update={...update,phase:'ready',progress:100};
+        return Promise.resolve(update);
+      }
+      return Promise.resolve(null);
+    };
+    await import('./main');await flush(40);
+    for(const handler of navButtons[2].handlers.click??[])handler();
+    activateRenderedButton('data-open','update');await flush(30);
+    expect(mainHtml()).toContain('下载更新');
+    activateRenderedButton('data-update-action','download');await flush(30);
+    expect(actions).toContain('download');expect(mainHtml()).toContain('安装更新');
+    activateRenderedButton('data-update-action','install');await flush(30);
+    expect(actions.at(-1)).toBe('install');
   });
 });
 

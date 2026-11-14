@@ -8,6 +8,7 @@ mod desktop_budget;
 mod install_profile;
 mod ledger;
 mod ledger_sync;
+mod mobile_update;
 mod probe;
 mod probe_cache;
 mod probe_sync;
@@ -142,6 +143,8 @@ pub fn run() {
             bill_upload::bill_upload_choose,
             bill_upload::bill_upload_status,
             bill_upload::bill_upload_retry,
+            mobile_update::mobile_update_status,
+            mobile_update::mobile_update_action,
             app_context,
             app_version
         ])

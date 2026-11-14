@@ -37,6 +37,22 @@ import {BillUploadSession,billUploadHtml,type BillUploadItem} from './bill-uploa
 import './bill-upload.css';
 import {BillUploadRefresh} from './bill-upload-refresh';
 import {showIncome} from './delivery-profile';
+import {MobileUpdateSession,updatePageHtml,updateReminderHtml,type UpdateAction} from './mobile-update';
+import './mobile-update.css';
+const appUpdates=new MobileUpdateSession(invoke);
+let updatePoll:ReturnType<typeof setTimeout>|undefined;
+
+function updateSurface():void {
+  if(state.view==='update')render();
+  else {const reminder=document.querySelector<HTMLElement>('#program-update-reminder');if(reminder)reminder.innerHTML=updateReminderHtml(appUpdates.status);}
+}
+async function refreshAppUpdate(action?:UpdateAction):Promise<void> {
+  if(!state.android||!isTauri()||state.preview)return;
+  if(updatePoll)clearTimeout(updatePoll);
+  if(action)await appUpdates.action(action);else await appUpdates.refresh();
+  updateSurface();
+  if(appUpdates.active&&!document.hidden)updatePoll=setTimeout(()=>void refreshAppUpdate(),800);
+}
 
 interface LedgerStatusSummary { initialized:boolean;publishEnabled:boolean;cachedRevision:number|null;pendingRevision:number|null;lastPublishedRevision:number|null }
 interface LedgerCacheOutcome { revision:number;snapshot:AppSnapshot }
@@ -143,7 +159,7 @@ function back():void {
   window.history?.replaceState?.(historyState(),'');
   render('back');restoreScroll(nav.current.scroll??0);focusHeading();
 }
-const titles:Record<Screen['view'],string>={home:'总览',analysis:'分析',my:'我的',bills:'账单查询',pool:'资金池',detail:'账单详情',sync:'数据同步',settings:'应用设置',about:'关于',diagnostics:'开发与诊断',export:'导出账单',upload:'上传原始账单'};
+const titles:Record<Screen['view'],string>={home:'总览',analysis:'分析',my:'我的',bills:'账单查询',pool:'资金池',detail:'账单详情',sync:'数据同步',settings:'应用设置',about:'关于',diagnostics:'开发与诊断',export:'导出账单',upload:'上传原始账单',update:'检查更新'};
 function renderNav():void {
   for(const button of document.querySelectorAll<HTMLButtonElement>('.bottom-nav button')){
     const active=button.dataset.view===nav.root;button.classList.toggle('current',active);button.setAttribute?.('aria-current',active?'page':'false');
@@ -172,13 +188,14 @@ function settingsPageHtml():string {
 }
 function viewHtml():string {
   const month=currentMonth();
+  if(state.view==='update')return updatePageHtml(appUpdates.status);
   if(state.view==='upload')return billUploadHtml(uploadSession,state.android&&isTauri()&&!state.preview);
   if(state.view==='export')return `<section class="analysis-export-page">${exportFormHtml(state.snapshot,state.exportMonth,showIncome)}</section>`;
   if(state.view==='sync')return syncHtml();
   if(state.view==='settings')return settingsPageHtml();
   if(state.view==='diagnostics')return mobile()?settingsPageHtml():diagnosticsHtml();
   if(state.view==='about')return `<section class="about"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>生活账本</h1><p>让数字回到生活里。</p><dl class="detail-list"><dt>版本</dt><dd>${escapeHtml(state.version||'开发预览')}</dd><dt>查看范围</dt><dd>当前快照中的近两个月</dd><dt>数据来源</dt><dd>已校验的 SQLite 账本展示快照</dd></dl></section>`;
-  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady());
+  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady(),state.android&&isTauri()&&!state.preview);
   if(!month)return state.loading?empty('正在打开生活账本','正在读取本地数据。'):onboardingHtml(state.ledger?.initialized??null,state.probeConfigured,state.probeSummaryLoaded,state.view==='analysis',state.checkingCloud);
   if(state.view==='bills')return mobileBills(month,nav.current.query??emptyQuery(),showIncome);
   if(state.view==='pool')return poolHtml(month,nav.current.poolId??'');
@@ -227,7 +244,7 @@ function render(transition:MobileTransition='none'):void {
   const root=!nav.canBack;
   const sampleNote=state.source==='sample'?'<p class="sample-note">合成预览数据，仅用于检查界面。真实数据将在同步后显示。</p>':'';
   const desktopSettings=!mobile()&&state.view==='settings';
-  main.innerHTML=`${root?'':`<div class="page-title-row"><button type="button" class="back-button" data-action="back" aria-label="${desktopSettings?'返回账本':'返回上一页'}">${uiIcon('left')}<span>${desktopSettings?'返回账本':'返回'}</span></button><h1 id="page-title" tabindex="-1">${desktopSettings?'设置':titles[state.view]}</h1></div>`}${sampleNote}<div id="view-content">${viewHtml()}</div>`;
+  main.innerHTML=`${root?'':`<div class="page-title-row"><button type="button" class="back-button" data-action="back" aria-label="${desktopSettings?'返回账本':'返回上一页'}">${uiIcon('left')}<span>${desktopSettings?'返回账本':'返回'}</span></button><h1 id="page-title" tabindex="-1">${desktopSettings?'设置':titles[state.view]}</h1></div>`}${sampleNote}<div id="program-update-reminder">${state.android&&state.view!=='update'?updateReminderHtml(appUpdates.status):''}</div><div id="view-content">${viewHtml()}</div>`;
   for(const [id,value,dirty] of drafts){
     const input=document.querySelector<HTMLInputElement>(`#${id}`);
     if(input&&value!==undefined&&(!['project-root','python-path'].includes(id)||dirty)){
@@ -237,7 +254,7 @@ function render(transition:MobileTransition='none'):void {
   bindView();updateBusy();
   if(desktopSettings){const feedback=document.querySelector<HTMLElement>('#desktop-config-status');if(feedback){feedback.textContent=state.configFeedback;feedback.dataset.error=String(state.configError);}}
   const sync=document.querySelector<HTMLButtonElement>('#desktop-sync');if(sync)sync.hidden=mobile();
-  selector.closest?.('.month-select')?.classList.toggle('is-hidden',!state.snapshot||['my','settings','sync','diagnostics','about','detail','export'].includes(state.view));
+  selector.closest?.('.month-select')?.classList.toggle('is-hidden',!state.snapshot||['my','settings','sync','diagnostics','about','detail','export','update'].includes(state.view));
   if(state.view==='export')updateExportFeedback(document,exportSession);
   syncMobilePickers();
   if(focusId){const next=document.querySelector<HTMLInputElement>(`#${focusId}`);next?.focus?.({preventScroll:true});if(next?.type==='search'&&selection!=null)next.setSelectionRange?.(selection,selection);}
@@ -389,10 +406,12 @@ async function saveAnalysisExport():Promise<void>{
 main.addEventListener('click',event=>{
   const target=event.target as HTMLElement|null;
   if(!target?.closest)return;
-  const button=target.closest<HTMLElement>('[data-record],button[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-analysis],[data-highlight-pool],[data-settings-tab],#expand-categories');
+  const button=target.closest<HTMLElement>('[data-record],button[data-pool],[data-category],[data-date],[data-scope],[data-open],[data-action],[data-update-action],[data-analysis],[data-highlight-pool],[data-settings-tab],#expand-categories');
   if(!button)return;
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
+  if(data.updateAction){void refreshAppUpdate(data.updateAction as UpdateAction);return;}
+  if(data.open==='update'){open({view:'update'});void refreshAppUpdate();return;}
   if(data.action==='clear-upload-failures'){uploadSession.clearFailures();render();return;}
   if(data.action==='retry-setup'){void retryPhoneSetup();return;}
   if(data.action==='sync-edit-connection'){state.editingConnection=true;render();document.querySelector<HTMLInputElement>('#account')?.focus?.();return;}
@@ -880,6 +899,8 @@ document.querySelector<HTMLButtonElement>('#desktop-sync')?.addEventListener('cl
 document.querySelector<HTMLButtonElement>('#back-to-top')?.addEventListener('click',()=>restoreScroll(0));
 document.addEventListener('visibilitychange',()=>{
   if(state.preview)return;
+  if(document.hidden){if(updatePoll)clearTimeout(updatePoll);}
+  else if(state.android)void refreshAppUpdate('auto');
   if(state.view==='upload'){if(document.hidden)uploadRefresh.stop();else uploadRefresh.sync(true);}
   if(document.hidden){hideQr();void cancelPairingScan();}
   else if(!state.android){void resumeDesktop();}
@@ -924,6 +945,7 @@ async function boot():Promise<void>{
   }catch{ /* Older native host: the browser user agent remains a safe layout fallback. */ }
   const statusTask=refreshLedgerStatus();
   if(state.android)await statusTask;
+  if(state.android)void refreshAppUpdate('auto');
   let cacheWarning:string|null=null;
   try{
     const cached=state.android&&state.ledger?.initialized!==true?null:await invoke<LedgerCacheOutcome|null>('ledger_cache');

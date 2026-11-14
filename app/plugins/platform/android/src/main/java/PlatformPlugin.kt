@@ -35,12 +35,38 @@ class SaveMarkdownArgs {
     var content: String = ""
 }
 
+@InvokeArg
+class UpdateArgs {
+    var productVersion: String = ""
+    var action: String = ""
+}
+
 /** Internal PluginHandle bridge. No Rust invoke handler or JavaScript permissions. */
 @TauriPlugin
 class PlatformPlugin(activity: Activity): Plugin(activity) {
     private val reportActivity = activity
     private val vault = SecureVault(activity.applicationContext)
     private val worker = Executors.newSingleThreadExecutor()
+    private var updater: MobileUpdater? = null
+    @Synchronized private fun updater(version: String): MobileUpdater {
+        require(UpdatePolicy.stableKey(version)!=null)
+        return updater ?: MobileUpdater(reportActivity,version).also {updater=it}
+    }
+    /** Native-only entry points. The Rust adapter supplies the compiled product version. */
+    @Command
+    fun updateStatus(invoke: Invoke) {
+        try {
+            val args=invoke.parseArgs(UpdateArgs::class.java)
+            invoke.resolve(JSObject(updater(args.productVersion).status().toString()))
+        } catch (_: Exception) {invoke.reject("update status unavailable")}
+    }
+    @Command
+    fun updateAction(invoke: Invoke) {
+        try {
+            val args=invoke.parseArgs(UpdateArgs::class.java)
+            invoke.resolve(JSObject(updater(args.productVersion).action(args.action).toString()))
+        } catch (_: Exception) {invoke.reject("update action unavailable")}
+    }
     // Provider I/O must never queue ahead of vault/sync credential operations.
     private val reportWorker = MarkdownExport.newWorker()
     private val exportActive = AtomicBoolean(false)
