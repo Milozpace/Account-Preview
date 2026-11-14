@@ -45,6 +45,25 @@ class UpdateReleaseTest {
         try {UpdateRelease.discover(index,"0.4.0",4007,"com.account.preview") {metadata.toString().toByteArray()};fail("production refuses test source") }catch(_:IllegalArgumentException){}
         try {discover(metadata=metadata);fail("production refuses test marker") }catch(_:IllegalArgumentException){}
     }
+    @Test fun exhaustedAnonymousApiFallsBackToLatestPublishedManifest() {
+        val calls=mutableListOf<String>()
+        val result=UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",UpdateSource.fromMarker(null),{url ->
+            calls.add(url)
+            if(url.startsWith("https://api.github.com/"))throw java.io.IOException("synthetic rate limit")
+            assertEquals(UpdateRelease.LATEST_MANIFEST,url)
+            manifest().toString().toByteArray()
+        },{url -> assertTrue(url.endsWith("/v0.4.1/android.zip"));500L})!!
+        assertEquals("0.4.1",result.getString("version"));assertEquals(500L,result.getLong("size"))
+        assertEquals(2,calls.size)
+    }
+    @Test fun latestFallbackStillRejectsTestBuildAndDoesNotDownloadWhenCurrent() {
+        fun read(url:String,metadata:JSONObject):ByteArray {
+            if(url.startsWith("https://api.github.com/"))throw java.io.IOException("synthetic rate limit")
+            return metadata.toString().toByteArray()
+        }
+        assertNull(UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest())},{fail("no package probe when latest");0L}))
+        try {UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest().put("updateTestOnly",true))},{500L});fail("no test fallback") }catch(_:IllegalArgumentException){}
+    }
     private fun component()=JSONObject().put("format",1).put("version","0.4.1").put("nativeVersion","0.4.8").put("androidVersionCode",4008)
         .put("commit",commit).put("identifier","com.account.preview").put("profile","preview").put("platform","android-arm64")
         .put("files",JSONObject().put("install/update.apk",UpdatePolicy.digest(bytes)))

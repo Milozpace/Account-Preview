@@ -103,10 +103,8 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
     }
     private fun check(manual: Boolean) {
         try {
-            val candidate=UpdateRelease.discover(
-                readJson(source.catalogUrl),
-                productVersion,currentCode,activity.packageName,source
-            ) {readBytes(it,2*1024*1024L)}
+            val candidate=UpdateRelease.discoverAvailable(productVersion,currentCode,activity.packageName,source,
+                {readBytes(it,2*1024*1024L)}, {url -> fetch(url,"HEAD"){it.contentLengthLong}})
             if(candidate==null) {
                 synchronized(this){clearReady();target=null;phase="latest";message=""}
                 return
@@ -197,20 +195,20 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
     }
     // Only updater-owned cache files, never app data or shared external storage.
     @Synchronized private fun clearReady() {apk.delete();apkHash="";preferences.edit().remove("ready").apply()}
-    private fun readJson(url:String):String=String(readBytes(url,2*1024*1024L),Charsets.UTF_8)
     private fun readBytes(url:String,limit:Long):ByteArray=fetch(url) { connection ->
         require(connection.contentLengthLong<=limit)
         val output=ByteArrayOutputStream()
         connection.inputStream.use {UpdatePolicy.copyVerified(it,output,limit,null)}
         output.toByteArray()
     }
-    private fun <T> fetch(initial:String,read:(HttpURLConnection)->T):T {
+    private fun <T> fetch(initial:String,method:String="GET",read:(HttpURLConnection)->T):T {
         var url=initial
         repeat(6) {
             require(source.allows(url))
             val connection=URL(url).openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects=false;connection.connectTimeout=15_000;connection.readTimeout=30_000
+                connection.requestMethod=method
                 connection.setRequestProperty("User-Agent","Account-Android-Updater")
                 connection.setRequestProperty("Accept","application/vnd.github+json, application/octet-stream")
                 val response=connection.responseCode

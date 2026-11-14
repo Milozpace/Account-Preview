@@ -23,9 +23,33 @@ internal object UpdateRelease {
         val digest=manifestAsset.optString("digest")
         if(digest.startsWith("sha256:"))require(UpdatePolicy.digest(manifestBytes)==digest.removePrefix("sha256:"))
         val manifest=JSONObject(String(manifestBytes,Charsets.UTF_8))
+        return candidate(manifest,version,currentVersion,currentCode,identifier,source,selected.optString("body")) {name ->
+            val item=asset(assets,name)
+            Pair(assetUrl(item,source),item.getLong("size"))
+        }
+    }
+    const val LATEST_MANIFEST="https://github.com/$REPOSITORY/releases/latest/download/release-manifest.json"
+    fun discoverAvailable(currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource,
+        read:(String)->ByteArray,size:(String)->Long):JSONObject? {
+        val index=try {read(source.catalogUrl)} catch(error:Exception) {
+            if(source.isTest)throw error
+            val manifest=JSONObject(String(read(LATEST_MANIFEST),Charsets.UTF_8))
+            val version=manifest.getString("version")
+            return candidate(manifest,version,currentVersion,currentCode,identifier,source,
+                manifest.optString("notes").ifBlank {"暂未读取到更新说明，可在 GitHub 发布页查看。"}) {name ->
+                require(Regex("[A-Za-z0-9_.-]+\\.zip").matches(name)&&!name.contains(".."))
+                val url="https://github.com/$REPOSITORY/releases/download/v$version/$name"
+                Pair(url,size(url))
+            }
+        }
+        return discover(String(index,Charsets.UTF_8),currentVersion,currentCode,identifier,source,read)
+    }
+    private fun candidate(manifest:JSONObject,version:String,currentVersion:String,currentCode:Long,identifier:String,
+        source:UpdateSource,notes:String,assetInfo:(String)->Pair<String,Long>):JSONObject? {
         require(manifest.getInt("format")==1 && manifest.getString("distribution")=="public")
         require(!manifest.optBoolean("updateTestOnly",false)||source.isTest)
-        require(manifest.getString("version")==version && manifest.getString("tag")=="v$version")
+        require(UpdatePolicy.stableKey(version)!=null && manifest.getString("version")==version && manifest.getString("tag")=="v$version")
+        if(!UpdatePolicy.newerStable(version,currentVersion))return null
         val nextCode=manifest.getLong("androidVersionCode")
         require(nextCode>currentCode && nextCode<=Int.MAX_VALUE)
         val commit=manifest.getString("commit");require(Regex("[0-9a-f]{40}").matches(commit))
@@ -33,11 +57,11 @@ internal object UpdateRelease {
         require(profile.getString("identifier")==identifier)
         val platform=profile.getJSONObject("platforms").getJSONObject("android-arm64")
         val zipHash=platform.getString("sha256");require(UpdatePolicy.validHash(zipHash))
-        val zipAsset=asset(assets,platform.getString("asset"))
-        val size=zipAsset.getLong("size");require(size in 1..UpdatePolicy.MAX_ZIP)
+        val (url,bytes)=assetInfo(platform.getString("asset"))
+        require(source.assetAllowed(url)&&bytes in 1..UpdatePolicy.MAX_ZIP)
         return JSONObject().put("version",version).put("nativeVersion",manifest.getString("nativeVersion"))
-            .put("code",nextCode).put("commit",commit).put("zipHash",zipHash).put("url",assetUrl(zipAsset,source))
-            .put("size",size).put("notes",selected.optString("body").take(40_000)).put("sourceId",source.id).put("updateTestOnly",source.isTest)
+            .put("code",nextCode).put("commit",commit).put("zipHash",zipHash).put("url",url)
+            .put("size",bytes).put("notes",notes.take(40_000)).put("sourceId",source.id).put("updateTestOnly",source.isTest)
     }
     private fun asset(assets:JSONArray,name:String):JSONObject {
         val matching=(0 until assets.length()).map{assets.getJSONObject(it)}.filter{it.getString("name")==name}
