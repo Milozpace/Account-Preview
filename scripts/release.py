@@ -176,7 +176,17 @@ def verify_android_build_inputs(root, commit, data, profile):
     return set(expected)
 
 
+def is_update_test_apk(content):
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as apk:
+            return 'assets/account-update-test.json' in apk.namelist()
+    except zipfile.BadZipFile:
+        return False
+
+
 def bundle(platform, binaries, installer, output, profile='preview', root=ROOT, commit=None, personal_version_file=None, signing=None):
+    if platform == 'android-arm64' and Path(installer).is_file() and is_update_test_apk(Path(installer).read_bytes()):
+        raise ValueError('更新测试通道 APK 不得打入正式交付组件。')
     data = personal_version.build_data(root, personal_version_file) if profile == 'personal' else product_version.load(root)
     if profile not in data['profiles'] or platform not in data['profiles'][profile]['platforms']:
         raise ValueError('发布平台或安装档案无效。')
@@ -269,6 +279,8 @@ def verify_bundle(path, data, profile, platform, commit):
             raise ValueError('组件清单重复或缺失。')
         if archive.getinfo('manifest.json').file_size > 128*1024: raise ValueError('组件清单过大。')
         manifest = json.loads(archive.read('manifest.json'))
+        if manifest.get('updateTestOnly'):
+            raise ValueError('更新测试组件不得用于正式发布。')
         expected = dict(format=1, version=data['version'], nativeVersion=data['nativeVersion'],
                         versionPolicy=data.get('versionPolicy', 'unified'), androidVersionCode=data['androidVersionCode'],
                         profile=profile, platform=platform, commit=commit,
@@ -287,6 +299,8 @@ def verify_bundle(path, data, profile, platform, commit):
         if len(installers) != 1 or not installers[0].endswith(extension) or set(files) != helpers | set(installers):
             raise ValueError('组件缺少必需工具或安装程序。')
         for name, digest in files.items():
+            if platform == 'android-arm64' and name.endswith('.apk') and is_update_test_apk(archive.read(name)):
+                raise ValueError('组件含更新测试通道 APK，不得正式发布。')
             info = archive.getinfo(name)
             if '\\' in name or name.startswith('/') or '..' in Path(name).parts or (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ValueError('组件包含不安全路径。')

@@ -33,6 +33,18 @@ class UpdateReleaseTest {
         val item=release("0.4.1");item.getJSONArray("assets").getJSONObject(0).put("digest","sha256:"+"0".repeat(64))
         try{discover(JSONArray().put(item));fail("manifest hash") }catch(_:IllegalArgumentException) {}
     }
+    @Test fun onlyExplicitSignedTestSourceAcceptsMarkedRawBranchFixtures() {
+        val source=UpdateSource.fromMarker(JSONObject().put("format",1).put("updateTestOnly",true).put("branch","codex/update-download-test-20261114").put("productVersion","0.4.0").toString())
+        val item=release("0.4.1")
+        val assets=item.getJSONArray("assets")
+        for(i in 0 until assets.length()) {val asset=assets.getJSONObject(i);asset.put("browser_download_url","https://raw.githubusercontent.com/Milozpace/Account-Preview/codex/update-download-test-20261114/"+asset.getString("name"))}
+        val metadata=manifest().put("updateTestOnly",true)
+        val index=JSONArray().put(item).toString()
+        val result=UpdateRelease.discover(index,"0.4.0",4007,"com.account.preview",source) {metadata.toString().toByteArray()}!!
+        assertTrue(result.getBoolean("updateTestOnly"));assertEquals(source.id,result.getString("sourceId"))
+        try {UpdateRelease.discover(index,"0.4.0",4007,"com.account.preview") {metadata.toString().toByteArray()};fail("production refuses test source") }catch(_:IllegalArgumentException){}
+        try {discover(metadata=metadata);fail("production refuses test marker") }catch(_:IllegalArgumentException){}
+    }
     private fun component()=JSONObject().put("format",1).put("version","0.4.1").put("nativeVersion","0.4.8").put("androidVersionCode",4008)
         .put("commit",commit).put("identifier","com.account.preview").put("profile","preview").put("platform","android-arm64")
         .put("files",JSONObject().put("install/update.apk",UpdatePolicy.digest(bytes)))

@@ -63,9 +63,18 @@ def find_apkanalyzer():
     raise ValueError('Android SDK apkanalyzer is required (PATH or ANDROID_HOME).')
 
 
-def verify(apk: Path, apkanalyzer: str):
+def check_update_channel(apk: Path, allow_test=False):
+    with zipfile.ZipFile(apk) as archive:
+        test = 'assets/account-update-test.json' in archive.namelist()
+    if test and not allow_test:
+        raise ValueError('更新测试通道 APK 不得作为正式候选。')
+    return test
+
+
+def verify(apk: Path, apkanalyzer: str, allow_update_test=False):
     if not apk.is_file():
         raise ValueError('APK does not exist.')
+    test_channel = check_update_channel(apk, allow_test=allow_update_test)
     results = []
     for registrar in REGISTRARS:
         output = subprocess.run(
@@ -81,16 +90,17 @@ def verify(apk: Path, apkanalyzer: str):
         results.append({'class': registrar, 'publicNoArgConstructor': constructor})
     alignment = verify_native_alignment(apk)
     return {'ok': all(item['publicNoArgConstructor'] for item in results) and alignment['ok'],
-            'registrars': results, 'nativeAlignment': alignment}
+            'registrars': results, 'nativeAlignment': alignment, 'updateTestOnly': test_channel}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('apk', type=Path)
     parser.add_argument('--apkanalyzer', help='Override Android SDK apkanalyzer path.')
+    parser.add_argument('--allow-update-test', action='store_true', help='Local device-test APK only; never use for public delivery.')
     args = parser.parse_args()
     try:
-        result = verify(args.apk, args.apkanalyzer or find_apkanalyzer())
+        result = verify(args.apk, args.apkanalyzer or find_apkanalyzer(), allow_update_test=args.allow_update_test)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         result = {'ok': False, 'error': str(error)}
     print(json.dumps(result))

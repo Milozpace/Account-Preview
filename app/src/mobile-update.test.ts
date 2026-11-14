@@ -19,6 +19,10 @@ describe('手机程序更新',()=>{
  it('个人版只解释 USB 更新，禁止出现公开包下载动作',()=>{
   const html=updatePageHtml(status({supported:false}));expect(html).toContain('USB');expect(html).not.toContain('data-update-action="download"');
  });
+ it('测试构建明确标出临时通道，不伪装成正式发布',()=>{
+  expect(updatePageHtml(status({testChannel:true}))).toContain('临时更新测试通道');
+  expect(updatePageHtml(status())).not.toContain('临时更新测试通道');
+ });
  it('已忽略/稍后不自动提醒，更新失败不覆盖账本状态',()=>{
   expect(updateReminderHtml({...available,remind:false})).toBe('');
   expect(updateReminderHtml(available)).toContain('稍后');

@@ -14,13 +14,17 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.io.FileNotFoundException
+import java.util.zip.ZipFile
 import java.util.concurrent.Executors
 
 /** App binaries only. Never reads the ledger, pairing, vault or WebDAV credentials. */
-internal class MobileUpdater(private val activity: Activity, private val productVersion: String) {
-    private val preferences=activity.getSharedPreferences("app-updates",Activity.MODE_PRIVATE)
+internal class MobileUpdater(private val activity: Activity, compiledVersion: String) {
+    private val source=UpdateSource.fromMarker(try {activity.assets.open(UpdateSource.MARKER).bufferedReader().use {it.readText()}}catch(_:FileNotFoundException){null})
+    private val productVersion=source.productVersion?:compiledVersion
+    private val preferences=activity.getSharedPreferences(if(source.isTest)"app-updates-test" else "app-updates",Activity.MODE_PRIVATE)
     private val executor=Executors.newSingleThreadExecutor()
-    private val directory=File(activity.cacheDir,"app-updates")
+    private val directory=File(activity.cacheDir,if(source.isTest)"app-updates/test" else "app-updates")
     private val apk=File(directory,"update.apk")
     private val installed=packageInfo()
     private val currentCode=code(installed)
@@ -42,6 +46,7 @@ internal class MobileUpdater(private val activity: Activity, private val product
                     val saved=preferences.getString("ready",null)
                     if(saved!=null && apk.isFile) {
                         val candidate=JSONObject(saved)
+                        require(candidate.optString("sourceId","github-public-v1")==source.id)
                         if(candidate.getLong("code")>currentCode && UpdatePolicy.newerStable(candidate.getString("version"),productVersion)) {
                             val hash=candidate.getString("apkHash")
                             validateApk(candidate,hash)
@@ -59,7 +64,7 @@ internal class MobileUpdater(private val activity: Activity, private val product
         val remind=candidate!=null && !manualResult && phase in setOf("available","ready") &&
             UpdatePolicy.shouldRemind(candidate.getString("version"),preferences.getString("ignored","")?:"",preferences.getLong("deferUntil",0),System.currentTimeMillis())
         val result=JSONObject().put("supported",supported).put("currentVersion",productVersion).put("currentCode",currentCode)
-            .put("phase",phase).put("message",message).put("progress",progress).put("remind",remind)
+            .put("phase",phase).put("message",message).put("progress",progress).put("remind",remind).put("testChannel",source.isTest)
         if(installState.isNotEmpty())result.put("installState",installState)
         // URLs, paths, commits and hash state are not accepted from or exposed to the WebView.
         if(candidate!=null) result.put("target",JSONObject().put("version",candidate.getString("version"))
@@ -99,8 +104,8 @@ internal class MobileUpdater(private val activity: Activity, private val product
     private fun check(manual: Boolean) {
         try {
             val candidate=UpdateRelease.discover(
-                readJson("https://api.github.com/repos/${UpdateRelease.REPOSITORY}/releases?per_page=100"),
-                productVersion,currentCode,activity.packageName
+                readJson(source.catalogUrl),
+                productVersion,currentCode,activity.packageName,source
             ) {readBytes(it,2*1024*1024L)}
             if(candidate==null) {
                 synchronized(this){clearReady();target=null;phase="latest";message=""}
@@ -113,7 +118,8 @@ internal class MobileUpdater(private val activity: Activity, private val product
                 if(!same)clearReady()
                 target=candidate;phase=if(same)"ready" else "available";message=""
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            android.util.Log.w("AccountUpdate","check failed: ${error.javaClass.simpleName}")
             synchronized(this){
                 val showFailure=manual||manualResult
                 phase=UpdatePolicy.phaseAfterCheckFailure(showFailure,apkHash.isNotEmpty()&&apk.isFile,target!=null)
@@ -146,7 +152,8 @@ internal class MobileUpdater(private val activity: Activity, private val product
                 target=candidate;phase="ready";progress=100;message=""
                 preferences.edit().putString("ready",JSONObject(candidate.toString()).put("apkHash",apkHash).toString()).apply()
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            android.util.Log.w("AccountUpdate","download failed: ${error.javaClass.simpleName}")
             synchronized(this){clearReady();phase="error";message="下载或安装包校验失败，请检查网络和可用空间后重新下载。"}
         } finally {zip.delete();partial.delete()}
     }
@@ -181,6 +188,7 @@ internal class MobileUpdater(private val activity: Activity, private val product
     @Suppress("DEPRECATION") private fun validateApk(candidate:JSONObject,expectedHash:String=apkHash) {
         require(apk.isFile && apk.length() in 1..UpdatePolicy.MAX_APK)
         apk.inputStream().use {UpdatePolicy.copyVerified(it,object:java.io.OutputStream(){override fun write(b:Int){};override fun write(b:ByteArray,off:Int,len:Int){}},UpdatePolicy.MAX_APK,expectedHash)}
+        if(!source.isTest)ZipFile(apk).use {require(it.getEntry("assets/${UpdateSource.MARKER}")==null)}
         val info=activity.packageManager.getPackageArchiveInfo(apk.absolutePath,signatureFlags()) ?: error("package")
         require(info.packageName==activity.packageName && code(info)==candidate.getLong("code") && code(info)>currentCode)
         require(info.versionName==candidate.getString("nativeVersion"))
@@ -199,7 +207,7 @@ internal class MobileUpdater(private val activity: Activity, private val product
     private fun <T> fetch(initial:String,read:(HttpURLConnection)->T):T {
         var url=initial
         repeat(6) {
-            require(UpdatePolicy.allowedUrl(url))
+            require(source.allows(url))
             val connection=URL(url).openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects=false;connection.connectTimeout=15_000;connection.readTimeout=30_000
@@ -208,7 +216,10 @@ internal class MobileUpdater(private val activity: Activity, private val product
                 val response=connection.responseCode
                 if(response in setOf(301,302,303,307,308)) {
                     url=URL(URL(url),connection.getHeaderField("Location") ?: error("redirect")).toString()
-                } else {require(response==200);return read(connection)}
+                } else {
+                    if(response!=200)android.util.Log.w("AccountUpdate","HTTP status $response")
+                    require(response==200);return read(connection)
+                }
             } finally {connection.disconnect()}
         }
         error("redirect limit")

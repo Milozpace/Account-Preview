@@ -6,7 +6,7 @@ import org.json.JSONObject
 /** Release/manifest contract kept independent of Android and tested with synthetic fixtures. */
 internal object UpdateRelease {
     const val REPOSITORY="Milozpace/Account-Preview"
-    fun discover(index:String,currentVersion:String,currentCode:Long,identifier:String,read:(String)->ByteArray):JSONObject? {
+    fun discover(index:String,currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource=UpdateSource.fromMarker(null),read:(String)->ByteArray):JSONObject? {
         val releases=JSONArray(index);var selected:JSONObject?=null
         for(i in 0 until releases.length()) {
             val release=releases.getJSONObject(i)
@@ -19,11 +19,12 @@ internal object UpdateRelease {
         val version=selected.getString("tag_name").removePrefix("v")
         val assets=selected.getJSONArray("assets")
         val manifestAsset=asset(assets,"release-manifest.json")
-        val manifestBytes=read(assetUrl(manifestAsset))
+        val manifestBytes=read(assetUrl(manifestAsset,source))
         val digest=manifestAsset.optString("digest")
         if(digest.startsWith("sha256:"))require(UpdatePolicy.digest(manifestBytes)==digest.removePrefix("sha256:"))
         val manifest=JSONObject(String(manifestBytes,Charsets.UTF_8))
         require(manifest.getInt("format")==1 && manifest.getString("distribution")=="public")
+        require(!manifest.optBoolean("updateTestOnly",false)||source.isTest)
         require(manifest.getString("version")==version && manifest.getString("tag")=="v$version")
         val nextCode=manifest.getLong("androidVersionCode")
         require(nextCode>currentCode && nextCode<=Int.MAX_VALUE)
@@ -35,16 +36,16 @@ internal object UpdateRelease {
         val zipAsset=asset(assets,platform.getString("asset"))
         val size=zipAsset.getLong("size");require(size in 1..UpdatePolicy.MAX_ZIP)
         return JSONObject().put("version",version).put("nativeVersion",manifest.getString("nativeVersion"))
-            .put("code",nextCode).put("commit",commit).put("zipHash",zipHash).put("url",assetUrl(zipAsset))
-            .put("size",size).put("notes",selected.optString("body").take(40_000))
+            .put("code",nextCode).put("commit",commit).put("zipHash",zipHash).put("url",assetUrl(zipAsset,source))
+            .put("size",size).put("notes",selected.optString("body").take(40_000)).put("sourceId",source.id).put("updateTestOnly",source.isTest)
     }
     private fun asset(assets:JSONArray,name:String):JSONObject {
         val matching=(0 until assets.length()).map{assets.getJSONObject(it)}.filter{it.getString("name")==name}
         require(matching.size==1);return matching.single()
     }
-    private fun assetUrl(asset:JSONObject):String {
+    private fun assetUrl(asset:JSONObject,source:UpdateSource):String {
         val url=asset.getString("browser_download_url")
-        require(UpdatePolicy.allowedUrl(url) && url.startsWith("https://github.com/$REPOSITORY/releases/download/"))
+        require(source.assetAllowed(url))
         return url
     }
 }

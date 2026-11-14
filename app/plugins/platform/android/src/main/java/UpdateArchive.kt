@@ -16,6 +16,7 @@ internal object UpdateArchive {
             val bytes=ByteArrayOutputStream()
             archive.getInputStream(metadata).use {UpdatePolicy.copyVerified(it,bytes,128*1024L,null,metadata.size)}
             val component=JSONObject(bytes.toString("UTF-8"))
+            require(!component.optBoolean("updateTestOnly",false)||candidate.optBoolean("updateTestOnly",false))
             require(component.getInt("format")==1 && component.getString("profile")=="preview" && component.getString("platform")=="android-arm64")
             require(component.getString("identifier")==identifier && component.getString("commit")==candidate.getString("commit"))
             require(component.getString("version")==candidate.getString("version") && component.getString("nativeVersion")==candidate.getString("nativeVersion"))
