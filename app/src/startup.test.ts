@@ -502,7 +502,7 @@ describe('native first run without pairing', () => {
 });
 
 describe('手机更新真实页面路由',()=>{
-  it('从我的进入检查更新，实际按钮点击依次触发下载和安装原生命令',async()=>{
+  it('从我的进入关于，版本入口实际触发下载和安装原生命令',async()=>{
     vi.resetModules();elements.clear();for(const button of navButtons)button.handlers={};
     invokeState.context={platform:'Android',preview:false};invokeState.seen=[];
     const actions:string[]=[];
@@ -521,7 +521,12 @@ describe('手机更新真实页面路由',()=>{
     };
     await import('./main');await flush(40);
     for(const handler of navButtons[2].handlers.click??[])handler();
-    activateRenderedButton('data-open','update');await flush(30);
+    expect(mainHtml()).not.toContain('data-open="update"');
+    activateRenderedButton('data-open','about');await flush(30);
+    expect(mainHtml()).toContain('生活账本');expect(mainHtml()).toContain('让数字回到生活里。');
+    expect(mainHtml()).toContain('>关于</h1>');expect(mainHtml()).not.toContain('aria-label="程序更新提醒"');
+    activateRenderedButton('data-update-action','check');await flush(30);
+    expect(actions).toContain('check');
     expect(mainHtml()).toContain('下载更新');
     activateRenderedButton('data-update-action','download');await flush(30);
     expect(actions).toContain('download');expect(mainHtml()).toContain('安装更新');

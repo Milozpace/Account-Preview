@@ -37,13 +37,13 @@ import {BillUploadSession,billUploadHtml,type BillUploadItem} from './bill-uploa
 import './bill-upload.css';
 import {BillUploadRefresh} from './bill-upload-refresh';
 import {showIncome} from './delivery-profile';
-import {MobileUpdateSession,updatePageHtml,updateReminderHtml,type UpdateAction} from './mobile-update';
+import {MobileUpdateSession,aboutPageHtml,updateReminderHtml,type UpdateAction} from './mobile-update';
 import './mobile-update.css';
 const appUpdates=new MobileUpdateSession(invoke);
 let updatePoll:ReturnType<typeof setTimeout>|undefined;
 
 function updateSurface():void {
-  if(state.view==='update')render();
+  if(state.view==='about'||state.view==='update')render();
   else {const reminder=document.querySelector<HTMLElement>('#program-update-reminder');if(reminder)reminder.innerHTML=updateReminderHtml(appUpdates.status);}
 }
 async function refreshAppUpdate(action?:UpdateAction):Promise<void> {
@@ -126,6 +126,7 @@ function open(screen:Screen):void {
   nav.open(screen,scroll());state.view=nav.current.view;state.detailId=screen.recordId??null;
   pushHistory();render('forward');restoreScroll(nav.current.scroll??0);focusHeading();
   if(screen.view==='upload')void loadBillUploads(false);
+  if(screen.view==='about')void refreshAppUpdate();
 }
 function selectRoot(root:RootView):void {
   if(!['home','analysis','my'].includes(root))return;
@@ -159,7 +160,7 @@ function back():void {
   window.history?.replaceState?.(historyState(),'');
   render('back');restoreScroll(nav.current.scroll??0);focusHeading();
 }
-const titles:Record<Screen['view'],string>={home:'总览',analysis:'分析',my:'我的',bills:'账单查询',pool:'资金池',detail:'账单详情',sync:'数据同步',settings:'应用设置',about:'关于',diagnostics:'开发与诊断',export:'导出账单',upload:'上传原始账单',update:'检查更新'};
+const titles:Record<Screen['view'],string>={home:'总览',analysis:'分析',my:'我的',bills:'账单查询',pool:'资金池',detail:'账单详情',sync:'数据同步',settings:'应用设置',about:'关于',diagnostics:'开发与诊断',export:'导出账单',upload:'上传原始账单',update:'关于'};
 function renderNav():void {
   for(const button of document.querySelectorAll<HTMLButtonElement>('.bottom-nav button')){
     const active=button.dataset.view===nav.root;button.classList.toggle('current',active);button.setAttribute?.('aria-current',active?'page':'false');
@@ -188,14 +189,14 @@ function settingsPageHtml():string {
 }
 function viewHtml():string {
   const month=currentMonth();
-  if(state.view==='update')return updatePageHtml(appUpdates.status);
+  if(state.view==='update'||(state.view==='about'&&state.android&&isTauri()&&!state.preview))return aboutPageHtml(appUpdates.status,state.version);
   if(state.view==='upload')return billUploadHtml(uploadSession,state.android&&isTauri()&&!state.preview);
   if(state.view==='export')return `<section class="analysis-export-page">${exportFormHtml(state.snapshot,state.exportMonth,showIncome)}</section>`;
   if(state.view==='sync')return syncHtml();
   if(state.view==='settings')return settingsPageHtml();
   if(state.view==='diagnostics')return mobile()?settingsPageHtml():diagnosticsHtml();
   if(state.view==='about')return `<section class="about"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>生活账本</h1><p>让数字回到生活里。</p><dl class="detail-list"><dt>版本</dt><dd>${escapeHtml(state.version||'开发预览')}</dd><dt>查看范围</dt><dd>当前快照中的近两个月</dd><dt>数据来源</dt><dd>已校验的 SQLite 账本展示快照</dd></dl></section>`;
-  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady(),state.android&&isTauri()&&!state.preview);
+  if(state.view==='my')return myHtml(state.snapshot,state.source==='cloud'?'已同步':state.snapshot?'本地数据可用':phonePhase()==='pair'?'未配对':phonePhase()==='connect'?'待设置同步':phoneReady()?'等待账单':'正在确认连接',phoneReady());
   if(!month)return state.loading?empty('正在打开生活账本','正在读取本地数据。'):onboardingHtml(state.ledger?.initialized??null,state.probeConfigured,state.probeSummaryLoaded,state.view==='analysis',state.checkingCloud);
   if(state.view==='bills')return mobileBills(month,nav.current.query??emptyQuery(),showIncome);
   if(state.view==='pool')return poolHtml(month,nav.current.poolId??'');
@@ -244,7 +245,7 @@ function render(transition:MobileTransition='none'):void {
   const root=!nav.canBack;
   const sampleNote=state.source==='sample'?'<p class="sample-note">合成预览数据，仅用于检查界面。真实数据将在同步后显示。</p>':'';
   const desktopSettings=!mobile()&&state.view==='settings';
-  main.innerHTML=`${root?'':`<div class="page-title-row"><button type="button" class="back-button" data-action="back" aria-label="${desktopSettings?'返回账本':'返回上一页'}">${uiIcon('left')}<span>${desktopSettings?'返回账本':'返回'}</span></button><h1 id="page-title" tabindex="-1">${desktopSettings?'设置':titles[state.view]}</h1></div>`}${sampleNote}<div id="program-update-reminder">${state.android&&state.view!=='update'?updateReminderHtml(appUpdates.status):''}</div><div id="view-content">${viewHtml()}</div>`;
+  main.innerHTML=`${root?'':`<div class="page-title-row"><button type="button" class="back-button" data-action="back" aria-label="${desktopSettings?'返回账本':'返回上一页'}">${uiIcon('left')}<span>${desktopSettings?'返回账本':'返回'}</span></button><h1 id="page-title" tabindex="-1">${desktopSettings?'设置':titles[state.view]}</h1></div>`}${sampleNote}<div id="program-update-reminder">${state.android&&!['about','update'].includes(state.view)?updateReminderHtml(appUpdates.status):''}</div><div id="view-content">${viewHtml()}</div>`;
   for(const [id,value,dirty] of drafts){
     const input=document.querySelector<HTMLInputElement>(`#${id}`);
     if(input&&value!==undefined&&(!['project-root','python-path'].includes(id)||dirty)){
@@ -411,7 +412,7 @@ main.addEventListener('click',event=>{
   if(button.id==='expand-categories'){state.expanded=!state.expanded;render();return;}
   const data=button.dataset;
   if(data.updateAction){void refreshAppUpdate(data.updateAction as UpdateAction);return;}
-  if(data.open==='update'){open({view:'update'});void refreshAppUpdate();return;}
+  if(data.open==='update'){open({view:'about'});return;}
   if(data.action==='clear-upload-failures'){uploadSession.clearFailures();render();return;}
   if(data.action==='retry-setup'){void retryPhoneSetup();return;}
   if(data.action==='sync-edit-connection'){state.editingConnection=true;render();document.querySelector<HTMLInputElement>('#account')?.focus?.();return;}
@@ -433,7 +434,7 @@ main.addEventListener('click',event=>{
 });
 function updateBusy():void {
   for(const button of document.querySelectorAll<HTMLButtonElement>('.actions button, .settings-save'))button.disabled=state.busy||Boolean(button.closest?.('.desktop-budget-settings')&&(budgetSession.busy||budgetSession.loading))||!isTauri()||state.preview;
-  if(mobile())for(const button of document.querySelectorAll<HTMLButtonElement>('.setup-primary, [data-action="retry-setup"]'))button.disabled=state.busy||state.checkingCloud||!isTauri()||state.preview;
+  if(mobile())for(const button of document.querySelectorAll<HTMLButtonElement>('.setup-primary:not(.update-primary), [data-action="retry-setup"]'))button.disabled=state.busy||state.checkingCloud||!isTauri()||state.preview;
   for(const button of document.querySelectorAll<HTMLButtonElement>('#bill-upload-choose, #bill-upload-check, [data-upload-retry]'))button.disabled=uploadSession.busy||!state.android||!isTauri()||state.preview;
   if(!mobile())for(const id of ['project-root','python-path']){const input=document.querySelector<HTMLInputElement>(`#${id}`);if(input)input.disabled=state.busy;}
   selector.disabled=!availableMonths(state.snapshot).length||state.busy;

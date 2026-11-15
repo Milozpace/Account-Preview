@@ -33,6 +33,7 @@ describe('mobile presentation', () => {
     const html=myHtml(null,'未连接');
     for(const view of ['bills','export','upload'])expect(html).not.toContain(`data-open="${view}"`);
     for(const view of ['sync','settings','about'])expect(html).toContain(`data-open="${view}"`);
+    expect(html).not.toContain('data-open="update"');
   });
   it('touch chart selections have explicit detail actions and escaped snapshot values',()=>{
     const record={...month.records[0],title:'<img onerror=bad>'};
