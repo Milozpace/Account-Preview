@@ -1,4 +1,5 @@
 import {escapeHtml as e} from '../../dashboard/src/helpers';
+import {uiIcon} from '../../dashboard/src/ui-icons';
 
 export type UpdateAction='check'|'auto'|'download'|'install'|'later'|'ignore';
 export interface UpdateStatus {
@@ -32,17 +33,35 @@ export class MobileUpdateSession {
   return this.pending;
  }
 }
-const button=(action:UpdateAction,label:string)=>`<button type="button" class="quiet-button" data-update-action="${action}">${label}</button>`;
+const button=(action:UpdateAction,label:string,primary=false)=>`<button type="button" class="${primary?'update-primary':'quiet-button'}" data-update-action="${action}">${label}</button>`;
+function updateNotesHtml(value:string):string {
+ const notes=value?.trim()||'暂无更新说明';
+ const content=`<pre class="update-notes">${e(notes)}</pre>`;
+ return notes.length>400||notes.split('\n').length>8?`<details class="update-notes-details"><summary>查看更新说明</summary>${content}</details>`:content;
+}
 export function updatePageHtml(status:UpdateStatus|null):string {
- if(!status)return '<section class="app-update"><p role="status">正在读取更新状态…</p></section>';
- if(!status.supported)return '<section class="app-update"><h2>程序更新</h2><p>个人版使用本机交付包，请通过 USB 覆盖安装对应身份的 APK。</p><p>个人包不在公开仓库分发。</p></section>';
- const target=status.target;
- const busy=status.phase==='checking'||status.phase==='downloading';
+ if(!status)return `<section class="settings app-update"><div class="card-block"><div class="update-status" role="status" aria-live="polite"><span class="update-symbol">${uiIcon('sync')}</span><h2>正在读取更新状态…</h2></div></div></section>`;
+ if(!status.supported)return '<section class="settings app-update"><div class="card-block"><h2>通过电脑更新</h2><p>个人版请使用 USB 安装对应的更新包。</p></div></section>';
+ const phase=status.phase;
+ // A manual recheck may retain the previous target in native state until it finishes.
+ const target=['available','downloading','ready','error'].includes(phase)?status.target:undefined;
+ const busy=phase==='checking'||phase==='downloading';
  const progress=Math.max(0,Math.min(100,Math.round(status.progress||0)));
- const label={idle:'检查是否有可用新版本',checking:'正在检查更新…',latest:'当前已是最新可用正式版',available:'发现新版本',downloading:`正在下载 ${progress}%`,ready:'安装包已校验，可以安装',error:'更新未能完成'}[status.phase];
- const install=status.installState==='permission'?'请开启“允许此来源安装应用”，返回后点“继续安装”。':status.installState==='opened'?'已打开系统安装器。若取消了安装，可再次点击；更新结果将在重新打开应用后核对。':'';
- const action=status.phase==='ready'?button('install',status.installState?'继续安装':'安装更新'):target&&!busy?button('download',status.phase==='error'?'重新下载':'下载更新'):'';
- return `<section class="app-update"><h2>程序更新</h2>${status.testChannel?'<p class="update-message">临时更新测试通道 · 非正式发布，测试结束后恢复正式源</p>':''}<p>当前版本 ${e(status.currentVersion||'未知')} <small>· 安装序号 ${status.currentCode}</small></p><p role="status" aria-live="polite">${label}</p>${status.message?`<p class="update-message">${e(status.message)}</p>`:''}${target?`<div class="card-block"><h3>新版本 ${e(target.version)}</h3><p>安装包约 ${(target.size/1024/1024).toFixed(1)} MB</p><pre class="update-notes">${e(target.notes||'本版未提供更新说明。')}</pre></div>`:''}${status.phase==='downloading'?`<progress max="100" value="${progress}" aria-label="安装包下载进度">${progress}%</progress>`:''}${install?`<p>${install}</p>`:''}<div class="actions">${action}${!busy?button('check','检查更新'):''}${target&&!busy?button('ignore','忽略此版本'):''}</div><details class="update-network"><summary>网络要求与更新原理</summary><p>检查和下载需要手机能访问 GitHub 的接口与发布资产，建议使用 Wi-Fi。仅点击下载后才获取安装包，不自动使用流量下载。</p><p>应用读取公开版本信息，下载组件包并校验哈希、应用身份和签名，再调起 Android 系统安装器；安装由你确认，沿用原应用数据。</p><p>如果当前网络无法访问 GitHub，可换可用网络，或使用电脑下载后通过 USB 覆盖安装。账本同步仍通过坚果云，与程序更新互相独立。</p></details></section>`;
+ const verifying=phase==='downloading'&&Boolean(status.message);
+ const installState=phase==='ready'?status.installState:undefined;
+ const label=installState==='permission'?'需要安装权限':installState==='opened'?'等待安装完成':{
+  idle:'检查应用更新',checking:'正在检查更新…',latest:'已是最新版本',available:'发现新版本',
+  downloading:verifying?status.message:`正在下载 ${progress}%`,ready:'更新已准备好',error:target?'更新未完成':'检查失败',
+ }[phase];
+ let message=busy?'':status.message;
+ if(message.startsWith('无法完成更新检查。')||message.startsWith('更新服务暂不可用'))message='无法连接更新服务，请检查网络后重试。';
+ const hint=message||(installState==='permission'?'请开启“允许此来源安装应用”，返回后继续安装。':installState==='opened'?'请在系统界面确认安装；若已取消，可再次打开。':'');
+ const icon=phase==='error'||message||installState==='permission'?'warning':phase==='latest'||phase==='ready'?'check':phase==='downloading'?'export':'sync';
+ const primary=busy?`<button type="button" class="update-primary" disabled>${phase==='checking'?'正在检查…':verifying?'正在复核…':'正在下载…'}</button>`:
+  phase==='ready'?button('install',installState==='permission'?'继续安装':installState==='opened'?'再次打开安装器':'安装更新',true):
+  target?button('download',phase==='error'?'重新下载':'下载更新',true):button('check',phase==='error'?'重试检查':'检查更新',true);
+ const secondary=target&&!busy?`<div class="update-secondary">${button('check','重新检查')}${button('ignore','忽略此版本')}</div>`:'';
+ return `<section class="settings app-update" data-phase="${phase}">${status.testChannel?'<p class="update-test-channel">临时更新测试通道 · 非正式发布</p>':''}<div class="card-block update-summary"><div class="update-status" role="status" aria-live="polite"><span class="update-symbol" aria-hidden="true">${uiIcon(icon)}</span><div><h2>${e(label)}</h2>${hint?`<p class="update-message">${e(hint)}</p>`:''}</div></div>${phase==='downloading'?`<progress max="100" value="${progress}" aria-label="安装包下载进度">${progress}%</progress>`:''}<dl class="update-version"><dt>当前版本</dt><dd>${e(status.currentVersion||'未知')}</dd></dl></div>${target?`<div class="card-block update-release"><div class="update-release-heading"><h3>新版本 ${e(target.version)}</h3><span>${(target.size/1024/1024).toFixed(1)} MB</span></div>${updateNotesHtml(target.notes)}</div>`:''}<div class="update-controls">${primary}${secondary}</div></section>`;
 }
 export function updateReminderHtml(status:UpdateStatus|null):string {
  if(!status?.supported||!status.remind||!status.target||!['available','ready'].includes(status.phase))return '';
