@@ -1,10 +1,10 @@
 {
-  "version": "0.4.0",
-  "tag": "v0.4.0",
+  "version": "0.4.1-rc.1",
+  "tag": "v0.4.1-rc.1",
   "channel": "private-preview",
   "repository": "Milozpace/Account-Preview",
-  "nativeVersion": "0.4.7",
-  "androidVersionCode": 4007,
+  "nativeVersion": "0.4.9",
+  "androidVersionCode": 4009,
   "profiles": {
     "preview": {
       "identifier": "com.account.preview",

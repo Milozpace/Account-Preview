@@ -4,7 +4,7 @@ Account 是一个以 Agent 为中心的记账系统。让 Agent 帮你整理、�
 
 账本保存在电脑本地的 SQLite 数据库中，预算和手机同步可以按需启用。
 
-**源码版本为 0.4.0，可下载版本以发布页为准。**
+**源码版本为 0.4.1-rc.1，可下载版本以发布页为准。**
 
 [下载发布版](https://github.com/Milozpace/Account-Preview/releases) · [开始使用](docs/开始使用.md) · [更新已有安装](docs/更新与恢复.md)
 
