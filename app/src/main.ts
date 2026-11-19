@@ -925,7 +925,7 @@ window.addEventListener('popstate',(event:PopStateEvent)=>{
   const restored=pendingParentNavigation??event.state?.accountNav;pendingParentNavigation=null;
   if(nav.restore(restored)){historyPosition=event.state?.accountPosition??historyPosition;reconcileNavigation();window.history?.replaceState?.(historyState(),'');render('back');restoreScroll(nav.current.scroll??0);focusHeading();}
 });
-window.addEventListener('keydown',(event:KeyboardEvent)=>{if(event.defaultPrevented||pickers?.isOpen)return;if(event.key==='Escape'&&pairingScanner.active){event.preventDefault();void cancelPairingScan();}else if(event.key==='Escape'&&nav.canBack){event.preventDefault();back();}});
+window.addEventListener('keydown',(event:KeyboardEvent)=>{if(event.defaultPrevented||pickers?.isOpen||document.querySelector<HTMLDialogElement>('#desktop-release')?.open)return;if(event.key==='Escape'&&pairingScanner.active){event.preventDefault();void cancelPairingScan();}else if(event.key==='Escape'&&nav.canBack){event.preventDefault();back();}});
 let previousMobile=mobile();
 window.addEventListener('resize',()=>{const next=mobile();if(next!==previousMobile){previousMobile=next;render();}});
 if(typeof window.matchMedia==='function')window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change',()=>{if(mobile())render();});

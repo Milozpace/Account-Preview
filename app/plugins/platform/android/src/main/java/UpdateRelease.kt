@@ -59,9 +59,10 @@ internal object UpdateRelease {
         val zipHash=platform.getString("sha256");require(UpdatePolicy.validHash(zipHash))
         val (url,bytes)=assetInfo(platform.getString("asset"))
         require(source.assetAllowed(url)&&bytes in 1..UpdatePolicy.MAX_ZIP)
+        val appNotes=(manifest.opt("appNotes") as? String)?.takeIf {it.isNotBlank()} ?: notes
         return JSONObject().put("version",version).put("nativeVersion",manifest.getString("nativeVersion"))
             .put("code",nextCode).put("commit",commit).put("zipHash",zipHash).put("url",url)
-            .put("size",bytes).put("notes",notes.take(40_000)).put("sourceId",source.id).put("updateTestOnly",source.isTest)
+            .put("size",bytes).put("notes",appNotes.take(40_000)).put("sourceId",source.id).put("updateTestOnly",source.isTest)
     }
     private fun asset(assets:JSONArray,name:String):JSONObject {
         val matching=(0 until assets.length()).map{assets.getJSONObject(it)}.filter{it.getString("name")==name}

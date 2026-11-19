@@ -125,10 +125,14 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             parent = Path(folder); root = parent/'repo'; commit = self.repository(root)
             assets = parent/'assets'; self.assets(root, assets, commit)
-            notes = parent/'notes.md'; notes.write_text('User supplied release notes.', encoding='utf-8')
+            notes = parent/'notes.md'; notes.write_text(
+                '## 本次更新\n### 查账更顺手\n- 支持按月查看。\n\n## 升级说明\n升级步骤\n## 给 Agent 的更新指引\n维护命令',
+                encoding='utf-8')
             result = release.prepare_release(root, assets, commit, notes)
             manifest = json.loads((assets/'release-manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(manifest['commit'], commit)
+            self.assertEqual(manifest['appNotes'], '### 查账更顺手\n- 支持按月查看。')
+            self.assertEqual(manifest['notesSha256'], release.sha(notes))
             self.assertEqual(manifest['snapshotSchema'],3)
             self.assertEqual(manifest['updateDocSha256'], release.sha(root/'docs/更新与恢复.md'))
             self.assertTrue((assets/'release-manifest.json').read_text(encoding='ascii'))

@@ -1,5 +1,6 @@
 import {escapeHtml as e} from '../../dashboard/src/helpers';
 import {uiIcon} from '../../dashboard/src/ui-icons';
+import {releaseCardHtml} from './release-notes';
 
 export type UpdateAction='check'|'auto'|'download'|'install'|'later'|'ignore';
 export interface UpdateStatus {
@@ -34,11 +35,6 @@ export class MobileUpdateSession {
  }
 }
 const button=(action:UpdateAction,label:string,primary=false)=>`<button type="button" class="${primary?'setup-primary update-primary':'quiet-button'}" data-update-action="${action}">${label}</button>`;
-function updateNotesHtml(value:string):string {
- const notes=value?.trim()||'暂无更新说明';
- const content=`<pre class="update-notes">${e(notes)}</pre>`;
- return notes.length>400||notes.split('\n').length>8?`<details class="update-notes-details"><summary>查看更新说明</summary>${content}</details>`:content;
-}
 export function aboutPageHtml(status:UpdateStatus|null,version=''):string {
  const identity=`<div class="about-identity"><div class="account-emblem" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>生活账本</h1><p class="about-tagline">让数字回到生活里。</p><p class="about-version">版本 ${e(status?.currentVersion||version||'开发预览')}</p></div>`;
  if(!status)return `<section class="about app-update">${identity}<div class="update-status" role="status" aria-live="polite"><p class="update-state">正在读取更新状态…</p></div></section>`;
@@ -62,7 +58,7 @@ export function aboutPageHtml(status:UpdateStatus|null,version=''):string {
   phase==='ready'?button('install',installState==='permission'?'继续安装':installState==='opened'?'再次打开安装器':'安装更新',true):
   target?button('download',phase==='error'?'重新下载':'下载更新',true):button('check',phase==='error'?'重试检查':'检查更新',true);
  const secondary=target&&!busy?`<div class="update-secondary">${button('check','重新检查')}${button('ignore','忽略此版本')}</div>`:'';
- return `<section class="about app-update" data-phase="${phase}">${identity}${status.testChannel?'<p class="update-test-channel">临时更新测试通道 · 非正式发布</p>':''}<div class="update-status" role="status" aria-live="polite">${label?`<p class="update-state"><span class="update-symbol" aria-hidden="true">${uiIcon(icon)}</span>${e(label)}</p>`:''}${hint?`<p class="update-message">${e(hint)}</p>`:''}${target?`<p class="update-target">${phase==='available'?'安装包':`新版本 ${e(target.version)} ·`} ${(target.size/1024/1024).toFixed(1)} MB</p>`:''}</div>${phase==='downloading'?`<progress max="100" value="${progress}" aria-label="安装包下载进度">${progress}%</progress>`:''}<div class="setup-actions">${primary}</div>${secondary}${target?`<div class="menu-group update-release"><h3>更新内容</h3>${updateNotesHtml(target.notes)}</div>`:''}</section>`;
+ return `<section class="about app-update" data-phase="${phase}">${identity}${status.testChannel?'<p class="update-test-channel">临时更新测试通道 · 非正式发布</p>':''}<div class="update-status" role="status" aria-live="polite">${label?`<p class="update-state"><span class="update-symbol" aria-hidden="true">${uiIcon(icon)}</span>${e(label)}</p>`:''}${hint?`<p class="update-message">${e(hint)}</p>`:''}${target?`<p class="update-target">${phase==='available'?'安装包':`新版本 ${e(target.version)} ·`} ${(target.size/1024/1024).toFixed(1)} MB</p>`:''}</div>${phase==='downloading'?`<progress max="100" value="${progress}" aria-label="安装包下载进度">${progress}%</progress>`:''}<div class="setup-actions">${primary}</div>${secondary}${target?releaseCardHtml(target,'available'):''}</section>`;
 }
 export function updateReminderHtml(status:UpdateStatus|null):string {
  if(!status?.supported||!status.remind||!status.target||!['available','ready'].includes(status.phase))return '';

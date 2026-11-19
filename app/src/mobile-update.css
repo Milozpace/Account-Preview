@@ -1,5 +1,7 @@
 /* Version and update actions live in the original About layout. */
 .about.app-update{min-width:0;padding-bottom:20px;}
+.about.app-update:has(.release-card){padding-top:22px;}
+.app-update:has(.release-card) .account-emblem{margin-bottom:14px;}
 .about-identity .about-tagline{margin:0;color:var(--muted);font-size:13px;}
 .about-identity .about-version{margin:18px 0 0;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
 .app-update .update-status{margin:12px auto 0;max-width:320px;min-height:22px;}
@@ -13,18 +15,11 @@
 .app-update button:focus-visible{outline:2px solid var(--accent);outline-offset:4px;}
 .update-secondary{display:flex;justify-content:center;flex-wrap:wrap;gap:4px 24px;margin-top:4px;}
 .update-secondary .quiet-button{min-height:44px;color:var(--muted);text-align:center;}
-.app-update .update-release{padding:18px;margin:24px 0 0;text-align:left;}
-#main .app-update .update-release h3{margin:0;font-size:15px;font-weight:500;}
-.update-notes{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:13px;line-height:1.8;color:var(--muted);margin:10px 0 0;}
 .app-update progress{display:block;width:100%;max-width:320px;height:6px;margin:16px auto 0;border:0;border-radius:6px;overflow:hidden;appearance:none;background:var(--line);accent-color:var(--accent);}
 .app-update progress::-webkit-progress-bar{background:var(--line);border-radius:6px;}
 .app-update progress::-webkit-progress-value{background:var(--accent);border-radius:6px;}
 .app-update progress::-moz-progress-bar{background:var(--accent);border-radius:6px;}
 .app-update .update-test-channel{margin:12px 0 0;font-size:12px;color:var(--warn);}
-.update-notes-details{margin-top:4px;}
-.update-notes-details summary{min-height:44px;padding:10px 0;color:var(--muted);font-size:13px;cursor:pointer;}
-.update-notes-details summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
-.update-notes-details .update-notes{margin-top:4px;}
 .update-reminder{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;margin-bottom:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);}
 .update-reminder>div{display:flex;gap:8px;flex-shrink:0;}
 .update-reminder strong{font-size:13px;}

@@ -1,0 +1,126 @@
+.release-card, .desktop-release {--release-accent: var(--accent, var(--sage));}
+.release-card {
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.app-update .release-card {
+  max-width: 440px;
+  margin: 20px auto 0;
+  border: 1px solid var(--line);
+}
+.release-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: clamp(18px, 5vw, 32px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--release-accent) 9%, var(--surface));
+}
+.release-card .release-version {
+  margin: 0 0 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.release-card-header h2, #main .release-card-header h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+#main .app-update .release-card-header h2 {font-size: 19px;}
+.release-illustration {
+  --tile: clamp(13px, 4vw, 23px);
+  display: grid;
+  place-items: center;
+  width: calc(4 * var(--tile));
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--release-accent) 23%, transparent);
+  border-radius: 50%;
+}
+.release-illustration span {
+  display: grid;
+  grid-template-columns: repeat(2, var(--tile));
+  grid-auto-rows: var(--tile);
+  gap: 3px;
+  rotate: -12deg;
+}
+.release-illustration i {border-radius: 4px;background: var(--release-accent);opacity: .3;}
+.release-illustration i:nth-child(2) {opacity: 1;translate: 3px -4px;}
+.release-illustration i:nth-child(3) {opacity: .58;}
+.release-illustration i:nth-child(4) {opacity: .76;}
+.release-card-body {
+  padding: 18px clamp(18px, 5vw, 32px) 20px;
+  overflow-wrap: anywhere;
+}
+.release-notes {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.release-notes :is(p, h3, ul), #main .release-notes h3 {margin: 0;}
+.release-notes h3, #main .release-notes h3, .release-notes strong {
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.release-notes h3:not(:first-child), #main .release-notes h3:not(:first-child) {margin-top: 6px;}
+.release-notes ul {display: grid;gap: 7px;padding-inline-start: 1.2em;}
+.release-notes li::marker {color: var(--release-accent);}
+.release-notes code {font-size: .94em;}
+.update-notes-details summary {display: list-item;min-height: 32px;cursor: pointer;font-size: 14px;}
+.update-notes-details[open] .release-notes {padding-top: 12px;}
+.desktop-release {
+  width: min(520px, calc(100% - 36px));
+  max-width: none;
+  max-height: calc(100% - 36px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 22px 80px #0004;
+}
+.desktop-release::backdrop {background: #12151466;}
+.release-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding: 12px clamp(18px, 5vw, 32px) 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.release-card-actions button {
+  min-height: 42px;
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--surface);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.release-card-actions button:hover {background: var(--release-accent);}
+.release-settings {display: none;}
+[data-release-notes] .release-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.update-notes-details summary:focus-visible, .desktop-release button:focus-visible {
+  outline: 2px solid var(--release-accent);
+  outline-offset: 3px;
+}

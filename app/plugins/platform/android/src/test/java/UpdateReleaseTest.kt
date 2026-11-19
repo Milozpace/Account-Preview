@@ -23,7 +23,12 @@ class UpdateReleaseTest {
         val index=JSONArray().put(release("0.4.9")).put(release("0.4.10")).put(release("1.0.0-rc.1",true)).put(release("2.0.0",false,true))
         val candidate=discover(index,manifest("0.4.10"))!!
         assertEquals("0.4.10",candidate.getString("version"));assertEquals(4008,candidate.getInt("code"));assertEquals(commit,candidate.getString("commit"))
+        assertEquals("合成更新说明",candidate.getString("notes"))
         assertNull(discover(JSONArray().put(release("0.4.0"))))
+    }
+    @Test fun prefersTheVersionBoundUserNotesOverTheFullReleaseBody() {
+        val metadata=manifest().put("appNotes","- 查账更顺手")
+        assertEquals("- 查账更顺手",discover(metadata=metadata)!!.getString("notes"))
     }
     @Test fun rejectsDowngradeIdentityTagCommitAndTamperedManifest() {
         val mutations=listOf<(JSONObject)->Unit>(
@@ -51,9 +56,10 @@ class UpdateReleaseTest {
             calls.add(url)
             if(url.startsWith("https://api.github.com/"))throw java.io.IOException("synthetic rate limit")
             assertEquals(UpdateRelease.LATEST_MANIFEST,url)
-            manifest().toString().toByteArray()
+            manifest().put("appNotes","- 即使回退也有更新说明").toString().toByteArray()
         },{url -> assertTrue(url.endsWith("/v0.4.1/android.zip"));500L})!!
         assertEquals("0.4.1",result.getString("version"));assertEquals(500L,result.getLong("size"))
+        assertEquals("- 即使回退也有更新说明",result.getString("notes"))
         assertEquals(2,calls.size)
     }
     @Test fun latestFallbackStillRejectsTestBuildAndDoesNotDownloadWhenCurrent() {

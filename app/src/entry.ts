@@ -1,6 +1,8 @@
 import {invoke,isTauri} from '@tauri-apps/api/core';
 import { mountMobileTheme, mountDesktopTheme, mountDesktopWindowTheme } from './mobile-theme';
 import {loadMotionPreference} from './mobile-preferences';
+import {mountDesktopRelease} from './release-notes';
+import './release-notes.css';
 
 async function start(){
   const native=isTauri();
@@ -21,6 +23,7 @@ async function start(){
   if(desktop&&!settings){const module=await import('./desktop');await import('./visual-system.css');module.startDesktop(context.preview);}
   else{const module=await import('./main');await import('./visual-system.css');if(settings)module.openAppSettings();document.querySelector<HTMLElement>('#app')!.hidden=false;}
   if(native&&desktop&&!context.preview){
+    void mountDesktopRelease(settings,()=>invoke('desktop_release_notes'));
     const goHome=()=>location.assign(location.pathname);
     const goSettings=()=>location.assign(location.pathname+'?panel=settings');
     window.addEventListener('keydown',event=>{

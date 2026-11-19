@@ -5,6 +5,15 @@ const status=(overrides:Partial<UpdateStatus>={}):UpdateStatus=>({supported:true
 const available=status({phase:'available',remind:true,target:{version:'0.4.1',nativeVersion:'0.4.8',code:4008,notes:'修复 <img src=x onerror=alert(1)>',size:8200000}});
 
 describe('手机程序更新',()=>{
+ it('以更新卡片呈现用户亮点，隐藏旧发布稿中的维护指引',()=>{
+  const notes='## 本次更新\n### 查账更顺手\n- 按 **月份** 查看\n\n## 升级说明\n兼容步骤\n## 给 Agent 的更新指引\n执行命令';
+  const html=aboutPageHtml({...available,target:{...available.target!,notes}});
+  expect(html).toContain('class="release-card"');
+  expect(html).toContain('查账更顺手');
+  expect(html).toContain('<strong>月份</strong>');
+  expect(html).not.toContain('兼容步骤');
+  expect(html).not.toContain('执行命令');
+ });
  it('关于保留原品牌介绍并合并版本和更新，读取状态前也显示已知版本',()=>{
   const html=aboutPageHtml(null,'0.4.0');
   expect(html).toContain('class="about app-update"');expect(html).toContain('account-emblem');

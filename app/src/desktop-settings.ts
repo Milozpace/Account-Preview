@@ -14,6 +14,7 @@ export function desktopSettingsHtml(options:SettingsOptions):string {
   <div class="settings-workspace">
    <section data-settings-panel="general"${hidden('general')} aria-labelledby="settings-general-title"><h2 id="settings-general-title">一般</h2>
     <div class="settings-surface settings-appearance"><div class="setting-heading">${uiIcon('settings')}<div><h3 id="appearance-label">外观</h3><p>选择账本的显示方式</p></div></div><div id="theme-preference" class="settings-segments" role="group" aria-labelledby="appearance-label">${([['system','跟随系统'],['light','浅色'],['dark','深色']] as const).map(([value,label])=>`<button type="button" data-theme-choice="${value}" aria-pressed="${theme===value}"><span class="theme-thumbnail theme-thumbnail-${value}" aria-hidden="true"><i></i><i></i><i></i></span><span>${label}</span>${uiIcon('check')}</button>`).join('')}</div></div>
+    <div class="settings-surface release-settings"><div class="setting-heading">${uiIcon('document')}<h3>本次更新</h3></div><button type="button" class="settings-save" data-open-release>查看更新说明</button></div>
    </section>
    <section data-settings-panel="budget"${hidden('budget')} aria-labelledby="settings-budget-title"><h2 id="settings-budget-title">四池预算</h2>${budgetContent}</section>
    <section data-settings-panel="sync"${hidden('sync')} aria-labelledby="settings-sync-title"><h2 id="settings-sync-title">手机与同步</h2>${syncContent}</section>

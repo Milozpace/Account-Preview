@@ -322,11 +322,13 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
     if omit_skill and distribution != 'personal-local': raise ValueError('只有个人本地交付可以省略公开 Skill。')
     data = personal_version.build_data(root, personal_version_file) if distribution == 'personal-local' else product_version.load(root)
     profiles = ('personal',) if distribution == 'personal-local' else ('preview',)
-    if not notes.is_file() or not notes.read_text(encoding='utf-8-sig').strip():
+    notes_bytes = notes.read_bytes() if notes.is_file() else b''
+    notes_text = notes_bytes.decode('utf-8-sig').strip()
+    if not notes_text:
         raise ValueError('须提供本人撰写的非空 notes 文件；工具不生成发布说明。')
     if notes.is_relative_to(root/'templates') or raw_notes.is_relative_to(root/'templates'):
         raise ValueError('模板目录不是本人发布说明；请另存并填写本机 notes 文件。')
-    if re.search(r'请本人填写|待填写|\b(?:TBD|TODO)\b', notes.read_text(encoding='utf-8-sig'), flags=re.IGNORECASE):
+    if re.search(r'请本人填写|待填写|\b(?:TBD|TODO)\b', notes_text, flags=re.IGNORECASE):
         raise ValueError('发布说明仍含占位内容；请本人完成后再准备。')
     if not directory.is_dir(): raise ValueError('候选组件目录不存在。')
     source_name = f"Account-{'Personal' if distribution == 'personal-local' else 'Preview'}-{data['version']}-source.zip"
@@ -339,7 +341,15 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
     manifest = dict(format=1, versionPolicy=data.get('versionPolicy', 'unified'), version=data['version'], tag=data['tag'], channel=data['channel'],
                     androidVersionCode=data['androidVersionCode'],
                     commit=commit, nativeVersion=data['nativeVersion'], ledgerSchema=1,
-                    profiles={}, notesSha256=sha(notes), distribution=distribution)
+                    profiles={}, notesSha256=hashlib.sha256(notes_bytes).hexdigest(), distribution=distribution)
+    # Keep maintenance instructions in the full Release body.
+    notes_text = notes_text.replace('\r\n', '\n').replace('\r', '\n')
+    app_section = re.search(r'^##[ \t]+本次更新[ \t]*#*[ \t]*\n(.*?)(?=^#{1,2}[ \t]|\Z)',
+                            notes_text, re.MULTILINE | re.DOTALL)
+    if app_section and (app_notes := app_section.group(1).strip()):
+        if len(app_notes.encode('utf-8')) > 32 * 1024:
+            raise ValueError('本次更新的应用内说明超过 32 KiB，请精简。')
+        manifest['appNotes'] = app_notes
     if distribution == 'personal-local':
         manifest.update(sourceVersion=data['sourceVersion'], androidVersionCode=data['androidVersionCode'],
                         skillPolicy='local-only')
@@ -383,7 +393,7 @@ def prepare_release(root, directory, commit, notes, distribution='public', perso
         else: source.write_bytes(candidate.read_bytes())
     manifest['source'] = {'asset': source_name, 'sha256': sha(source)}
     output = directory/'release-manifest.json'
-    output.write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    output.write_text(json.dumps(manifest, ensure_ascii=True, indent=2)+'\n', encoding='utf-8')
     checksums(directory)
     return {'ok': True, 'manifest': str(output), 'commit': commit, 'published': False,
             'distribution': distribution, 'assets': sorted(allowed)}

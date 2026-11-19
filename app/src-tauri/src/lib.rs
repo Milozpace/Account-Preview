@@ -13,6 +13,7 @@ mod probe;
 mod probe_cache;
 mod probe_sync;
 mod probe_transaction;
+mod release_notes;
 mod sync_issue;
 mod tls;
 mod webdav;
@@ -145,6 +146,7 @@ pub fn run() {
             bill_upload::bill_upload_retry,
             mobile_update::mobile_update_status,
             mobile_update::mobile_update_action,
+            release_notes::desktop_release_notes,
             app_context,
             app_version
         ])
