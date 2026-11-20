@@ -2,13 +2,33 @@ package com.account.platform
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+internal class UpdateRateLimited(private val retryAtSeconds:Long?) : IOException("GitHub update catalog rate limit") {
+    fun userMessage(nowSeconds:Long=System.currentTimeMillis()/1000):String {
+        val retry=retryAtSeconds?.takeIf {it>nowSeconds && it-nowSeconds<=24*60*60}
+        if(retry==null)return "GitHub 版本列表暂时限流，请稍后重试。"
+        val minute=(retry+(60-retry%60)%60)*1000
+        val time=SimpleDateFormat("HH:mm",Locale.ROOT).format(Date(minute))
+        return "GitHub 版本列表暂时限流，请于 ${time} 后重试。"
+    }
+}
+
+internal data class UpdateDiscovery(val candidate:JSONObject?,val prereleaseCheckUnavailable:Exception?=null)
 
 /** Release/manifest contract kept independent of Android and tested with synthetic fixtures. */
 internal object UpdateRelease {
     const val REPOSITORY="Milozpace/Account-Preview"
     fun discover(index:String,currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource=UpdateSource.fromMarker(null),
-        includePrereleases:Boolean=false,read:(String)->ByteArray):JSONObject? {
-        val releases=JSONArray(index);var selected:JSONObject?=null
+        includePrereleases:Boolean=false,read:(String)->ByteArray):JSONObject? =
+        discoverCatalog(JSONArray(index),currentVersion,currentCode,identifier,source,includePrereleases,read)
+
+    private fun discoverCatalog(releases:JSONArray,currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource,
+        includePrereleases:Boolean,read:(String)->ByteArray):JSONObject? {
+        var selected:JSONObject?=null
         for(i in 0 until releases.length()) {
             val release=releases.getJSONObject(i)
             if(release.optBoolean("draft",true))continue
@@ -33,23 +53,39 @@ internal object UpdateRelease {
     }
     const val LATEST_MANIFEST="https://github.com/$REPOSITORY/releases/latest/download/release-manifest.json"
     fun discoverAvailable(currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource,
-        read:(String)->ByteArray,size:(String)->Long,includePrereleases:Boolean=false):JSONObject? {
-        val index=try {read(source.catalogUrl)} catch(error:Exception) {
-            if(source.isTest)throw error
-            val manifest=JSONObject(String(read(LATEST_MANIFEST),Charsets.UTF_8))
-            val version=manifest.getString("version")
-            require(UpdatePolicy.isPrerelease(version)==false)
-            val stable=candidate(manifest,version,currentVersion,currentCode,identifier,source,
-                manifest.optString("notes").ifBlank {"暂未读取到更新说明，可在 GitHub 发布页查看。"}) {name ->
-                require(Regex("[A-Za-z0-9_.-]+\\.zip").matches(name)&&!name.contains(".."))
-                val url="https://github.com/$REPOSITORY/releases/download/v$version/$name"
-                Pair(url,size(url))
-            }
-            // The latest endpoint cannot establish that there are no newer prereleases.
-            if(stable==null&&includePrereleases)throw error
-            return stable
+        read:(String)->ByteArray,size:(String)->Long,includePrereleases:Boolean=false):UpdateDiscovery {
+        val staticCatalog=source.staticCatalogUrl?.let {url ->
+            try {
+                val index=JSONObject(String(read(url),Charsets.UTF_8))
+                require(index.getInt("format")==1)
+                index.getJSONArray("releases")
+            } catch (_:Exception) {null}
         }
-        return discover(String(index,Charsets.UTF_8),currentVersion,currentCode,identifier,source,includePrereleases,read)
+        val catalog=staticCatalog ?: try {
+            JSONArray(String(read(source.catalogUrl),Charsets.UTF_8))
+        } catch(error:Exception) {
+            if(source.isTest)throw error
+            val stable=try {
+                latestStable(currentVersion,currentCode,identifier,source,read,size)
+            } catch (fallbackError:Exception) {
+                throw if(error is UpdateRateLimited)error else fallbackError
+            }
+            return UpdateDiscovery(stable,error.takeIf {includePrereleases})
+        }
+        return UpdateDiscovery(discoverCatalog(catalog,currentVersion,currentCode,identifier,source,includePrereleases,read))
+    }
+
+    private fun latestStable(currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource,
+        read:(String)->ByteArray,size:(String)->Long):JSONObject? {
+        val manifest=JSONObject(String(read(LATEST_MANIFEST),Charsets.UTF_8))
+        val version=manifest.getString("version")
+        require(UpdatePolicy.isPrerelease(version)==false)
+        return candidate(manifest,version,currentVersion,currentCode,identifier,source,
+            manifest.optString("notes").ifBlank {"暂未读取到更新说明，可在 GitHub 发布页查看。"}) {name ->
+            require(Regex("[A-Za-z0-9_.-]+\\.zip").matches(name)&&!name.contains(".."))
+            val url="https://github.com/$REPOSITORY/releases/download/v$version/$name"
+            Pair(url,size(url))
+        }
     }
     private fun candidate(manifest:JSONObject,version:String,currentVersion:String,currentCode:Long,identifier:String,
         source:UpdateSource,notes:String,assetInfo:(String)->Pair<String,Long>):JSONObject? {

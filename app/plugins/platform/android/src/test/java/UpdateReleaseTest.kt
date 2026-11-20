@@ -30,6 +30,24 @@ class UpdateReleaseTest {
         val metadata=manifest().put("appNotes","- 查账更顺手")
         assertEquals("- 查账更顺手",discover(metadata=metadata)!!.getString("notes"))
     }
+    @Test fun staticIndexDiscoversPrereleaseWithoutAnAnonymousApiRequest() {
+        val version="0.4.2-rc.1"
+        val calls=mutableListOf<String>()
+        val indexUrl="https://raw.githubusercontent.com/Milozpace/Account-Preview/android-update-index/android-updates.json"
+        val manifestUrl="https://github.com/Milozpace/Account-Preview/releases/download/v$version/release-manifest.json"
+        val result=UpdateRelease.discoverAvailable("0.4.1",4007,"com.account.preview",UpdateSource.fromMarker(null),{url ->
+            calls.add(url)
+            when(url) {
+                indexUrl -> JSONObject().put("format",1).put("releases",JSONArray().put(release(version,true))).toString().toByteArray()
+                manifestUrl -> manifest(version).put("appNotes","- 新版说明").toString().toByteArray()
+                else -> error("Unexpected request: $url")
+            }
+        },{error("index already supplies asset size")},includePrereleases=true)
+        assertEquals(version,result.candidate!!.getString("version"))
+        assertEquals("- 新版说明",result.candidate.getString("notes"))
+        assertNull(result.prereleaseCheckUnavailable)
+        assertEquals(listOf(indexUrl,manifestUrl),calls)
+    }
     @Test fun autoFindsTheStableSuccessorFromAnRcAndManualCanChooseTheNewestPrerelease() {
         val index=JSONArray().put(release("0.4.2-rc.9",true)).put(release("0.4.2-rc.10",true))
             .put(release("0.4.1")).put(release("0.5.0-rc.1",true,true))
@@ -38,7 +56,7 @@ class UpdateReleaseTest {
             "0.4.1-rc.1",4007,"com.account.preview",UpdateSource.fromMarker(null),{url ->
                 if(url.startsWith("https://api.github.com/"))index.toString().toByteArray()
                 else manifest(url.substringAfter("/download/v").substringBefore('/')).put("appNotes","- 版本说明").toString().toByteArray()
-            },{ fail("catalog already provides asset size");0L },includePrereleases=manual)
+            },{ fail("catalog already provides asset size");0L },includePrereleases=manual).candidate
         assertEquals("0.4.1",check(false)!!.getString("version"))
         val prerelease=check(true)!!
         assertEquals("0.4.2-rc.10",prerelease.getString("version"))
@@ -75,26 +93,37 @@ class UpdateReleaseTest {
         val calls=mutableListOf<String>()
         val result=UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",UpdateSource.fromMarker(null),{url ->
             calls.add(url)
+            if(url==UpdateSource.PUBLIC_CATALOG)throw java.io.IOException("static index unavailable")
             if(url.startsWith("https://api.github.com/"))throw java.io.IOException("synthetic rate limit")
             assertEquals(UpdateRelease.LATEST_MANIFEST,url)
             manifest().put("appNotes","- 即使回退也有更新说明").toString().toByteArray()
-        },{url -> assertTrue(url.endsWith("/v0.4.1/android.zip"));500L})!!
+        },{url -> assertTrue(url.endsWith("/v0.4.1/android.zip"));500L}).candidate!!
         assertEquals("0.4.1",result.getString("version"));assertEquals(500L,result.getLong("size"))
         assertEquals("- 即使回退也有更新说明",result.getString("notes"))
-        assertEquals(2,calls.size)
+        assertEquals(listOf(UpdateSource.PUBLIC_CATALOG,UpdateSource.fromMarker(null).catalogUrl,UpdateRelease.LATEST_MANIFEST),calls)
     }
     @Test fun latestFallbackStillRejectsTestBuildAndDoesNotDownloadWhenCurrent() {
+        val rateLimit=UpdateRateLimited(null)
         fun read(url:String,metadata:JSONObject):ByteArray {
-            if(url.startsWith("https://api.github.com/"))throw java.io.IOException("synthetic rate limit")
+            if(url==UpdateSource.PUBLIC_CATALOG)return """{"format":2,"releases":[]}""".toByteArray()
+            if(url.startsWith("https://api.github.com/"))throw rateLimit
             return metadata.toString().toByteArray()
         }
-        assertNull(UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest())},{fail("no package probe when latest");0L}))
-        try {
-            UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",UpdateSource.fromMarker(null),
-                {read(it,manifest())},{fail("no package probe when latest");0L},includePrereleases=true)
-            fail("stable fallback cannot say a manual check found no prereleases")
-        } catch (_:java.io.IOException) {}
-        try {UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest().put("updateTestOnly",true))},{500L});fail("no test fallback") }catch(_:IllegalArgumentException){}
+        val source=UpdateSource.fromMarker(null)
+        val automatic=UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",source,
+            {read(it,manifest())},{fail("no package probe when latest");0L})
+        assertNull(automatic.candidate)
+        assertNull(automatic.prereleaseCheckUnavailable)
+        val manual=UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",source,
+            {read(it,manifest())},{fail("no package probe when latest");0L},includePrereleases=true)
+        assertNull(manual.candidate)
+        assertSame(rateLimit,manual.prereleaseCheckUnavailable)
+        try {UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",source,{read(it,manifest().put("updateTestOnly",true))},{500L});fail("no test fallback") }catch(error:UpdateRateLimited){assertSame(rateLimit,error)}
+    }
+    @Test fun rateLimitMessageUsesResetOnlyWhenItIsStillUseful() {
+        val rateLimit=UpdateRateLimited(10_000)
+        assertTrue(rateLimit.userMessage(9_900).contains(Regex("请于 [0-9]{2}:[0-9]{2} 后重试")))
+        assertEquals("GitHub 版本列表暂时限流，请稍后重试。",rateLimit.userMessage(10_001))
     }
     private fun component()=JSONObject().put("format",1).put("version","0.4.1").put("nativeVersion","0.4.8").put("androidVersionCode",4008)
         .put("commit",commit).put("identifier","com.account.preview").put("profile","preview").put("platform","android-arm64")

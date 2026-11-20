@@ -37,6 +37,7 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
     private var apkHash=""
     private var manualResult=false
     private var manualCheckPending=false
+    private var stableOnly=true
 
     init {
         // Revalidate asynchronously after process death; stale cache cannot become installable.
@@ -70,7 +71,7 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
             UpdatePolicy.shouldRemind(candidate.getString("version"),preferences.getString("ignored","")?:"",preferences.getLong("deferUntil",0),System.currentTimeMillis())
         val result=JSONObject().put("supported",supported).put("currentVersion",productVersion).put("currentCode",currentCode)
             .put("phase",phase).put("message",message).put("progress",progress).put("remind",remind)
-            .put("testChannel",source.isTest).put("stableOnly",!manualResult)
+            .put("testChannel",source.isTest).put("stableOnly",stableOnly)
         if(installState.isNotEmpty())result.put("installState",installState)
         // URLs, paths, commits and hash state are not accepted from or exposed to the WebView.
         if(candidate!=null) result.put("target",JSONObject().put("version",candidate.getString("version"))
@@ -111,7 +112,7 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
     }
     private fun startCheck(manual:Boolean,now:Long) {
         preferences.edit().putLong("lastCheck",now).apply()
-        manualResult=manual;message="";installState="";phase="checking"
+        manualResult=manual;stableOnly=!manual;message="";installState="";phase="checking"
         executor.execute {check(manual)}
     }
     // A tap during a stable-only check must still fetch the prerelease catalog results.
@@ -123,23 +124,27 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
     }
     private fun check(manual: Boolean) {
         try {
-            val candidate=UpdateRelease.discoverAvailable(productVersion,currentCode,activity.packageName,source,
+            val discovery=UpdateRelease.discoverAvailable(productVersion,currentCode,activity.packageName,source,
                 {readBytes(it,2*1024*1024L)}, {url -> fetch(url,"HEAD"){it.contentLengthLong}},includePrereleases=manual)
+            val candidate=discovery.candidate
             synchronized(this) {
                 if(startPendingManualCheck())return
+                val partial=discovery.prereleaseCheckUnavailable
+                stableOnly=!manual||partial!=null
+                message=if(partial==null)"" else "正式版已检查，预发布版暂时无法确认。"+(partial as? UpdateRateLimited)?.userMessage().orEmpty()
                 if(candidate==null) {
                     // A stable-only check cannot invalidate a manually selected prerelease.
-                    if(!manual&&target?.let {UpdatePolicy.isPrerelease(it.getString("version"))}==true) {
+                    if(stableOnly&&target?.let {UpdatePolicy.isPrerelease(it.getString("version"))}==true) {
                         phase=if(apk.isFile&&apkHash.isNotEmpty())"ready" else "available"
                         return
                     }
-                    clearReady();target=null;phase="latest";message=""
+                    clearReady();target=null;phase="latest"
                     return
                 }
                 // A recheck must not discard a fully validated package for the same target.
                 val same=target?.optString("zipHash")==candidate.getString("zipHash") && apk.isFile && apkHash.isNotEmpty()
                 if(!same)clearReady()
-                target=candidate;phase=if(same)"ready" else "available";message=""
+                target=candidate;phase=if(same)"ready" else "available"
             }
         } catch (error: Exception) {
             android.util.Log.w("AccountUpdate","check failed: ${error.javaClass.simpleName}")
@@ -147,7 +152,8 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
                 if(startPendingManualCheck())return
                 val showFailure=manual
                 phase=UpdatePolicy.phaseAfterCheckFailure(showFailure,apkHash.isNotEmpty()&&apk.isFile,target!=null)
-                message=if(showFailure)"无法完成更新检查。请确认可访问 GitHub 接口及下载服务，稍后重试；也可使用 USB 安装。" else ""
+                message=if(showFailure)(error as? UpdateRateLimited)?.userMessage()
+                    ?: "无法完成更新检查。请确认可访问 GitHub 接口及下载服务，稍后重试；也可使用 USB 安装。" else ""
             }
         }
     }
@@ -241,7 +247,16 @@ internal class MobileUpdater(private val activity: Activity, compiledVersion: St
                 if(response in setOf(301,302,303,307,308)) {
                     url=URL(URL(url),connection.getHeaderField("Location") ?: error("redirect")).toString()
                 } else {
-                    if(response!=200)android.util.Log.w("AccountUpdate","HTTP status $response")
+                    if(response!=200) {
+                        android.util.Log.w("AccountUpdate","HTTP status $response")
+                        val retryDelay=connection.getHeaderField("Retry-After")?.toLongOrNull()?.takeIf {it in 1..86400}
+                        val quotaEmpty=connection.getHeaderField("X-RateLimit-Remaining")=="0"
+                        if(URL(url).host=="api.github.com" && (response==429 || (response==403 && (quotaEmpty||retryDelay!=null)))) {
+                            val retryAt=retryDelay?.let {System.currentTimeMillis()/1000+it}
+                                ?: connection.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()
+                            throw UpdateRateLimited(retryAt)
+                        }
+                    }
                     require(response==200);return read(connection)
                 }
             } finally {connection.disconnect()}

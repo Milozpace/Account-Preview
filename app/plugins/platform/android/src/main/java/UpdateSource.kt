@@ -8,7 +8,8 @@ internal class UpdateSource private constructor(private val prefix:String?,val p
     val isTest:Boolean get()=prefix!=null
     val id:String get()=prefix?:"github-public-v1"
     val catalogUrl:String get()=prefix?.plus("releases.json")?:"https://api.github.com/repos/${UpdateRelease.REPOSITORY}/releases?per_page=100"
-    fun allows(value:String):Boolean=UpdatePolicy.allowedUrl(value)||testAsset(value)
+    val staticCatalogUrl:String? get()=if(isTest)null else PUBLIC_CATALOG
+    fun allows(value:String):Boolean=UpdatePolicy.allowedUrl(value)||value==staticCatalogUrl||testAsset(value)
     fun assetAllowed(value:String):Boolean=if(isTest)testAsset(value) else
         UpdatePolicy.allowedUrl(value)&&value.startsWith("https://github.com/${UpdateRelease.REPOSITORY}/releases/download/")
     private fun testAsset(value:String):Boolean {
@@ -22,6 +23,7 @@ internal class UpdateSource private constructor(private val prefix:String?,val p
     }
     companion object {
         const val MARKER="account-update-test.json"
+        const val PUBLIC_CATALOG="https://raw.githubusercontent.com/${UpdateRelease.REPOSITORY}/android-update-index/android-updates.json"
         fun fromMarker(marker:String?):UpdateSource {
             if(marker==null)return UpdateSource(null,null)
             val data=JSONObject(marker)

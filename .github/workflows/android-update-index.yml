@@ -1,0 +1,59 @@
+name: Refresh Android update index
+
+on:
+  release:
+    types: [published, unpublished, edited, deleted]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/android-update-index.yml
+      - scripts/android_update_index.py
+      - scripts/product_version.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-update-index
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.repository == 'Milozpace/Account-Preview'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the index from published Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/android-release-pages.json"
+          python scripts/android_update_index.py "$RUNNER_TEMP/android-updates.json" < "$RUNNER_TEMP/android-release-pages.json"
+      - name: Update the public index branch
+        run: |
+          set -euo pipefail
+          ref=refs/heads/android-update-index
+          tree="$RUNNER_TEMP/android-update-index-tree"
+          status=0
+          git ls-remote --exit-code --heads origin "$ref" || status=$?
+          case "$status" in
+            0) git fetch --no-tags --depth=1 origin "$ref"
+               git worktree add --detach "$tree" FETCH_HEAD ;;
+            2) git worktree add --detach "$tree" HEAD
+               git -C "$tree" switch --orphan android-update-index ;;
+            *) exit "$status" ;;
+          esac
+          cp "$RUNNER_TEMP/android-updates.json" "$tree/android-updates.json"
+          git -C "$tree" add -- android-updates.json
+          if git -C "$tree" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "$tree" -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Refresh published Android update index"
+          git -C "$tree" push origin "HEAD:$ref"

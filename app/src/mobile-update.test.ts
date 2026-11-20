@@ -53,6 +53,9 @@ describe('手机程序更新',()=>{
   expect(aboutPageHtml(status({phase:'latest'}))).toContain('已是最新版本');
   const stableOnly={...status({phase:'latest'}),stableOnly:true};
   expect(aboutPageHtml(stableOnly)).toContain('未发现新版正式版');
+  const partial=aboutPageHtml({...stableOnly,message:'正式版已检查，预发布版暂时无法确认。GitHub 版本列表暂时限流，请于 10:39 后重试。'});
+  expect(partial).toContain('预发布版暂时无法确认');
+  expect(partial).toContain('10:39 后重试');
   const checking=aboutPageHtml({...available,phase:'checking'});
   expect(checking).toContain('正在检查更新');expect(checking).toContain('disabled');
   expect(checking).not.toContain('data-update-action="download"');expect(checking).not.toContain('0.4.1');
