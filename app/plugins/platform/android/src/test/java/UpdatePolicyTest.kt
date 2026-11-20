@@ -6,12 +6,25 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
 class UpdatePolicyTest {
-    @Test fun stableVersionsCompareNumericallyAndRejectPreview() {
+    @Test fun automaticDiscoveryAcceptsStableTargetsAndCanUpgradeFromAnRc() {
         assertTrue(UpdatePolicy.newerStable("0.4.10", "0.4.9"))
+        assertTrue(UpdatePolicy.newerStable("0.4.1", "0.4.1-rc.1"))
+        assertFalse(UpdatePolicy.newerStable("0.4.1", "0.4.2-rc.1"))
         assertFalse(UpdatePolicy.newerStable("0.4.0", "0.4.0"))
         assertFalse(UpdatePolicy.newerStable("0.5.0-rc.1", "0.4.0"))
         assertFalse(UpdatePolicy.newerStable("01.4.1", "0.4.0"))
         assertFalse(UpdatePolicy.newerStable("0.4.1/evil", "0.4.0"))
+    }
+    @Test fun productVersionOrderMatchesAlphaBetaPreviewRcAndStable() {
+        val ascending=listOf("0.4.0","0.4.1-alpha.0","0.4.1-beta.1","0.4.1-preview.1","0.4.1-rc.2","0.4.1-rc.10","0.4.1")
+        for((previous,next) in ascending.zipWithNext()) {
+            assertTrue(UpdatePolicy.newer(next,previous))
+            assertFalse(UpdatePolicy.newer(previous,next))
+        }
+        assertFalse(UpdatePolicy.newer("0.4.1-preview.0","0.4.0"))
+        assertFalse(UpdatePolicy.newer("0.4.1-rc.01","0.4.0"))
+        assertFalse(UpdatePolicy.newer("0.4.1-rc.1","0.4.1-rc.1"))
+        assertTrue(UpdatePolicy.newer("0.4.1-rc.10000000000","0.4.1-rc.9999999999"))
     }
     @Test fun transportRejectsCleartextCredentialsPortsAndLookalikeHosts() {
         assertTrue(UpdatePolicy.allowedUrl("https://api.github.com/repos/Milozpace/Account-Preview/releases"))
@@ -31,6 +44,7 @@ class UpdatePolicyTest {
         assertFalse(UpdatePolicy.shouldRemind("0.4.1", "0.4.1", 0, 100))
         assertFalse(UpdatePolicy.shouldRemind("0.4.1", "", 200, 100))
         assertTrue(UpdatePolicy.shouldRemind("0.4.2", "0.4.1", 0, 100))
+        assertFalse(UpdatePolicy.shouldRemind("0.4.2-rc.1", "", 0, 100))
     }
     @Test fun failedRecheckPreservesReadyPackageAndUserCanStillInstall() {
         assertEquals("ready",UpdatePolicy.phaseAfterCheckFailure(true,true,true))

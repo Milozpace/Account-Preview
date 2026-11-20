@@ -8,8 +8,9 @@ export interface UpdateStatus {
  phase:'idle'|'checking'|'latest'|'available'|'downloading'|'ready'|'error';
  message:string;progress:number;remind:boolean;
  testChannel?:boolean;
+ stableOnly?:boolean;
  installState?:'permission'|'opened';
- target?:{version:string;nativeVersion:string;code:number;notes:string;size:number};
+ target?:{version:string;nativeVersion:string;code:number;notes:string;size:number;prerelease?:boolean};
 }
 type Invoke=<T>(command:string,args?:Record<string,unknown>)=>Promise<T>;
 export class MobileUpdateSession {
@@ -47,7 +48,8 @@ export function aboutPageHtml(status:UpdateStatus|null,version=''):string {
  const verifying=phase==='downloading'&&Boolean(status.message);
  const installState=phase==='ready'?status.installState:undefined;
  const label=installState==='permission'?'需要安装权限':installState==='opened'?'等待安装完成':{
-  idle:'',checking:'正在检查更新…',latest:'已是最新版本',available:`发现新版本${target?' '+target.version:''}`,
+  idle:'',checking:'正在检查更新…',latest:status.stableOnly?'未发现新版正式版':'已是最新版本',
+  available:`发现${target?.prerelease?'预发布版本':'新版本'}${target?' '+target.version:''}`,
   downloading:verifying?status.message:`正在下载 ${progress}%`,ready:'更新已准备好',error:target?'更新未完成':'检查失败',
  }[phase];
  let message=busy?'':status.message;
@@ -57,10 +59,10 @@ export function aboutPageHtml(status:UpdateStatus|null,version=''):string {
  const primary=busy?`<button type="button" class="setup-primary update-primary" disabled>${phase==='checking'?'检查更新':verifying?'正在复核…':'正在下载…'}</button>`:
   phase==='ready'?button('install',installState==='permission'?'继续安装':installState==='opened'?'再次打开安装器':'安装更新',true):
   target?button('download',phase==='error'?'重新下载':'下载更新',true):button('check',phase==='error'?'重试检查':'检查更新',true);
- const secondary=target&&!busy?`<div class="update-secondary">${button('check','重新检查')}${button('ignore','忽略此版本')}</div>`:'';
+ const secondary=target&&!busy?`<div class="update-secondary">${button('check','重新检查')}${target.prerelease?'':button('ignore','忽略此版本')}</div>`:'';
  return `<section class="about app-update" data-phase="${phase}">${identity}${status.testChannel?'<p class="update-test-channel">临时更新测试通道 · 非正式发布</p>':''}<div class="update-status" role="status" aria-live="polite">${label?`<p class="update-state"><span class="update-symbol" aria-hidden="true">${uiIcon(icon)}</span>${e(label)}</p>`:''}${hint?`<p class="update-message">${e(hint)}</p>`:''}${target?`<p class="update-target">${phase==='available'?'安装包':`新版本 ${e(target.version)} ·`} ${(target.size/1024/1024).toFixed(1)} MB</p>`:''}</div>${phase==='downloading'?`<progress max="100" value="${progress}" aria-label="安装包下载进度">${progress}%</progress>`:''}<div class="setup-actions">${primary}</div>${secondary}${target?releaseCardHtml(target,'available'):''}</section>`;
 }
 export function updateReminderHtml(status:UpdateStatus|null):string {
- if(!status?.supported||!status.remind||!status.target||!['available','ready'].includes(status.phase))return '';
+ if(!status?.supported||!status.remind||!status.target||status.target.prerelease||!['available','ready'].includes(status.phase))return '';
  return `<aside class="update-reminder" aria-label="程序更新提醒"><strong>新版本 ${e(status.target.version)}${status.phase==='ready'?' 已可安装':''}</strong><div><button type="button" class="quiet-button" data-open="about">查看更新</button>${button('later','稍后提醒')}</div></aside>`;
 }

@@ -28,7 +28,7 @@ internal class UpdateSource private constructor(private val prefix:String?,val p
             require(data.getInt("format")==1&&data.getBoolean("updateTestOnly"))
             val branch=data.getString("branch")
             require(Regex("codex/update-download-test-[0-9]{8}").matches(branch))
-            val version=data.getString("productVersion");require(UpdatePolicy.stableKey(version)!=null)
+            val version=data.getString("productVersion");require(UpdatePolicy.isPrerelease(version)==false)
             return UpdateSource("https://raw.githubusercontent.com/${UpdateRelease.REPOSITORY}/$branch/",version)
         }
     }

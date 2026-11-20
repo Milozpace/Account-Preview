@@ -6,14 +6,17 @@ import org.json.JSONObject
 /** Release/manifest contract kept independent of Android and tested with synthetic fixtures. */
 internal object UpdateRelease {
     const val REPOSITORY="Milozpace/Account-Preview"
-    fun discover(index:String,currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource=UpdateSource.fromMarker(null),read:(String)->ByteArray):JSONObject? {
+    fun discover(index:String,currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource=UpdateSource.fromMarker(null),
+        includePrereleases:Boolean=false,read:(String)->ByteArray):JSONObject? {
         val releases=JSONArray(index);var selected:JSONObject?=null
         for(i in 0 until releases.length()) {
             val release=releases.getJSONObject(i)
-            if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true))continue
+            if(release.optBoolean("draft",true))continue
+            val prerelease=release.opt("prerelease") as? Boolean ?: continue
             val version=release.optString("tag_name").removePrefix("v")
-            if(release.optString("tag_name")!="v$version" || !UpdatePolicy.newerStable(version,currentVersion))continue
-            if(selected==null || UpdatePolicy.newerStable(version,selected.getString("tag_name").removePrefix("v")))selected=release
+            val newer=if(includePrereleases)UpdatePolicy.newer(version,currentVersion) else UpdatePolicy.newerStable(version,currentVersion)
+            if(release.optString("tag_name")!="v$version" || UpdatePolicy.isPrerelease(version)!=prerelease || !newer)continue
+            if(selected==null || UpdatePolicy.newer(version,selected.getString("tag_name").removePrefix("v")))selected=release
         }
         if(selected==null)return null
         val version=selected.getString("tag_name").removePrefix("v")
@@ -30,26 +33,30 @@ internal object UpdateRelease {
     }
     const val LATEST_MANIFEST="https://github.com/$REPOSITORY/releases/latest/download/release-manifest.json"
     fun discoverAvailable(currentVersion:String,currentCode:Long,identifier:String,source:UpdateSource,
-        read:(String)->ByteArray,size:(String)->Long):JSONObject? {
+        read:(String)->ByteArray,size:(String)->Long,includePrereleases:Boolean=false):JSONObject? {
         val index=try {read(source.catalogUrl)} catch(error:Exception) {
             if(source.isTest)throw error
             val manifest=JSONObject(String(read(LATEST_MANIFEST),Charsets.UTF_8))
             val version=manifest.getString("version")
-            return candidate(manifest,version,currentVersion,currentCode,identifier,source,
+            require(UpdatePolicy.isPrerelease(version)==false)
+            val stable=candidate(manifest,version,currentVersion,currentCode,identifier,source,
                 manifest.optString("notes").ifBlank {"暂未读取到更新说明，可在 GitHub 发布页查看。"}) {name ->
                 require(Regex("[A-Za-z0-9_.-]+\\.zip").matches(name)&&!name.contains(".."))
                 val url="https://github.com/$REPOSITORY/releases/download/v$version/$name"
                 Pair(url,size(url))
             }
+            // The latest endpoint cannot establish that there are no newer prereleases.
+            if(stable==null&&includePrereleases)throw error
+            return stable
         }
-        return discover(String(index,Charsets.UTF_8),currentVersion,currentCode,identifier,source,read)
+        return discover(String(index,Charsets.UTF_8),currentVersion,currentCode,identifier,source,includePrereleases,read)
     }
     private fun candidate(manifest:JSONObject,version:String,currentVersion:String,currentCode:Long,identifier:String,
         source:UpdateSource,notes:String,assetInfo:(String)->Pair<String,Long>):JSONObject? {
         require(manifest.getInt("format")==1 && manifest.getString("distribution")=="public")
         require(!manifest.optBoolean("updateTestOnly",false)||source.isTest)
-        require(UpdatePolicy.stableKey(version)!=null && manifest.getString("version")==version && manifest.getString("tag")=="v$version")
-        if(!UpdatePolicy.newerStable(version,currentVersion))return null
+        require(manifest.getString("version")==version && manifest.getString("tag")=="v$version")
+        if(!UpdatePolicy.newer(version,currentVersion))return null
         val nextCode=manifest.getLong("androidVersionCode")
         require(nextCode>currentCode && nextCode<=Int.MAX_VALUE)
         val commit=manifest.getString("commit");require(Regex("[0-9a-f]{40}").matches(commit))

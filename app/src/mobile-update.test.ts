@@ -40,10 +40,19 @@ describe('手机程序更新',()=>{
   expect(aboutPageHtml(status({testChannel:true}))).toContain('临时更新测试通道');
   expect(aboutPageHtml(status())).not.toContain('临时更新测试通道');
  });
+ it('手动发现预发布版时标明版本类型，首页不提示该版本',()=>{
+  const prerelease={...available,target:{...available.target!,version:'0.4.2-rc.1',prerelease:true}};
+  expect(aboutPageHtml(prerelease)).toContain('发现预发布版本 0.4.2-rc.1');
+  expect(aboutPageHtml(prerelease)).toContain('下载更新');
+  expect(updateReminderHtml(prerelease)).toBe('');
+  expect(updateReminderHtml({...prerelease,phase:'ready'})).toBe('');
+ });
  it('读取、默认、最新和检查中各有明确状态，检查中隐藏旧候选及可执行动作',()=>{
   expect(aboutPageHtml(null)).toContain('正在读取更新状态');
   expect(aboutPageHtml(status())).toContain('生活账本');
   expect(aboutPageHtml(status({phase:'latest'}))).toContain('已是最新版本');
+  const stableOnly={...status({phase:'latest'}),stableOnly:true};
+  expect(aboutPageHtml(stableOnly)).toContain('未发现新版正式版');
   const checking=aboutPageHtml({...available,phase:'checking'});
   expect(checking).toContain('正在检查更新');expect(checking).toContain('disabled');
   expect(checking).not.toContain('data-update-action="download"');expect(checking).not.toContain('0.4.1');

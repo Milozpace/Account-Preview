@@ -49,7 +49,7 @@ class PlatformPlugin(activity: Activity): Plugin(activity) {
     private val worker = Executors.newSingleThreadExecutor()
     private var updater: MobileUpdater? = null
     @Synchronized private fun updater(version: String): MobileUpdater {
-        require(UpdatePolicy.stableKey(version)!=null)
+        require(UpdatePolicy.isPrerelease(version)!=null)
         return updater ?: MobileUpdater(reportActivity,version).also {updater=it}
     }
     /** Native-only entry points. The Rust adapter supplies the compiled product version. */

@@ -12,8 +12,8 @@ class UpdateReleaseTest {
     private val commit="a".repeat(40)
     private val bytes="synthetic-apk".toByteArray()
     private fun release(version:String,pre:Boolean=false,draft:Boolean=false)=JSONObject().put("tag_name","v$version").put("prerelease",pre).put("draft",draft)
-        .put("body","合成更新说明").put("assets",JSONArray().put(asset("release-manifest.json",100)).put(asset("android.zip",500)))
-    private fun asset(name:String,size:Int)=JSONObject().put("name",name).put("size",size).put("browser_download_url","https://github.com/Milozpace/Account-Preview/releases/download/v0.4.1/$name")
+        .put("body","合成更新说明").put("assets",JSONArray().put(asset("release-manifest.json",100,version)).put(asset("android.zip",500,version)))
+    private fun asset(name:String,size:Int,version:String)=JSONObject().put("name",name).put("size",size).put("browser_download_url","https://github.com/Milozpace/Account-Preview/releases/download/v$version/$name")
     private fun manifest(version:String="0.4.1")=JSONObject().put("format",1).put("distribution","public").put("version",version).put("tag","v$version").put("androidVersionCode",4008)
         .put("commit",commit).put("nativeVersion","0.4.8").put("profiles",JSONObject().put("preview",JSONObject().put("identifier","com.account.preview")
             .put("platforms",JSONObject().put("android-arm64",JSONObject().put("asset","android.zip").put("sha256","b".repeat(64))))))
@@ -29,6 +29,27 @@ class UpdateReleaseTest {
     @Test fun prefersTheVersionBoundUserNotesOverTheFullReleaseBody() {
         val metadata=manifest().put("appNotes","- 查账更顺手")
         assertEquals("- 查账更顺手",discover(metadata=metadata)!!.getString("notes"))
+    }
+    @Test fun autoFindsTheStableSuccessorFromAnRcAndManualCanChooseTheNewestPrerelease() {
+        val index=JSONArray().put(release("0.4.2-rc.9",true)).put(release("0.4.2-rc.10",true))
+            .put(release("0.4.1")).put(release("0.5.0-rc.1",true,true))
+            .put(release("0.6.0-rc.1")).put(release("0.7.0",true))
+        fun check(manual:Boolean):JSONObject? = UpdateRelease.discoverAvailable(
+            "0.4.1-rc.1",4007,"com.account.preview",UpdateSource.fromMarker(null),{url ->
+                if(url.startsWith("https://api.github.com/"))index.toString().toByteArray()
+                else manifest(url.substringAfter("/download/v").substringBefore('/')).put("appNotes","- 版本说明").toString().toByteArray()
+            },{ fail("catalog already provides asset size");0L },includePrereleases=manual)
+        assertEquals("0.4.1",check(false)!!.getString("version"))
+        val prerelease=check(true)!!
+        assertEquals("0.4.2-rc.10",prerelease.getString("version"))
+        assertEquals("- 版本说明",prerelease.getString("notes"))
+    }
+    @Test fun stableBuildCanManuallyFindRcButAutomaticCheckLeavesItAlone() {
+        val index=JSONArray().put(release("0.4.2-rc.1",true))
+        val metadata=manifest("0.4.2-rc.1").toString().toByteArray()
+        assertNull(discover(index,manifest("0.4.2-rc.1")))
+        val result=UpdateRelease.discover(index.toString(),"0.4.1",4007,"com.account.preview",includePrereleases=true){metadata}
+        assertEquals("0.4.2-rc.1",result!!.getString("version"))
     }
     @Test fun rejectsDowngradeIdentityTagCommitAndTamperedManifest() {
         val mutations=listOf<(JSONObject)->Unit>(
@@ -68,6 +89,11 @@ class UpdateReleaseTest {
             return metadata.toString().toByteArray()
         }
         assertNull(UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest())},{fail("no package probe when latest");0L}))
+        try {
+            UpdateRelease.discoverAvailable("0.4.1",4008,"com.account.preview",UpdateSource.fromMarker(null),
+                {read(it,manifest())},{fail("no package probe when latest");0L},includePrereleases=true)
+            fail("stable fallback cannot say a manual check found no prereleases")
+        } catch (_:java.io.IOException) {}
         try {UpdateRelease.discoverAvailable("0.4.0",4007,"com.account.preview",UpdateSource.fromMarker(null),{read(it,manifest().put("updateTestOnly",true))},{500L});fail("no test fallback") }catch(_:IllegalArgumentException){}
     }
     private fun component()=JSONObject().put("format",1).put("version","0.4.1").put("nativeVersion","0.4.8").put("androidVersionCode",4008)
